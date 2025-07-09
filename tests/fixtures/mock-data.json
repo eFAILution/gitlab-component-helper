@@ -1,0 +1,87 @@
+{
+  "mockComponents": {
+    "simple": {
+      "name": "simple-component",
+      "description": "A simple test component",
+      "parameters": [
+        {
+          "name": "environment",
+          "description": "Target environment",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "version": "1.0.0",
+      "source": "gitlab.com/test/simple",
+      "context": {
+        "gitlabInstance": "gitlab.com",
+        "path": "test/simple"
+      }
+    },
+    "advanced": {
+      "name": "advanced-component",
+      "description": "An advanced component with many features",
+      "parameters": [
+        {
+          "name": "environment",
+          "description": "Target environment for deployment",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "version",
+          "description": "Version to deploy",
+          "required": false,
+          "type": "string",
+          "default": "latest"
+        },
+        {
+          "name": "debug",
+          "description": "Enable debug mode",
+          "required": false,
+          "type": "boolean",
+          "default": false
+        },
+        {
+          "name": "replicas",
+          "description": "Number of replicas",
+          "required": false,
+          "type": "number",
+          "default": 3
+        }
+      ],
+      "version": "2.1.0",
+      "source": "gitlab.example.com/components/advanced",
+      "readme": "# Advanced Component\n\nThis is a comprehensive component for advanced deployment scenarios.\n\n## Features\n\n- Multi-environment support\n- Version management\n- Debug capabilities\n- Rollback functionality\n\n## Usage\n\n```yaml\ninclude:\n  - component: https://gitlab.example.com/components/advanced/advanced-component@2.1.0\n    inputs:\n      environment: production\n      version: v1.2.3\n      debug: false\n      replicas: 5\n```",
+      "context": {
+        "gitlabInstance": "gitlab.example.com",
+        "path": "components/advanced"
+      }
+    }
+  },
+  "testUrls": [
+    "https://gitlab.com/components/opentofu/full-pipeline@2.9.0",
+    "https://gitlab.example.com/group/project/my-component",
+    "https://gitlab.com/user/simple-component@latest"
+  ],
+  "expectedParsedUrls": {
+    "https://gitlab.com/components/opentofu/full-pipeline@2.9.0": {
+      "gitlabInstance": "gitlab.com",
+      "projectPath": "components/opentofu",
+      "componentName": "full-pipeline",
+      "version": "2.9.0"
+    },
+    "https://gitlab.example.com/group/project/my-component": {
+      "gitlabInstance": "gitlab.example.com",
+      "projectPath": "group/project",
+      "componentName": "my-component",
+      "version": null
+    },
+    "https://gitlab.com/user/simple-component@latest": {
+      "gitlabInstance": "gitlab.com",
+      "projectPath": "user",
+      "componentName": "simple-component",
+      "version": "latest"
+    }
+  }
+}

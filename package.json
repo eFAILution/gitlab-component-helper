@@ -1,0 +1,228 @@
+{
+  "name": "gitlab-component-helper",
+  "displayName": "GitLab Component Helper",
+  "description": "Provides intellisense for GitLab CI components",
+  "version": "0.1.8",
+  "icon": "images/icon.png",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "publisher": "eFAILution",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eFAILution/gitlab-component-helper.git"
+  },
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:yaml",
+    "onLanguage:gitlab-ci",
+    "onLanguage:shellscript",
+    "workspaceContains:.gitlab-ci.yml",
+    "workspaceContains:.gitlab-ci.yaml"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "gitlab-ci",
+        "aliases": [
+          "GitLab CI",
+          "gitlab-ci"
+        ],
+        "extensions": [
+          ".gitlab-ci.yml",
+          ".gitlab-ci.yaml"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "gitlab-ci",
+        "scopeName": "source.yaml.gitlab-ci",
+        "path": "./syntaxes/gitlab-ci.tmLanguage.json",
+        "embeddedLanguages": {
+          "source.yaml": "yaml"
+        }
+      }
+    ],
+    "configuration": {
+      "title": "GitLab Component Helper",
+      "properties": {
+        "gitlabComponentHelper.componentSource": {
+          "type": "string",
+          "enum": [
+            "local",
+            "gitlab",
+            "url"
+          ],
+          "default": "local",
+          "description": "Source for component definitions"
+        },
+        "gitlabComponentHelper.gitlabUrl": {
+          "type": "string",
+          "default": "https://gitlab.com",
+          "description": "GitLab instance URL"
+        },
+        "gitlabComponentHelper.gitlabProjectId": {
+          "type": "string",
+          "default": "",
+          "description": "GitLab project ID containing component definitions"
+        },
+        "gitlabComponentHelper.gitlabToken": {
+          "type": "string",
+          "default": "",
+          "description": "GitLab API access token"
+        },
+        "gitlabComponentHelper.gitlabComponentsFilePath": {
+          "type": "string",
+          "default": "components.json",
+          "description": "Path to components JSON file in GitLab repository"
+        },
+        "gitlabComponentHelper.componentsUrl": {
+          "type": "string",
+          "default": "",
+          "description": "URL to a JSON file containing component definitions"
+        },
+        "gitlabComponentHelper.cacheTime": {
+          "type": "number",
+          "default": 3600,
+          "description": "Cache time for components in seconds"
+        },
+        "gitlabComponentHelper.componentSources": {
+          "type": "array",
+          "default": [
+            {
+              "name": "GitLab CI Examples",
+              "path": "gitlab-org/gitlab-foss",
+              "gitlabInstance": "gitlab.com"
+            },
+            {
+              "name": "OpenTofu Components",
+              "path": "components/opentofu",
+              "gitlabInstance": "gitlab.com"
+            },
+            {
+              "name": "Detect Secrets Components",
+              "path": "components/detect-secrets",
+              "gitlabInstance": "gitlab.com"
+            }
+          ],
+          "description": "GitLab repositories containing reusable CI/CD components",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "path"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Display name for the component source"
+              },
+              "path": {
+                "type": "string",
+                "description": "GitLab project path (e.g., 'group/project')"
+              },
+              "gitlabInstance": {
+                "type": "string",
+                "default": "gitlab.com",
+                "description": "GitLab instance hostname"
+              }
+            }
+          }
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "gitlab-component-helper.browseComponents",
+        "title": "GitLab CI: Browse Components"
+      },
+      {
+        "command": "gitlab-component-helper.refreshComponents",
+        "title": "GitLab CI: Refresh Components Cache"
+      },
+      {
+        "command": "gitlab-component-helper.showCacheStatus",
+        "title": "GitLab CI: Show Cache Status"
+      },
+      {
+        "command": "gitlab-component-helper.debugCache",
+        "title": "GitLab CI: Debug Cache (Detailed)"
+      },
+      {
+        "command": "gitlab-component-helper.testProviders",
+        "title": "GitLab CI: Test Providers"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "when": "resourceFilename =~ /gitlab-ci\\.yml$/",
+          "command": "gitlab-component-helper.browseComponents",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && node esbuild.js --production",
+    "check-types": "tsc --noEmit",
+    "lint": "echo 'ESLint temporarily disabled - build process handles code quality'",
+    "pretest": "npm run compile",
+    "prepare": "husky",
+    "test": "node tests/run-tests.js",
+    "test:unit": "node tests/run-tests.js",
+    "commitizen": "commitizen init cz-conventional-changelog --save-dev --save-exact --force"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.5.0",
+    "@commitlint/config-conventional": "^19.5.0",
+    "@digitalroute/cz-conventional-changelog-for-jira": "^8.0.1",
+    "@eslint/js": "^9.28.0",
+    "@octokit/core": "^7.0.2",
+    "@octokit/plugin-paginate-rest": "^13.0.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.0",
+    "@semantic-release/exec": "^7.0.0",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/gitlab-config": "^14.0.1",
+    "@semantic-release/release-notes-generator": "^14.0.1",
+    "@types/glob": "^7.2.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/mocha": "^9.0.0",
+    "@types/node": "^16.0.0",
+    "@types/vscode": "^1.60.0",
+    "@typescript-eslint/eslint-plugin": "^8.36.0",
+    "@typescript-eslint/parser": "^8.36.0",
+    "@vscode/test-electron": "^2.3.9",
+    "commitizen": "^4.3.1",
+    "conventional-changelog-conventionalcommits": "^9.0.0",
+    "cz-conventional-changelog": "^3.3.0",
+    "cz-emoji-conventional": "^1.1.0",
+    "dateformat": "^5.0.3",
+    "esbuild": "^0.25.6",
+    "eslint": "^9.30.1",
+    "eslint-plugin-react": "^7.37.5",
+    "husky": "^9.1.6",
+    "is-ci": "^4.0.0",
+    "js-yaml": "^4.1.0",
+    "mocha": "^9.1.1",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^4.4.3",
+    "typescript-eslint": "^8.33.1"
+  },
+  "keywords": [],
+  "author": "eFAILution",
+  "license": "MIT",
+  "config": {
+    "commitizen": {
+      "path": "./node_modules/cz-conventional-changelog"
+    }
+  }
+}

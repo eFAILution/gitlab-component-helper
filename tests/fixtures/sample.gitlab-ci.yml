@@ -1,0 +1,33 @@
+# Sample GitLab CI file for testing
+
+stages:
+  - test
+  - build
+  - deploy
+
+include:
+  # Test various component formats
+  - component: https://gitlab.com/components/opentofu/full-pipeline@2.9.0
+    inputs:
+      environment: staging
+
+  - component: gitlab.example.com/group/project/my-component@latest
+
+variables:
+  ENVIRONMENT: staging
+  VERSION: 1.0.0
+
+test_job:
+  stage: test
+  script:
+    - echo "Running tests"
+
+build_job:
+  stage: build
+  script:
+    - echo "Building application"
+
+deploy_job:
+  stage: deploy
+  script:
+    - echo "Deploying to $ENVIRONMENT"

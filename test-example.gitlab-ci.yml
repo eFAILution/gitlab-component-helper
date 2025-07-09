@@ -1,0 +1,26 @@
+stages:
+  - test
+  - deploy
+
+# Test job
+test-job:
+  stage: test
+  script:
+    - echo "Running tests"
+  include:
+    - component: some-component
+      # Type after "component: " to see the debug output and completions
+      # This is a placeholder for the component URL, replace with actual component URL
+      # Example: https://gitlab.com/components/some-component@main
+      # The component should be a valid GitLab component that provides the necessary functionality.
+
+# Deploy job with existing component
+deploy-job:
+  stage: deploy
+  script:
+    - echo "Deploying"
+  include:
+    - component: https://gitlab.com/components/opentofu/terraform-plan@main
+      inputs:
+        working_directory: "./terraform"
+        terraform_version: "1.5.0"

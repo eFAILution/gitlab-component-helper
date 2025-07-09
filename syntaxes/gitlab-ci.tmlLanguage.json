@@ -1,0 +1,79 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "GitLab CI",
+  "scopeName": "source.yaml.gitlab-ci",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#gitlab-ci-keywords"
+    },
+    {
+      "include": "#gitlab-ci-sections"
+    },
+    {
+      "include": "#gitlab-ci-components"
+    },
+    {
+      "include": "source.yaml"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "match": "(?:^| )#.*$",
+      "name": "comment.line.number-sign.gitlab-ci"
+    },
+    "gitlab-ci-keywords": {
+      "match": "\\b(image|services|stages|types|before_script|after_script|variables|cache|artifacts)\\b\\s*:",
+      "captures": {
+        "1": {
+          "name": "keyword.control.gitlab-ci"
+        }
+      }
+    },
+    "gitlab-ci-sections": {
+      "match": "^\\s*(include|extends|workflow|default)\\s*:",
+      "captures": {
+        "1": {
+          "name": "entity.name.section.gitlab-ci"
+        }
+      }
+    },
+    "gitlab-ci-components": {
+      "begin": "(\\b\\w+-component\\b)\\s*:",
+      "beginCaptures": {
+        "1": {
+          "name": "entity.name.component.gitlab-ci"
+        }
+      },
+      "end": "^(?!\\s)",
+      "patterns": [
+        {
+          "match": "\\s+(\\w+)\\s*:",
+          "captures": {
+            "1": {
+              "name": "variable.parameter.component.gitlab-ci"
+            }
+          }
+        }
+      ]
+    },
+    "job-definition": {
+      "match": "^\\s*([\\w\\-\\.]+)\\s*:",
+      "captures": {
+        "1": {
+          "name": "entity.name.job.gitlab-ci"
+        }
+      }
+    },
+    "job-keywords": {
+      "match": "\\s+(script|stage|only|except|tags|allow_failure|when|dependencies|environment|coverage|retry|parallel)\\s*:",
+      "captures": {
+        "1": {
+          "name": "keyword.other.job.gitlab-ci"
+        }
+      }
+    }
+  }
+}

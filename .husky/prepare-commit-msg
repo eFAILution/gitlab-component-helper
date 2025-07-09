@@ -1,0 +1,31 @@
+echo "Running .husky pre-commit-msg hook"
+pre-commit run --all-files --show-diff-on-failure
+
+# Start of TODO and release-utils ignore check
+
+# List of file extensions to check for TODOs and release-utils ignore comments
+extensions_to_check="yml yaml py js go ts"
+# Get list of all file extensions in the project
+project_extensions=$(git ls-files | awk -F. '{print $NF}' | sort -u)
+
+# Check if project contains files with extensions we care about
+for ext in $extensions_to_check; do
+  if echo "$project_extensions" | grep -q "^$ext$"; then
+    # Get a list of all files we find TODOs in
+    TODOs=$(git ls-files | grep -v '^docs/' | grep "\.$ext$" | xargs egrep -n '(#|//|/\*|\*/) ?TODO' || echo "")
+    if [ ! -z "$TODOs" ]; then
+      echo "\n$(tput setaf 3)********** WARNING: TODO Check Failed **********$(tput sgr0)\n"
+      echo "$TODOs"
+    fi
+
+    # Get a list of all files we find release-utils ignore comments in
+    IGNORES=$(git ls-files | grep -v '^docs/' | grep "\.$ext$" | xargs egrep -n '(#|//|/\*|\*/) ?release-utils:\s*ignore' || echo "")
+    if [ ! -z "$IGNORES" ]; then
+      echo "\n$(tput setaf 3)********** WARNING: release-utils Ignore Check Failed **********$(tput sgr0)\n"
+      echo "$IGNORES"
+    fi
+  fi
+done
+
+npm run commitizen || true
+exec </dev/tty && npx git-cz --hook || true

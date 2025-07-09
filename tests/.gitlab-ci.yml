@@ -1,0 +1,15 @@
+include:
+  - component: https://gitlab.com/components/opentofu/full-pipeline@2.6.1
+  - component: $CI_SERVER_FQDN/components/opentofu/full-pipeline@2.6.1
+  - component: https://gitlab.com/components/opentofu/full-pipeline
+
+# Test GitLab CI file
+stages:
+  - test
+  - deploy
+
+test-job:
+  stage: test
+
+deploy-job:
+  stage: deploy

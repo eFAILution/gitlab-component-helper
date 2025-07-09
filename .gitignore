@@ -1,0 +1,45 @@
+# Environments
+.DS_Store
+.env
+.venv
+.vscode
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Python
+__pycache__/
+# Unit test / coverage reports
+.coverage*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.coverage.*
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Logs
+*.log
+
+# Node
+node_modules
+
+# User Linter Configs Not crucial to pre-commit
+.pylintrc
+
+# User Configs
+.vscode/
+.vscode-test
+out
+
+# Other
+offline-search-index.*
+.gitlab-ci-local*
+*.vsix
+rsync-changes.sh
+sync-changes.sh
