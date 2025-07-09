@@ -33,6 +33,19 @@ interface RetryOptions {
   maxDelay: number;
 }
 
+interface RateLimiter {
+  tokens: number;
+  lastRefill: number;
+  maxTokens: number;
+  refillRate: number; // tokens per second
+}
+
+interface RetryOptions {
+  maxRetries: number;
+  baseDelay: number;
+  maxDelay: number;
+}
+
 export interface ComponentSource {
   getComponents(): Promise<Component[]>;
   getComponent(name: string): Promise<Component | undefined>;
