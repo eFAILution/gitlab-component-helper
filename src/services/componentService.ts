@@ -20,6 +20,19 @@ interface ComponentVariable {
   default?: string;
 }
 
+interface RateLimiter {
+  tokens: number;
+  lastRefill: number;
+  maxTokens: number;
+  refillRate: number; // tokens per second
+}
+
+interface RetryOptions {
+  maxRetries: number;
+  baseDelay: number;
+  maxDelay: number;
+}
+
 export interface ComponentSource {
   getComponents(): Promise<Component[]>;
   getComponent(name: string): Promise<Component | undefined>;
@@ -32,6 +45,21 @@ let lastFetchTime = 0;
 export class ComponentService implements ComponentSource {
   // Add this property for URL-based component caching
   private componentCache = new Map<string, Component>();
+  private catalogCache = new Map<string, any>();
+
+  // Rate limiting properties
+  private rateLimiter: RateLimiter = {
+    tokens: 10, // Start with full tokens
+    lastRefill: Date.now(),
+    maxTokens: 10, // Max 10 requests
+    refillRate: 2 // 2 tokens per second
+  };
+
+  private retryOptions: RetryOptions = {
+    maxRetries: 3,
+    baseDelay: 1000, // 1 second
+    maxDelay: 8000 // 8 seconds max
+  };
 
   async getComponents(): Promise<Component[]> {
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
@@ -141,17 +169,6 @@ export class ComponentService implements ComponentSource {
 
       console.log(`Parsed URL: Project=${projectPath}, Component=${componentName}, Version=${version}`);
 
-      // Declare these variables only once
-      let templateContent = '';
-      let readmeContent = '';
-      let parameters: Array<{
-        name: string;
-        description: string;
-        required: boolean;
-        type: string;
-        default?: string;
-      }> = [];
-
       // Try GitLab CI/CD Catalog first
       try {
         // Extract the namespace and project from the path
@@ -203,17 +220,37 @@ export class ComponentService implements ComponentSource {
 
       console.log(`Fetching project info from: ${projectApiUrl}`);
 
-      // Fetch project information
+      // Fetch project information first
       const projectInfo = await this.fetchJson(projectApiUrl);
 
-      // The component template is expected to be in templates/component-name.yml
+      // Prepare parallel requests for template and README
       const templatePath = `templates/${componentName}.yml`;
       console.log(`Looking for component template at: ${templatePath}`);
 
-      // Fetch the component template file
-      try {
-        const templateUrl = `${apiBaseUrl}/projects/${projectInfo.id}/repository/files/${encodeURIComponent(templatePath)}/raw?ref=${version}`;
-        templateContent = await this.fetchText(templateUrl);
+      const templateUrl = `${apiBaseUrl}/projects/${projectInfo.id}/repository/files/${encodeURIComponent(templatePath)}/raw?ref=${version}`;
+      const componentReadmePath = `docs/${componentName}/README.md`;
+      const componentReadmeUrl = `${apiBaseUrl}/projects/${projectInfo.id}/repository/files/${encodeURIComponent(componentReadmePath)}/raw?ref=${version}`;
+      const projectReadmeUrl = `${apiBaseUrl}/projects/${projectInfo.id}/repository/files/README.md/raw?ref=${version}`;
+
+      // Fetch template and README files in parallel
+      const [templateResult, componentReadmeResult, projectReadmeResult] = await Promise.allSettled([
+        this.fetchText(templateUrl),
+        this.fetchText(componentReadmeUrl),
+        this.fetchText(projectReadmeUrl)
+      ]);
+
+      // Process template content
+      let templateContent = '';
+      let parameters: Array<{
+        name: string;
+        description: string;
+        required: boolean;
+        type: string;
+        default?: string;
+      }> = [];
+
+      if (templateResult.status === 'fulfilled') {
+        templateContent = templateResult.value;
         console.log(`Found component template with length: ${templateContent.length}`);
 
         // Try to extract variables/parameters from the template
@@ -240,24 +277,18 @@ export class ComponentService implements ComponentSource {
 
           console.log(`Extracted ${parameters.length} parameters from template`);
         }
-      } catch (error) {
-        console.log(`Could not fetch component template: ${error}`);
+      } else {
+        console.log(`Could not fetch component template: ${templateResult.reason}`);
       }
 
-      // Try to find a README or documentation for the component
-      try {
-        // First check if there's a component-specific README
-        const componentReadmePath = `docs/${componentName}/README.md`;
-        try {
-          const readmeUrl = `${apiBaseUrl}/projects/${projectInfo.id}/repository/files/${encodeURIComponent(componentReadmePath)}/raw?ref=${version}`;
-          readmeContent = await this.fetchText(readmeUrl);
-        } catch (e) {
-          // Then try the project README
-          const projectReadmeUrl = `${apiBaseUrl}/projects/${projectInfo.id}/repository/files/README.md/raw?ref=${version}`;
-          readmeContent = await this.fetchText(projectReadmeUrl);
-        }
-      } catch (error) {
-        console.log(`Could not fetch README: ${error}`);
+      // Process README content - prefer component-specific README
+      let readmeContent = '';
+      if (componentReadmeResult.status === 'fulfilled') {
+        readmeContent = componentReadmeResult.value;
+      } else if (projectReadmeResult.status === 'fulfilled') {
+        readmeContent = projectReadmeResult.value;
+      } else {
+        console.log(`Could not fetch README: component=${componentReadmeResult.status === 'rejected' ? componentReadmeResult.reason : 'N/A'}, project=${projectReadmeResult.status === 'rejected' ? projectReadmeResult.reason : 'N/A'}`);
       }
 
       // Construct the component
@@ -294,6 +325,10 @@ export class ComponentService implements ComponentSource {
 
   // Helper methods for HTTP requests
   public fetchJson(url: string): Promise<any> {
+    return this.fetchWithRetry(() => this.makeFetchJsonRequest(url));
+  }
+
+  private makeFetchJsonRequest(url: string): Promise<any> {
     return new Promise((resolve, reject) => {
       https.get(url, {
         headers: {
@@ -309,6 +344,9 @@ export class ComponentService implements ComponentSource {
             } catch (e) {
               reject(`Error parsing JSON: ${e}`);
             }
+          } else if (res.statusCode === 429) {
+            // Rate limited - throw special error for retry logic
+            reject(new Error(`RATE_LIMITED:${res.statusCode}`));
           } else {
             reject(`HTTP error ${res.statusCode}`);
           }
@@ -318,6 +356,10 @@ export class ComponentService implements ComponentSource {
   }
 
   private fetchText(url: string): Promise<string> {
+    return this.fetchWithRetry(() => this.makeFetchTextRequest(url));
+  }
+
+  private makeFetchTextRequest(url: string): Promise<string> {
     return new Promise((resolve, reject) => {
       https.get(url, {
         headers: {
@@ -329,12 +371,150 @@ export class ComponentService implements ComponentSource {
         res.on('end', () => {
           if (res.statusCode === 200) {
             resolve(data);
+          } else if (res.statusCode === 429) {
+            // Rate limited - throw special error for retry logic
+            reject(new Error(`RATE_LIMITED:${res.statusCode}`));
           } else {
             reject(`HTTP error ${res.statusCode}`);
           }
         });
       }).on('error', reject);
     });
+  }
+
+  /**
+   * Refills rate limiter tokens based on elapsed time
+   */
+  private refillTokens(): void {
+    const now = Date.now();
+    const timePassed = (now - this.rateLimiter.lastRefill) / 1000; // seconds
+    const tokensToAdd = Math.floor(timePassed * this.rateLimiter.refillRate);
+
+    if (tokensToAdd > 0) {
+      this.rateLimiter.tokens = Math.min(
+        this.rateLimiter.maxTokens,
+        this.rateLimiter.tokens + tokensToAdd
+      );
+      this.rateLimiter.lastRefill = now;
+    }
+  }
+
+  /**
+   * Waits for available rate limit token
+   */
+  private async waitForRateLimit(): Promise<void> {
+    this.refillTokens();
+
+    if (this.rateLimiter.tokens <= 0) {
+      // Calculate wait time until next token is available
+      const waitTime = Math.ceil(1000 / this.rateLimiter.refillRate);
+      outputChannel.appendLine(`[ComponentService] Rate limit hit, waiting ${waitTime}ms`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+      this.refillTokens();
+    }
+
+    this.rateLimiter.tokens--;
+  }
+
+  /**
+   * Fetches all pages of results from a paginated GitLab API endpoint
+   */
+  private async fetchAllPages<T>(baseUrl: string, perPage: number = 100): Promise<T[]> {
+    const allResults: T[] = [];
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      const url = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}page=${page}&per_page=${perPage}`;
+
+      try {
+        outputChannel.appendLine(`[ComponentService] Fetching page ${page}: ${url}`);
+        const results = await this.fetchJson(url) as T[];
+
+        if (Array.isArray(results) && results.length > 0) {
+          allResults.push(...results);
+
+          // If we got fewer results than per_page, we're done
+          if (results.length < perPage) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        } else {
+          hasMore = false;
+        }
+      } catch (error) {
+        outputChannel.appendLine(`[ComponentService] Error fetching page ${page}: ${error}`);
+        // Stop pagination on error
+        hasMore = false;
+      }
+    }
+
+    outputChannel.appendLine(`[ComponentService] Fetched ${allResults.length} total items across ${page} pages`);
+    return allResults;
+  }
+
+  /**
+   * Fetches multiple resources in parallel
+   */
+  private async fetchInParallel<T>(requests: Array<() => Promise<T>>): Promise<T[]> {
+    // Limit concurrent requests to avoid overwhelming the server
+    const concurrencyLimit = 5;
+    const results: T[] = [];
+
+    for (let i = 0; i < requests.length; i += concurrencyLimit) {
+      const batch = requests.slice(i, i + concurrencyLimit);
+      const batchResults = await Promise.allSettled(batch.map(req => req()));
+
+      for (const result of batchResults) {
+        if (result.status === 'fulfilled') {
+          results.push(result.value);
+        } else {
+          outputChannel.appendLine(`[ComponentService] Parallel request failed: ${result.reason}`);
+        }
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Executes a request with retry logic and rate limiting
+   */
+  private async fetchWithRetry<T>(requestFn: () => Promise<T>): Promise<T> {
+    let lastError: any;
+
+    for (let attempt = 0; attempt <= this.retryOptions.maxRetries; attempt++) {
+      try {
+        // Wait for rate limit before making request
+        await this.waitForRateLimit();
+
+        return await requestFn();
+      } catch (error: any) {
+        lastError = error;
+
+        // Check if this is a rate limit error or should be retried
+        const isRateLimited = error?.message?.includes('RATE_LIMITED');
+        const shouldRetry = isRateLimited || error?.message?.includes('ENOTFOUND') || error?.message?.includes('timeout');
+
+        if (attempt < this.retryOptions.maxRetries && shouldRetry) {
+          // Calculate exponential backoff delay
+          const delay = Math.min(
+            this.retryOptions.baseDelay * Math.pow(2, attempt),
+            this.retryOptions.maxDelay
+          );
+
+          outputChannel.appendLine(`[ComponentService] Request failed (attempt ${attempt + 1}/${this.retryOptions.maxRetries + 1}), retrying in ${delay}ms. Error: ${error.message}`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+
+        // If we're here, we've exhausted retries or it's not retryable
+        break;
+      }
+    }
+
+    throw lastError;
   }
 
   private getLocalComponents(): Component[] {
@@ -463,8 +643,6 @@ export class ComponentService implements ComponentSource {
     });
   }
 
-  private catalogCache = new Map<string, any>();
-
   /**
    * Fetch component catalog data from GitLab
    */
@@ -495,41 +673,54 @@ export class ComponentService implements ComponentSource {
     outputChannel.appendLine(`[ComponentService] Fetching fresh catalog data from ${cleanGitlabInstance}`);
 
     try {
-      // First, get the project info to get the project ID
-      const projectApiUrl = `https://${cleanGitlabInstance}/api/v4/projects/${encodeURIComponent(projectPath)}`;
-      outputChannel.appendLine(`[ComponentService] Fetching project info from: ${projectApiUrl}`);
-      const projectInfo = await this.fetchJson(projectApiUrl);
-      outputChannel.appendLine(`[ComponentService] Found project: ${projectInfo.name} (ID: ${projectInfo.id})`);
-
-      // Then look for components in the templates directory
       const ref = version || 'main'; // Use specific version or default to main
-      const templatesUrl = `https://${cleanGitlabInstance}/api/v4/projects/${projectInfo.id}/repository/tree?path=templates&ref=${ref}`;
-      outputChannel.appendLine(`[ComponentService] Fetching templates from: ${templatesUrl} (ref: ${ref})`);
-      const templates = await this.fetchJson(templatesUrl) as GitLabTreeItem[];
-      outputChannel.appendLine(`[ComponentService] Found ${templates.length} items in templates directory`);
+      const apiBaseUrl = `https://${cleanGitlabInstance}/api/v4`;
+      const encodedPath = encodeURIComponent(projectPath);
 
-      // Transform the templates into components
-      const yamlFiles = templates.filter((file: GitLabTreeItem) => file.name.endsWith('.yml') || file.name.endsWith('.yaml'));
+      // Fetch project info and templates in parallel
+      const [projectInfo, templates] = await Promise.allSettled([
+        this.fetchJson(`${apiBaseUrl}/projects/${encodedPath}`),
+        this.fetchJson(`${apiBaseUrl}/projects/${encodedPath}/repository/tree?path=templates&ref=${ref}`)
+      ]);
+
+      if (projectInfo.status === 'rejected') {
+        throw new Error(`Failed to fetch project info: ${projectInfo.reason}`);
+      }
+
+      if (templates.status === 'rejected') {
+        outputChannel.appendLine(`[ComponentService] Failed to fetch templates: ${templates.reason}`);
+        return { components: [] };
+      }
+
+      const project = projectInfo.value;
+      const templateFiles = templates.value as GitLabTreeItem[];
+
+      outputChannel.appendLine(`[ComponentService] Found project: ${project.name} (ID: ${project.id})`);
+      outputChannel.appendLine(`[ComponentService] Found ${templateFiles.length} items in templates directory`);
+
+      // Filter YAML files
+      const yamlFiles = templateFiles.filter((file: GitLabTreeItem) => file.name.endsWith('.yml') || file.name.endsWith('.yaml'));
       outputChannel.appendLine(`[ComponentService] Found ${yamlFiles.length} YAML template files`);
 
-      const components = await Promise.all(yamlFiles
-        .map(async (file: GitLabTreeItem) => {
-          // Remove the .yml extension to get component name
+      if (yamlFiles.length === 0) {
+        return { components: [] };
+      }
+
+      // Process all components in parallel with batching
+      const componentRequests = yamlFiles.map((file: GitLabTreeItem) => {
+        return async () => {
           const name = file.name.replace(/\.ya?ml$/, '');
           outputChannel.appendLine(`[ComponentService] Processing component: ${name} (${file.name})`);
 
-          // Try to get component content to extract info
-          const contentUrl = `https://${cleanGitlabInstance}/api/v4/projects/${projectInfo.id}/repository/files/${encodeURIComponent('templates/' + file.name)}/raw?ref=main`;
+          const contentUrl = `${apiBaseUrl}/projects/${project.id}/repository/files/${encodeURIComponent('templates/' + file.name)}/raw?ref=${ref}`;
           let description = '';
           let variables: ComponentVariable[] = [];
-          let readmeContent = '';
 
           try {
             const content = await this.fetchText(contentUrl);
             outputChannel.appendLine(`[ComponentService] Fetched content for ${name} (${content.length} chars)`);
 
             // Extract description from multiple sources (priority order)
-
             // 1. Try to get description from component spec
             const specDescMatch = content.match(/spec:\s*\n(?:\s*inputs:[\s\S]*?)?\n\s*description:\s*["']?(.*?)["']?\s*$/m);
             if (specDescMatch) {
@@ -544,29 +735,6 @@ export class ComponentService implements ComponentSource {
                 description = commentMatch[1].trim();
                 outputChannel.appendLine(`[ComponentService] Found comment description for ${name}: ${description}`);
               }
-            }
-
-            // 3. Try to fetch README if available
-            try {
-              const readmeUrl = `https://${cleanGitlabInstance}/api/v4/projects/${projectInfo.id}/repository/files/README.md/raw?ref=main`;
-              readmeContent = await this.fetchText(readmeUrl);
-              outputChannel.appendLine(`[ComponentService] Fetched README for ${name} (${readmeContent.length} chars)`);
-
-              // If no description yet, extract from README
-              if (!description) {
-                // Extract first meaningful line from README (skip title, get first paragraph)
-                const readmeLines = readmeContent.split('\n').filter(line => line.trim());
-                for (const line of readmeLines) {
-                  const trimmed = line.trim();
-                  if (trimmed && !trimmed.startsWith('#') && !trimmed.startsWith('[') && trimmed.length > 20) {
-                    description = trimmed;
-                    outputChannel.appendLine(`[ComponentService] Found README description for ${name}: ${description.substring(0, 100)}...`);
-                    break;
-                  }
-                }
-              }
-            } catch (readmeError) {
-              outputChannel.appendLine(`[ComponentService] No README found for ${name}`);
             }
 
             // 4. Fallback description
@@ -656,10 +824,14 @@ export class ComponentService implements ComponentSource {
             name,
             description: description || `${name} component`,
             variables,
-            latest_version: 'main',
-            readme: readmeContent
+            latest_version: ref,
+            readme: '' // README fetching moved to separate method if needed
           };
-        }));
+        };
+      });
+
+      // Process components in parallel with controlled concurrency
+      const components = await this.fetchInParallel(componentRequests);
 
       outputChannel.appendLine(`[ComponentService] Successfully processed ${components.length} components`);
       components.forEach((comp: any) => {
@@ -701,37 +873,34 @@ export class ComponentService implements ComponentSource {
         return ['main']; // Fallback to main branch
       }
 
-      // Fetch both tags and branches
+      // Fetch both tags and branches in parallel
       const versions: string[] = [];
 
-      // Fetch tags (releases)
-      try {
-        const tagsUrl = `${apiBaseUrl}/projects/${projectInfo.id}/repository/tags?per_page=100&sort=desc`;
-        const tags = await this.fetchJson(tagsUrl);
+      const [tags, branches] = await Promise.allSettled([
+        // Fetch all tags with pagination
+        this.fetchAllPages<any>(`${apiBaseUrl}/projects/${projectInfo.id}/repository/tags?sort=desc`),
+        // Fetch branches (limit to first page for performance, we only need main branches)
+        this.fetchJson(`${apiBaseUrl}/projects/${projectInfo.id}/repository/branches?per_page=20`)
+      ]);
 
-        if (Array.isArray(tags)) {
-          const tagVersions = tags.map((tag: any) => tag.name).filter((name: string) => name);
-          versions.push(...tagVersions);
-          outputChannel.appendLine(`[ComponentService] Found ${tagVersions.length} tags`);
-        }
-      } catch (error) {
-        outputChannel.appendLine(`[ComponentService] Error fetching tags: ${error}`);
+      // Process tags
+      if (tags.status === 'fulfilled' && Array.isArray(tags.value)) {
+        const tagVersions = tags.value.map((tag: any) => tag.name).filter((name: string) => name);
+        versions.push(...tagVersions);
+        outputChannel.appendLine(`[ComponentService] Found ${tagVersions.length} tags`);
+      } else {
+        outputChannel.appendLine(`[ComponentService] Error fetching tags: ${tags.status === 'rejected' ? tags.reason : 'No tags found'}`);
       }
 
-      // Fetch main branches (main, master, develop)
-      try {
-        const branchesUrl = `${apiBaseUrl}/projects/${projectInfo.id}/repository/branches?per_page=20`;
-        const branches = await this.fetchJson(branchesUrl);
-
-        if (Array.isArray(branches)) {
-          const importantBranches = branches
-            .map((branch: any) => branch.name)
-            .filter((name: string) => ['main', 'master', 'develop', 'dev'].includes(name));
-          versions.push(...importantBranches);
-          outputChannel.appendLine(`[ComponentService] Found ${importantBranches.length} important branches`);
-        }
-      } catch (error) {
-        outputChannel.appendLine(`[ComponentService] Error fetching branches: ${error}`);
+      // Process branches
+      if (branches.status === 'fulfilled' && Array.isArray(branches.value)) {
+        const importantBranches = branches.value
+          .map((branch: any) => branch.name)
+          .filter((name: string) => ['main', 'master', 'develop', 'dev'].includes(name));
+        versions.push(...importantBranches);
+        outputChannel.appendLine(`[ComponentService] Found ${importantBranches.length} important branches`);
+      } else {
+        outputChannel.appendLine(`[ComponentService] Error fetching branches: ${branches.status === 'rejected' ? branches.reason : 'No branches found'}`);
       }
 
       // Remove duplicates and sort
