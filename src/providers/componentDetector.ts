@@ -127,7 +127,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
 
   // First, try to find the component in our cache
   const cacheManager = getComponentCacheManager();
-  const cachedComponents = await cacheManager.getComponents();
+  const cachedComponents = await cacheManager.getLegacyComponents(); // Use legacy format for backward compatibility
 
   // Parse the requested component URL to extract name and details
   try {
