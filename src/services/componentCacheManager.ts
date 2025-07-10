@@ -92,14 +92,6 @@ export class ComponentCacheManager {
   }
 
   /**
-   * Get components in legacy format for backward compatibility
-   */
-  public async getLegacyComponents(): Promise<CachedComponent[]> {
-    const components = await this.getComponents();
-    return components.map(this.convertToLegacyFormat);
-  }
-
-  /**
    * Convert GitComponent to legacy CachedComponent format
    */
   private convertToLegacyFormat(component: GitComponent): CachedComponent {
@@ -792,7 +784,7 @@ export class ComponentCacheManager {
       }
 
       const cacheData = this.context.globalState.get<any>('componentCache');
-      
+
       if (cacheData && cacheData.components && Array.isArray(cacheData.components)) {
         // Handle both new format (GitComponent[]) and legacy format (CachedComponent[])
         if (cacheData.version && cacheData.version >= '1.0.0') {
@@ -808,11 +800,12 @@ export class ComponentCacheManager {
           this.sourceVersionCache = new Map();
           for (const [key, versions] of oldVersionCache.entries()) {
             // Convert from "instance|path" to "gitlab:instance|path"
-            const newKey = key.includes(':') ? key : `gitlab:${key}`;
-            this.sourceVersionCache.set(newKey, versions);
+            const keyStr = key as string;
+            const newKey = keyStr.includes(':') ? keyStr : `gitlab:${keyStr}`;
+            this.sourceVersionCache.set(newKey, versions as string[]);
           }
         }
-        
+
         this.lastRefreshTime = cacheData.lastRefreshTime || 0;
 
         outputChannel.appendLine(`[ComponentCache] Loaded ${this.components.length} components from global state`);

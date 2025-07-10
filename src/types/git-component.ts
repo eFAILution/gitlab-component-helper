@@ -1,6 +1,6 @@
 /**
  * Generic Git Component Types
- * 
+ *
  * This file defines platform-agnostic types for Git-based CI/CD components
  * that can work with GitLab, GitHub Actions, Bitbucket Pipelines, etc.
  */
@@ -37,7 +37,7 @@ export interface GitComponent {
 export interface GitComponentCache {
   components: GitComponent[];
   lastRefreshTime: number;
-  sourceVersionCache: Map<string, string[]>; // key: `${platform}:${instance}|${path}`
+  sourceVersionCache: [string, string[]][]; // key: `${platform}:${instance}|${path}`
   version: string; // Cache format version for migrations
 }
 
@@ -46,22 +46,22 @@ export interface GitComponentCache {
  */
 export interface GitPlatformAdapter {
   platform: string;
-  
+
   /**
    * Fetch components from a project/repository
    */
   fetchProjectComponents(instance: string, projectPath: string, version?: string): Promise<GitComponent[]>;
-  
+
   /**
    * Fetch available versions (tags/branches) for a project
    */
   fetchProjectVersions(instance: string, projectPath: string): Promise<string[]>;
-  
+
   /**
    * Test if an instance URL belongs to this platform
    */
   supportsInstance(instance: string): boolean;
-  
+
   /**
    * Get rate limiting configuration for this platform instance
    */

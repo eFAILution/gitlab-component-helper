@@ -76,14 +76,14 @@ export class ComponentService implements ComponentSource {
    */
   private initializeRateLimiter(): RateLimiter {
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-    
+
     // Allow configuration override
     const configuredRate = config.get<number>('apiRateLimit');
     const configuredMaxTokens = config.get<number>('apiMaxConcurrentRequests');
-    
+
     let refillRate: number;
     let maxTokens: number;
-    
+
     if (configuredRate !== undefined) {
       refillRate = configuredRate;
       maxTokens = configuredMaxTokens || Math.min(10, configuredRate);
@@ -94,9 +94,9 @@ export class ComponentService implements ComponentSource {
       refillRate = 10; // Conservative default that works for most instances
       maxTokens = 10;
     }
-    
+
     outputChannel.appendLine(`[ComponentService] Rate limiter initialized: ${refillRate} req/s, ${maxTokens} max concurrent`);
-    
+
     return {
       tokens: maxTokens,
       lastRefill: Date.now(),
