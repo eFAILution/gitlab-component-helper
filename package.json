@@ -88,6 +88,32 @@
           "default": 3600,
           "description": "Cache time for components in seconds"
         },
+        "gitlabComponentHelper.logLevel": {
+          "type": "string",
+          "enum": [
+            "DEBUG",
+            "INFO",
+            "WARN",
+            "ERROR"
+          ],
+          "default": "INFO",
+          "description": "Logging level for component service"
+        },
+        "gitlabComponentHelper.httpTimeout": {
+          "type": "number",
+          "default": 10000,
+          "description": "HTTP request timeout in milliseconds"
+        },
+        "gitlabComponentHelper.retryAttempts": {
+          "type": "number",
+          "default": 3,
+          "description": "Number of retry attempts for failed HTTP requests"
+        },
+        "gitlabComponentHelper.batchSize": {
+          "type": "number",
+          "default": 5,
+          "description": "Number of components to process in parallel batches"
+        },
         "gitlabComponentHelper.componentSources": {
           "type": "array",
           "default": [
@@ -196,7 +222,7 @@
     "@types/glob": "^7.2.0",
     "@types/js-yaml": "^4.0.9",
     "@types/mocha": "^9.0.0",
-    "@types/node": "^16.0.0",
+    "@types/node": "^16.18.126",
     "@types/vscode": "^1.60.0",
     "@typescript-eslint/eslint-plugin": "^8.36.0",
     "@typescript-eslint/parser": "^8.36.0",

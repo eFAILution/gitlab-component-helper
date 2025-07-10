@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
-import * as https from 'https';
 import { Component } from '../providers/componentDetector';
 import { GitLabCatalogComponent, GitLabCatalogVariable, GitLabCatalogData } from '../types/gitlab-catalog';
 import { outputChannel } from '../utils/outputChannel';
+import { HttpClient } from '../utils/httpClient';
+import { Logger } from '../utils/logger';
 
 interface GitLabTreeItem {
   id: string;
@@ -25,63 +26,115 @@ export interface ComponentSource {
   getComponent(name: string): Promise<Component | undefined>;
 }
 
-// Cache for components
-let componentsCache: Component[] = [];
-let lastFetchTime = 0;
+// Enhanced cache with Map-based caching by source type
+interface CacheEntry {
+  components: Component[];
+  timestamp: number;
+}
+
+const sourceCache = new Map<string, CacheEntry>();
+let backgroundUpdateInProgress = false;
 
 export class ComponentService implements ComponentSource {
-  // Add this property for URL-based component caching
+  private httpClient = new HttpClient();
+  private logger = Logger.getInstance();
   private componentCache = new Map<string, Component>();
+  private catalogCache = new Map<string, any>();
 
   async getComponents(): Promise<Component[]> {
+    const startTime = Date.now();
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
     const cacheTime = config.get<number>('cacheTime', 3600) * 1000; // Default 1 hour
+    const sourceType = config.get<string>('componentSource', 'local');
+    
+    const cacheKey = `${sourceType}`;
+    
+    this.logger.info(`getComponents() called for source: ${sourceType}`);
+    this.logger.debug(`Cache time setting: ${cacheTime/1000}s`);
 
-    outputChannel.appendLine(`[ComponentService] getComponents() called`);
-    outputChannel.appendLine(`[ComponentService] Cache time setting: ${cacheTime/1000}s`);
-    outputChannel.appendLine(`[ComponentService] Components in cache: ${componentsCache.length}`);
-    outputChannel.appendLine(`[ComponentService] Time since last fetch: ${(Date.now() - lastFetchTime)/1000}s`);
+    // Check cache first
+    const cachedEntry = sourceCache.get(cacheKey);
+    const isExpired = !cachedEntry || (Date.now() - cachedEntry.timestamp) > cacheTime;
 
-    // Return cached data if valid
-    if (componentsCache.length > 0 && (Date.now() - lastFetchTime) < cacheTime) {
-      outputChannel.appendLine(`[ComponentService] Returning cached components`);
-      return componentsCache;
+    if (cachedEntry && !isExpired) {
+      this.logger.info(`Returning cached components (${cachedEntry.components.length} items)`);
+      this.logger.logPerformance('getComponents (cached)', Date.now() - startTime, { 
+        source: sourceType, 
+        count: cachedEntry.components.length 
+      });
+      
+      // Start background update if not already in progress
+      if (!backgroundUpdateInProgress) {
+        this.startBackgroundUpdate(sourceType, cacheKey);
+      }
+      
+      return cachedEntry.components;
     }
 
-    // Fetch based on configured source
-    const sourceType = config.get<string>('componentSource', 'local');
-    outputChannel.appendLine(`[ComponentService] Component source type: ${sourceType}`);
-
     try {
-      let components: Component[] = [];
-
-      switch (sourceType) {
-        case 'gitlab':
-          outputChannel.appendLine(`[ComponentService] Fetching from GitLab API`);
-          components = await this.fetchFromGitLab();
-          break;
-        case 'url':
-          outputChannel.appendLine(`[ComponentService] Fetching from URL`);
-          components = await this.fetchFromUrl();
-          break;
-        case 'local':
-        default:
-          outputChannel.appendLine(`[ComponentService] Using local components`);
-          components = this.getLocalComponents();
-      }
-
-      outputChannel.appendLine(`[ComponentService] Fetched ${components.length} components`);
-
+      this.logger.info(`Fetching fresh components from source: ${sourceType}`);
+      const components = await this.fetchComponentsBySource(sourceType);
+      
       // Update cache
-      componentsCache = components;
-      lastFetchTime = Date.now();
+      sourceCache.set(cacheKey, {
+        components,
+        timestamp: Date.now()
+      });
+
+      this.logger.info(`Successfully fetched ${components.length} components`);
+      this.logger.logPerformance('getComponents (fresh)', Date.now() - startTime, { 
+        source: sourceType, 
+        count: components.length 
+      });
+      
       return components;
     } catch (error) {
-      outputChannel.appendLine(`[ComponentService] Error fetching components: ${error}`);
+      this.logger.error(`Error fetching components: ${error}`);
       console.error(`Error fetching components: ${error}`);
       vscode.window.showErrorMessage(`Failed to fetch GitLab components: ${error}`);
-      outputChannel.appendLine(`[ComponentService] Falling back to local components`);
-      return this.getLocalComponents(); // Fallback to local components
+      
+      // Return cached data if available, even if expired
+      if (cachedEntry) {
+        this.logger.warn('Falling back to expired cached components');
+        return cachedEntry.components;
+      }
+      
+      this.logger.warn('Falling back to local components');
+      return this.getLocalComponents();
+    }
+  }
+
+  private async startBackgroundUpdate(sourceType: string, cacheKey: string): Promise<void> {
+    if (backgroundUpdateInProgress) {
+      return;
+    }
+    
+    backgroundUpdateInProgress = true;
+    this.logger.debug('Starting background cache update');
+    
+    try {
+      const components = await this.fetchComponentsBySource(sourceType);
+      sourceCache.set(cacheKey, {
+        components,
+        timestamp: Date.now()
+      });
+      this.logger.info(`Background update completed: ${components.length} components`);
+    } catch (error) {
+      this.logger.warn(`Background update failed: ${error}`);
+    } finally {
+      backgroundUpdateInProgress = false;
+    }
+  }
+
+  private async fetchComponentsBySource(sourceType: string): Promise<Component[]> {
+    switch (sourceType) {
+      case 'gitlab':
+        return this.fetchFromGitLab();
+      case 'url':
+        return this.fetchFromUrl();
+      case 'local':
+      default:
+        return this.getLocalComponents();
     }
   }
 
@@ -116,32 +169,30 @@ export class ComponentService implements ComponentSource {
   }
 
   private async fetchComponentMetadata(url: string): Promise<Component> {
+    const startTime = Date.now();
+    
     try {
       // Parse the GitLab component URL
       const urlObj = new URL(url);
-      const gitlabInstance = urlObj.hostname; // e.g., gitlab.com
+      const gitlabInstance = urlObj.hostname;
 
       // Extract project path, component name, and version
       const pathParts = urlObj.pathname.split('/');
       let componentName: string, version: string, projectPath: string;
 
-      // The last part contains the component name and possibly a version
       const lastPart = pathParts[pathParts.length - 1];
 
       if (lastPart.includes('@')) {
-        // Split component name and version
         [componentName, version] = lastPart.split('@');
-        // Project path is everything before the component name
         projectPath = pathParts.slice(1, pathParts.length - 1).join('/');
       } else {
         componentName = lastPart;
-        version = 'main'; // Default branch
+        version = 'main';
         projectPath = pathParts.slice(1, pathParts.length - 1).join('/');
       }
 
-      console.log(`Parsed URL: Project=${projectPath}, Component=${componentName}, Version=${version}`);
+      this.logger.debug(`Parsed URL: Project=${projectPath}, Component=${componentName}, Version=${version}`);
 
-      // Declare these variables only once
       let templateContent = '';
       let readmeContent = '';
       let parameters: Array<{
@@ -154,22 +205,18 @@ export class ComponentService implements ComponentSource {
 
       // Try GitLab CI/CD Catalog first
       try {
-        // Extract the namespace and project from the path
-        // Expected format: components/opentofu for https://gitlab.com/components/opentofu
         const namespaceProject = projectPath;
         const catalogApiUrl = `https://${gitlabInstance}/api/v4/ci/catalog/${encodeURIComponent(namespaceProject)}`;
 
-        console.log(`Trying to fetch from GitLab Catalog API: ${catalogApiUrl}`);
-        const catalogData = await this.fetchJson(catalogApiUrl) as GitLabCatalogData;
+        this.logger.debug(`Trying to fetch from GitLab Catalog API: ${catalogApiUrl}`);
+        const catalogData = await this.httpClient.fetchJson(catalogApiUrl) as GitLabCatalogData;
 
-        // If we got catalog data, look for our component
         if (catalogData && catalogData.components) {
           const catalogComponent = catalogData.components.find((c: GitLabCatalogComponent) => c.name === componentName);
           if (catalogComponent) {
-            console.log(`Found component in catalog: ${componentName}`);
+            this.logger.info(`Found component in catalog: ${componentName}`);
 
-            // Construct component from catalog data
-            return {
+            const component = {
               name: componentName,
               description: `# ${componentName}\n\n${catalogComponent.description || ''}\n\n` +
                           `**From GitLab CI/CD Catalog**\n` +
@@ -188,76 +235,46 @@ export class ComponentService implements ComponentSource {
               source: `${gitlabInstance}/${projectPath}`,
               documentationUrl: catalogComponent.documentation_url
             };
+
+            this.logger.logPerformance('fetchComponentMetadata (catalog)', Date.now() - startTime);
+            return component;
           }
         }
       } catch (catalogError) {
-        console.log(`Could not fetch from catalog: ${catalogError}`);
-        // Continue with the regular approach if catalog fetch fails
+        this.logger.debug(`Could not fetch from catalog: ${catalogError}`);
       }
 
-      // Fall back to API + repository approach
-      // Construct API URL to get project info
+      // Fall back to API + repository approach with parallel requests
       const encodedProjectPath = encodeURIComponent(projectPath);
       const apiBaseUrl = `https://${gitlabInstance}/api/v4`;
       const projectApiUrl = `${apiBaseUrl}/projects/${encodedProjectPath}`;
 
-      console.log(`Fetching project info from: ${projectApiUrl}`);
+      this.logger.debug(`Fetching project info from: ${projectApiUrl}`);
 
-      // Fetch project information
-      const projectInfo = await this.fetchJson(projectApiUrl);
+      // **PARALLEL FETCHING OPTIMIZATION** - Fetch project info, template, and README in parallel
+      const [projectInfo, templateResult, readmeResult] = await Promise.allSettled([
+        this.httpClient.fetchJson(projectApiUrl),
+        this.fetchTemplate(apiBaseUrl, encodedProjectPath, componentName, version),
+        this.fetchReadme(apiBaseUrl, encodedProjectPath, componentName, version)
+      ]);
 
-      // The component template is expected to be in templates/component-name.yml
-      const templatePath = `templates/${componentName}.yml`;
-      console.log(`Looking for component template at: ${templatePath}`);
-
-      // Fetch the component template file
-      try {
-        const templateUrl = `${apiBaseUrl}/projects/${projectInfo.id}/repository/files/${encodeURIComponent(templatePath)}/raw?ref=${version}`;
-        templateContent = await this.fetchText(templateUrl);
-        console.log(`Found component template with length: ${templateContent.length}`);
-
-        // Try to extract variables/parameters from the template
-        const variableMatches = templateContent.match(/variables:[\s\S]*?(?=\n\w+:|$)/g);
-        if (variableMatches && variableMatches.length > 0) {
-          const variableSection = variableMatches[0];
-          const varLines = variableSection.split('\n').slice(1); // Skip "variables:" line
-
-          parameters = varLines
-            .filter(line => line.trim() && line.includes(':'))
-            .map(line => {
-              const parts = line.trim().split(':');
-              const name = parts[0].trim();
-              const defaultValue = parts.slice(1).join(':').trim();
-
-              return {
-                name,
-                description: `Parameter: ${name}`,
-                required: false,
-                type: 'string',
-                default: defaultValue
-              };
-            });
-
-          console.log(`Extracted ${parameters.length} parameters from template`);
-        }
-      } catch (error) {
-        console.log(`Could not fetch component template: ${error}`);
+      if (projectInfo.status === 'rejected') {
+        throw new Error(`Failed to fetch project info: ${projectInfo.reason}`);
       }
 
-      // Try to find a README or documentation for the component
-      try {
-        // First check if there's a component-specific README
-        const componentReadmePath = `docs/${componentName}/README.md`;
-        try {
-          const readmeUrl = `${apiBaseUrl}/projects/${projectInfo.id}/repository/files/${encodeURIComponent(componentReadmePath)}/raw?ref=${version}`;
-          readmeContent = await this.fetchText(readmeUrl);
-        } catch (e) {
-          // Then try the project README
-          const projectReadmeUrl = `${apiBaseUrl}/projects/${projectInfo.id}/repository/files/README.md/raw?ref=${version}`;
-          readmeContent = await this.fetchText(projectReadmeUrl);
-        }
-      } catch (error) {
-        console.log(`Could not fetch README: ${error}`);
+      const project = projectInfo.value;
+
+      // Process template result
+      if (templateResult.status === 'fulfilled' && templateResult.value) {
+        const { content, parameters: extractedParams } = templateResult.value;
+        templateContent = content;
+        parameters = extractedParams;
+        this.logger.debug(`Found component template with ${parameters.length} parameters`);
+      }
+
+      // Process README result
+      if (readmeResult.status === 'fulfilled' && readmeResult.value) {
+        readmeContent = readmeResult.value;
       }
 
       // Construct the component
@@ -265,8 +282,8 @@ export class ComponentService implements ComponentSource {
         name: componentName,
         description:
           `# ${componentName}\n\n` +
-          `${projectInfo.description || 'GitLab Component'}\n\n` +
-          `**Project:** [${projectPath}](${projectInfo.web_url})\n` +
+          `${project.description || 'GitLab Component'}\n\n` +
+          `**Project:** [${projectPath}](${project.web_url})\n` +
           `**Version:** ${version}\n\n` +
           (readmeContent ? `## Documentation\n${readmeContent.substring(0, 800)}...\n\n` : '') +
           (templateContent ? `## Template Preview\n\`\`\`yaml\n${templateContent.substring(0, 300)}...\n\`\`\`` : ''),
@@ -275,9 +292,15 @@ export class ComponentService implements ComponentSource {
         source: `${gitlabInstance}/${projectPath}`
       };
 
+      this.logger.logPerformance('fetchComponentMetadata (full)', Date.now() - startTime, {
+        hasTemplate: !!templateContent,
+        hasReadme: !!readmeContent,
+        paramCount: parameters.length
+      });
+
       return component;
     } catch (error) {
-      console.error(`Error fetching component metadata: ${error}`);
+      this.logger.error(`Error fetching component metadata: ${error}`);
 
       // Still provide a minimal component rather than failing
       const urlParts = url.split('/');
@@ -292,49 +315,71 @@ export class ComponentService implements ComponentSource {
     }
   }
 
-  // Helper methods for HTTP requests
-  public fetchJson(url: string): Promise<any> {
-    return new Promise((resolve, reject) => {
-      https.get(url, {
-        headers: {
-          'User-Agent': 'VSCode-GitLabComponentHelper'
-        }
-      }, (res) => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => {
-          if (res.statusCode === 200) {
-            try {
-              resolve(JSON.parse(data));
-            } catch (e) {
-              reject(`Error parsing JSON: ${e}`);
-            }
-          } else {
-            reject(`HTTP error ${res.statusCode}`);
-          }
-        });
-      }).on('error', reject);
-    });
+  // Helper method for parallel template fetching
+  private async fetchTemplate(apiBaseUrl: string, projectId: string, componentName: string, version: string): Promise<{ content: string; parameters: any[] } | null> {
+    try {
+      const templatePath = `templates/${componentName}.yml`;
+      const templateUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(templatePath)}/raw?ref=${version}`;
+      
+      const templateContent = await this.httpClient.fetchText(templateUrl);
+
+      // Extract variables/parameters from the template
+      let parameters: any[] = [];
+      const variableMatches = templateContent.match(/variables:[\s\S]*?(?=\n\w+:|$)/g);
+      if (variableMatches && variableMatches.length > 0) {
+        const variableSection = variableMatches[0];
+        const varLines = variableSection.split('\n').slice(1);
+
+        parameters = varLines
+          .filter(line => line.trim() && line.includes(':'))
+          .map(line => {
+            const parts = line.trim().split(':');
+            const name = parts[0].trim();
+            const defaultValue = parts.slice(1).join(':').trim();
+
+            return {
+              name,
+              description: `Parameter: ${name}`,
+              required: false,
+              type: 'string',
+              default: defaultValue
+            };
+          });
+      }
+
+      return { content: templateContent, parameters };
+    } catch (error) {
+      this.logger.debug(`Could not fetch component template: ${error}`);
+      return null;
+    }
   }
 
-  private fetchText(url: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      https.get(url, {
-        headers: {
-          'User-Agent': 'VSCode-GitLabComponentHelper'
-        }
-      }, (res) => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => {
-          if (res.statusCode === 200) {
-            resolve(data);
-          } else {
-            reject(`HTTP error ${res.statusCode}`);
-          }
-        });
-      }).on('error', reject);
-    });
+  // Helper method for parallel README fetching
+  private async fetchReadme(apiBaseUrl: string, projectId: string, componentName: string, version: string): Promise<string | null> {
+    try {
+      // First check if there's a component-specific README
+      const componentReadmePath = `docs/${componentName}/README.md`;
+      try {
+        const readmeUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(componentReadmePath)}/raw?ref=${version}`;
+        return await this.httpClient.fetchText(readmeUrl);
+      } catch (e) {
+        // Then try the project README
+        const projectReadmeUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/README.md/raw?ref=${version}`;
+        return await this.httpClient.fetchText(projectReadmeUrl);
+      }
+    } catch (error) {
+      this.logger.debug(`Could not fetch README: ${error}`);
+      return null;
+    }
+  }
+
+  // Helper methods for HTTP requests - now using HttpClient
+  public async fetchJson(url: string): Promise<any> {
+    return this.httpClient.fetchJson(url);
+  }
+
+  private async fetchText(url: string): Promise<string> {
+    return this.httpClient.fetchText(url);
   }
 
   private getLocalComponents(): Component[] {
@@ -381,99 +426,62 @@ export class ComponentService implements ComponentSource {
     ];
   }
 
-  private fetchFromGitLab(): Promise<Component[]> {
+  private async fetchFromGitLab(): Promise<Component[]> {
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
     const gitlabUrl = config.get<string>('gitlabUrl', '');
     const projectId = config.get<string>('gitlabProjectId', '');
     const token = config.get<string>('gitlabToken', '');
     const filePath = config.get<string>('gitlabComponentsFilePath', 'components.json');
 
-    return new Promise((resolve, reject) => {
-      if (!gitlabUrl || !projectId || !token) {
-        reject('GitLab URL, project ID, or token not configured');
-        return;
-      }
+    if (!gitlabUrl || !projectId || !token) {
+      throw new Error('GitLab URL, project ID, or token not configured');
+    }
 
-      const apiUrl = `${gitlabUrl}/api/v4/projects/${encodeURIComponent(projectId)}/repository/files/${encodeURIComponent(filePath)}/raw`;
+    const apiUrl = `${gitlabUrl}/api/v4/projects/${encodeURIComponent(projectId)}/repository/files/${encodeURIComponent(filePath)}/raw`;
 
-      const options = {
+    try {
+      const components = await this.httpClient.fetchJson(apiUrl, {
         headers: {
-          'PRIVATE-TOKEN': token,
-          'User-Agent': 'VSCode-GitLabComponentHelper'
+          'PRIVATE-TOKEN': token
         }
-      };
-
-      https.get(apiUrl, options, (res) => {
-        let data = '';
-
-        res.on('data', (chunk) => {
-          data += chunk;
-        });
-
-        res.on('end', () => {
-          if (res.statusCode === 200) {
-            try {
-              const components = JSON.parse(data);
-              resolve(components);
-            } catch (error) {
-              reject(`Error parsing GitLab response: ${error}`);
-            }
-          } else {
-            reject(`GitLab API returned status ${res.statusCode}: ${data}`);
-          }
-        });
-      }).on('error', (error) => {
-        reject(`Error connecting to GitLab: ${error}`);
       });
-    });
+      
+      this.logger.info(`Successfully fetched ${components.length} components from GitLab`);
+      return components;
+    } catch (error) {
+      this.logger.error(`GitLab fetch failed: ${error}`);
+      throw error;
+    }
   }
 
-  private fetchFromUrl(): Promise<Component[]> {
+  private async fetchFromUrl(): Promise<Component[]> {
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
     const url = config.get<string>('componentsUrl', '');
 
-    return new Promise((resolve, reject) => {
-      if (!url) {
-        reject('Components URL not configured');
-        return;
-      }
+    if (!url) {
+      throw new Error('Components URL not configured');
+    }
 
-      https.get(url, (res) => {
-        let data = '';
-
-        res.on('data', (chunk) => {
-          data += chunk;
-        });
-
-        res.on('end', () => {
-          if (res.statusCode === 200) {
-            try {
-              const components = JSON.parse(data);
-              resolve(components);
-            } catch (error) {
-              reject(`Error parsing response: ${error}`);
-            }
-          } else {
-            reject(`HTTP request returned status ${res.statusCode}: ${data}`);
-          }
-        });
-      }).on('error', (error) => {
-        reject(`Error connecting to URL: ${error}`);
-      });
-    });
+    try {
+      const components = await this.httpClient.fetchJson(url);
+      this.logger.info(`Successfully fetched ${components.length} components from URL`);
+      return components;
+    } catch (error) {
+      this.logger.error(`URL fetch failed: ${error}`);
+      throw error;
+    }
   }
 
-  private catalogCache = new Map<string, any>();
-
   /**
-   * Fetch component catalog data from GitLab
+   * Fetch component catalog data from GitLab with optimizations
    */
   async fetchCatalogData(gitlabInstance: string, projectPath: string, forceRefresh: boolean = false, version?: string): Promise<any> {
+    const startTime = Date.now();
     const versionSuffix = version ? `@${version}` : '';
     const cacheKey = `catalog:${gitlabInstance}:${projectPath}${versionSuffix}`;
 
-    outputChannel.appendLine(`[ComponentService] fetchCatalogData called for ${gitlabInstance}/${projectPath}${versionSuffix}`);
-    outputChannel.appendLine(`[ComponentService] Force refresh: ${forceRefresh}`);
+    this.logger.info(`fetchCatalogData called for ${gitlabInstance}/${projectPath}${versionSuffix}`);
+    this.logger.debug(`Force refresh: ${forceRefresh}`);
 
     // Clean up GitLab instance URL if it contains protocol
     let cleanGitlabInstance = gitlabInstance;
@@ -484,254 +492,278 @@ export class ComponentService implements ComponentSource {
       cleanGitlabInstance = cleanGitlabInstance.replace('http://', '');
     }
 
-    outputChannel.appendLine(`[ComponentService] Cleaned GitLab instance: ${cleanGitlabInstance}`);
-
     // Check cache first
-    if (!forceRefresh && this.catalogCache && this.catalogCache.has(cacheKey)) {
-      outputChannel.appendLine(`[ComponentService] Returning cached catalog data for ${cacheKey}`);
+    if (!forceRefresh && this.catalogCache.has(cacheKey)) {
+      this.logger.info(`Returning cached catalog data for ${cacheKey}`);
+      this.logger.logPerformance('fetchCatalogData (cached)', Date.now() - startTime);
       return this.catalogCache.get(cacheKey);
     }
 
-    outputChannel.appendLine(`[ComponentService] Fetching fresh catalog data from ${cleanGitlabInstance}`);
+    this.logger.info(`Fetching fresh catalog data from ${cleanGitlabInstance}`);
 
     try {
-      // First, get the project info to get the project ID
-      const projectApiUrl = `https://${cleanGitlabInstance}/api/v4/projects/${encodeURIComponent(projectPath)}`;
-      outputChannel.appendLine(`[ComponentService] Fetching project info from: ${projectApiUrl}`);
-      const projectInfo = await this.fetchJson(projectApiUrl);
-      outputChannel.appendLine(`[ComponentService] Found project: ${projectInfo.name} (ID: ${projectInfo.id})`);
+      // **PARALLEL OPTIMIZATION** - Fetch project info and templates in parallel
+      const apiBaseUrl = `https://${cleanGitlabInstance}/api/v4`;
+      const ref = version || 'main';
+      
+      const [projectInfo, templates] = await Promise.all([
+        this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`),
+        this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`)
+          .catch(() => [] as GitLabTreeItem[]) // If templates folder doesn't exist, return empty array
+      ]);
 
-      // Then look for components in the templates directory
-      const ref = version || 'main'; // Use specific version or default to main
-      const templatesUrl = `https://${cleanGitlabInstance}/api/v4/projects/${projectInfo.id}/repository/tree?path=templates&ref=${ref}`;
-      outputChannel.appendLine(`[ComponentService] Fetching templates from: ${templatesUrl} (ref: ${ref})`);
-      const templates = await this.fetchJson(templatesUrl) as GitLabTreeItem[];
-      outputChannel.appendLine(`[ComponentService] Found ${templates.length} items in templates directory`);
+      this.logger.debug(`Found project: ${projectInfo.name} (ID: ${projectInfo.id})`);
+      this.logger.debug(`Found ${templates.length} items in templates directory`);
 
-      // Transform the templates into components
-      const yamlFiles = templates.filter((file: GitLabTreeItem) => file.name.endsWith('.yml') || file.name.endsWith('.yaml'));
-      outputChannel.appendLine(`[ComponentService] Found ${yamlFiles.length} YAML template files`);
+      // Filter YAML files
+      const yamlFiles = templates.filter((file: GitLabTreeItem) => 
+        file.name.endsWith('.yml') || file.name.endsWith('.yaml')
+      );
+      this.logger.debug(`Found ${yamlFiles.length} YAML template files`);
 
-      const components = await Promise.all(yamlFiles
-        .map(async (file: GitLabTreeItem) => {
-          // Remove the .yml extension to get component name
+      if (yamlFiles.length === 0) {
+        this.logger.info(`No YAML templates found in ${projectPath}`);
+        const catalogData = { components: [] };
+        this.catalogCache.set(cacheKey, catalogData);
+        return catalogData;
+      }
+
+      // **BATCH PROCESSING OPTIMIZATION** - Process components in batches
+      const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+      const batchSize = config.get<number>('batchSize', 5);
+      
+      const components = await this.httpClient.processBatch(
+        yamlFiles,
+        async (file: GitLabTreeItem) => {
           const name = file.name.replace(/\.ya?ml$/, '');
-          outputChannel.appendLine(`[ComponentService] Processing component: ${name} (${file.name})`);
+          this.logger.debug(`Processing component: ${name} (${file.name})`);
+          
+          // **PARALLEL CONTENT FETCHING** - Fetch template content and README in parallel
+          const [templateResult, readmeResult] = await Promise.allSettled([
+            this.fetchTemplateContent(apiBaseUrl, projectInfo.id, file.name, ref),
+            this.fetchProjectReadme(apiBaseUrl, projectInfo.id, ref)
+          ]);
 
-          // Try to get component content to extract info
-          const contentUrl = `https://${cleanGitlabInstance}/api/v4/projects/${projectInfo.id}/repository/files/${encodeURIComponent('templates/' + file.name)}/raw?ref=main`;
           let description = '';
           let variables: ComponentVariable[] = [];
           let readmeContent = '';
 
-          try {
-            const content = await this.fetchText(contentUrl);
-            outputChannel.appendLine(`[ComponentService] Fetched content for ${name} (${content.length} chars)`);
+          // Process template content
+          if (templateResult.status === 'fulfilled' && templateResult.value) {
+            const { content, extractedVariables, extractedDescription } = templateResult.value;
+            variables = extractedVariables;
+            description = extractedDescription || `${name} component`;
+          } else {
+            description = `${name} component`;
+          }
 
-            // Extract description from multiple sources (priority order)
-
-            // 1. Try to get description from component spec
-            const specDescMatch = content.match(/spec:\s*\n(?:\s*inputs:[\s\S]*?)?\n\s*description:\s*["']?(.*?)["']?\s*$/m);
-            if (specDescMatch) {
-              description = specDescMatch[1].trim();
-              outputChannel.appendLine(`[ComponentService] Found spec description for ${name}: ${description}`);
-            }
-
-            // 2. If no spec description, try comment at top of file
-            if (!description) {
-              const commentMatch = content.match(/^#\s*(.+?)$/m);
-              if (commentMatch && !commentMatch[1].toLowerCase().includes('gitlab') && !commentMatch[1].toLowerCase().includes('ci')) {
-                description = commentMatch[1].trim();
-                outputChannel.appendLine(`[ComponentService] Found comment description for ${name}: ${description}`);
-              }
-            }
-
-            // 3. Try to fetch README if available
-            try {
-              const readmeUrl = `https://${cleanGitlabInstance}/api/v4/projects/${projectInfo.id}/repository/files/README.md/raw?ref=main`;
-              readmeContent = await this.fetchText(readmeUrl);
-              outputChannel.appendLine(`[ComponentService] Fetched README for ${name} (${readmeContent.length} chars)`);
-
-              // If no description yet, extract from README
-              if (!description) {
-                // Extract first meaningful line from README (skip title, get first paragraph)
-                const readmeLines = readmeContent.split('\n').filter(line => line.trim());
-                for (const line of readmeLines) {
-                  const trimmed = line.trim();
-                  if (trimmed && !trimmed.startsWith('#') && !trimmed.startsWith('[') && trimmed.length > 20) {
-                    description = trimmed;
-                    outputChannel.appendLine(`[ComponentService] Found README description for ${name}: ${description.substring(0, 100)}...`);
-                    break;
-                  }
+          // Process README content
+          if (readmeResult.status === 'fulfilled' && readmeResult.value) {
+            readmeContent = readmeResult.value;
+            
+            // Extract description from README if not found in template
+            if (!description || description === `${name} component`) {
+              const readmeLines = readmeContent.split('\n').filter(line => line.trim());
+              for (const line of readmeLines) {
+                const trimmed = line.trim();
+                if (trimmed && !trimmed.startsWith('#') && !trimmed.startsWith('[') && trimmed.length > 20) {
+                  description = trimmed;
+                  break;
                 }
               }
-            } catch (readmeError) {
-              outputChannel.appendLine(`[ComponentService] No README found for ${name}`);
             }
-
-            // 4. Fallback description
-            if (!description) {
-              description = `${name} component`;
-            }
-
-            // Extract variables from GitLab CI/CD component spec format
-            let specMatches = content.match(/spec:\s*\n\s*inputs:([\s\S]*?)(?=\n\w+:|$)/);
-            if (specMatches) {
-              // Parse component spec format
-              const inputsSection = specMatches[1];
-              const inputLines = inputsSection.split('\n')
-                .filter(line => line.trim() && !line.trim().startsWith('#'));
-
-              let currentInput: any = null;
-              variables = [];
-
-              for (const line of inputLines) {
-                const trimmedLine = line.trim();
-                if (!trimmedLine) continue;
-
-                // New input parameter (starts at column 4 spaces or 2 spaces after "inputs:")
-                if (line.match(/^\s{4}[a-zA-Z_][a-zA-Z0-9_]*:/) || line.match(/^\s{2}[a-zA-Z_][a-zA-Z0-9_]*:/)) {
-                  if (currentInput) {
-                    variables.push(currentInput);
-                  }
-                  const inputName = trimmedLine.split(':')[0];
-                  currentInput = {
-                    name: inputName,
-                    description: `Parameter: ${inputName}`,
-                    required: false,
-                    type: 'string',
-                    default: undefined
-                  };
-                }
-                // Property of current input
-                else if (currentInput && line.match(/^\s{6,}/)) {
-                  if (trimmedLine.startsWith('description:')) {
-                    currentInput.description = trimmedLine.substring(12).replace(/['"]/g, '').trim();
-                  } else if (trimmedLine.startsWith('default:')) {
-                    currentInput.default = trimmedLine.substring(8).replace(/['"]/g, '').trim();
-                  } else if (trimmedLine.startsWith('type:')) {
-                    currentInput.type = trimmedLine.substring(5).replace(/['"]/g, '').trim();
-                  }
-                }
-              }
-
-              // Add the last input
-              if (currentInput) {
-                variables.push(currentInput);
-              }
-
-              outputChannel.appendLine(`[ComponentService] Extracted ${variables.length} variables from component spec for ${name}`);
-            } else {
-              // Fallback to old format for backward compatibility
-              const variableMatches = content.match(/variables:[\s\S]*?(?=\n\w+:|$)/);
-              if (variableMatches) {
-                const variableSection = variableMatches[0];
-                const varLines = variableSection.split('\n').slice(1); // Skip "variables:" line
-
-                variables = varLines
-                  .filter(line => line.trim() && line.includes(':') && !line.trim().startsWith('#'))
-                  .map(line => {
-                    const parts = line.trim().split(':');
-                    const varName = parts[0].trim();
-                    const defaultValue = parts.slice(1).join(':').trim();
-
-                    return {
-                      name: varName,
-                      description: `Parameter: ${varName}`,
-                      required: false,
-                      type: 'string',
-                      default: defaultValue || undefined
-                    };
-                  });
-
-                outputChannel.appendLine(`[ComponentService] Extracted ${variables.length} variables from legacy format for ${name}`);
-              }
-            }
-          } catch (e) {
-            outputChannel.appendLine(`[ComponentService] Error fetching content for ${name}: ${e}`);
-            console.error(`Error fetching content for ${name}: ${e}`);
           }
 
           return {
             name,
-            description: description || `${name} component`,
+            description,
             variables,
-            latest_version: 'main',
+            latest_version: ref,
             readme: readmeContent
           };
-        }));
-
-      outputChannel.appendLine(`[ComponentService] Successfully processed ${components.length} components`);
-      components.forEach((comp: any) => {
-        outputChannel.appendLine(`[ComponentService]   - ${comp.name}: ${comp.variables.length} variables`);
-      });
+        },
+        batchSize
+      );
 
       const catalogData = { components };
 
-      // Cache the result if we have a cache
-      if (this.catalogCache) {
-        this.catalogCache.set(cacheKey, catalogData);
-        outputChannel.appendLine(`[ComponentService] Cached catalog data for ${cacheKey}`);
-      }
+      // Cache the result
+      this.catalogCache.set(cacheKey, catalogData);
+      
+      this.logger.info(`Successfully processed ${components.length} components`);
+      this.logger.logPerformance('fetchCatalogData (fresh)', Date.now() - startTime, {
+        componentCount: components.length,
+        batchSize,
+        projectPath
+      });
 
       return catalogData;
     } catch (error) {
-      outputChannel.appendLine(`[ComponentService] Error fetching catalog data for ${projectPath}: ${error}`);
-      console.error(`Error fetching catalog data for ${projectPath}: ${error}`);
+      this.logger.error(`Error fetching catalog data for ${projectPath}: ${error}`);
       throw error;
     }
   }
 
+  // Helper method for parallel template content fetching
+  private async fetchTemplateContent(apiBaseUrl: string, projectId: string, fileName: string, ref: string): Promise<{
+    content: string;
+    extractedVariables: ComponentVariable[];
+    extractedDescription?: string;
+  } | null> {
+    try {
+      const contentUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent('templates/' + fileName)}/raw?ref=${ref}`;
+      const content = await this.httpClient.fetchText(contentUrl);
+
+      let extractedDescription = '';
+      let extractedVariables: ComponentVariable[] = [];
+
+      // Extract description from component spec
+      const specDescMatch = content.match(/spec:\s*\n(?:\s*inputs:[\s\S]*?)?\n\s*description:\s*["']?(.*?)["']?\s*$/m);
+      if (specDescMatch) {
+        extractedDescription = specDescMatch[1].trim();
+      }
+
+      // If no spec description, try comment at top of file
+      if (!extractedDescription) {
+        const commentMatch = content.match(/^#\s*(.+?)$/m);
+        if (commentMatch && !commentMatch[1].toLowerCase().includes('gitlab') && !commentMatch[1].toLowerCase().includes('ci')) {
+          extractedDescription = commentMatch[1].trim();
+        }
+      }
+
+      // Extract variables from GitLab CI/CD component spec format
+      const specMatches = content.match(/spec:\s*\n\s*inputs:([\s\S]*?)(?=\n\w+:|$)/);
+      if (specMatches) {
+        // Parse component spec format
+        const inputsSection = specMatches[1];
+        const inputLines = inputsSection.split('\n')
+          .filter(line => line.trim() && !line.trim().startsWith('#'));
+
+        let currentInput: any = null;
+
+        for (const line of inputLines) {
+          const trimmedLine = line.trim();
+          if (!trimmedLine) continue;
+
+          // New input parameter
+          if (line.match(/^\s{4}[a-zA-Z_][a-zA-Z0-9_]*:/) || line.match(/^\s{2}[a-zA-Z_][a-zA-Z0-9_]*:/)) {
+            if (currentInput) {
+              extractedVariables.push(currentInput);
+            }
+            const inputName = trimmedLine.split(':')[0];
+            currentInput = {
+              name: inputName,
+              description: `Parameter: ${inputName}`,
+              required: false,
+              type: 'string',
+              default: undefined
+            };
+          }
+          // Property of current input
+          else if (currentInput && line.match(/^\s{6,}/)) {
+            if (trimmedLine.startsWith('description:')) {
+              currentInput.description = trimmedLine.substring(12).replace(/['"]/g, '').trim();
+            } else if (trimmedLine.startsWith('default:')) {
+              currentInput.default = trimmedLine.substring(8).replace(/['"]/g, '').trim();
+            } else if (trimmedLine.startsWith('type:')) {
+              currentInput.type = trimmedLine.substring(5).replace(/['"]/g, '').trim();
+            }
+          }
+        }
+
+        // Add the last input
+        if (currentInput) {
+          extractedVariables.push(currentInput);
+        }
+      } else {
+        // Fallback to old format for backward compatibility
+        const variableMatches = content.match(/variables:[\s\S]*?(?=\n\w+:|$)/);
+        if (variableMatches) {
+          const variableSection = variableMatches[0];
+          const varLines = variableSection.split('\n').slice(1);
+
+          extractedVariables = varLines
+            .filter(line => line.trim() && line.includes(':') && !line.trim().startsWith('#'))
+            .map(line => {
+              const parts = line.trim().split(':');
+              const varName = parts[0].trim();
+              const defaultValue = parts.slice(1).join(':').trim();
+
+              return {
+                name: varName,
+                description: `Parameter: ${varName}`,
+                required: false,
+                type: 'string',
+                default: defaultValue || undefined
+              };
+            });
+        }
+      }
+
+      return { content, extractedVariables, extractedDescription };
+    } catch (error) {
+      this.logger.debug(`Could not fetch template content: ${error}`);
+      return null;
+    }
+  }
+
+  // Helper method for parallel README fetching
+  private async fetchProjectReadme(apiBaseUrl: string, projectId: string, ref: string): Promise<string | null> {
+    try {
+      const readmeUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/README.md/raw?ref=${ref}`;
+      return await this.httpClient.fetchText(readmeUrl);
+    } catch (error) {
+      this.logger.debug(`No README found: ${error}`);
+      return null;
+    }
+  }
+
   /**
-   * Fetch all tags/versions for a GitLab project
+   * Fetch all tags/versions for a GitLab project with optimizations
    */
   public async fetchProjectVersions(gitlabInstance: string, projectPath: string): Promise<string[]> {
+    const startTime = Date.now();
+    
     try {
       const apiBaseUrl = `https://${gitlabInstance}/api/v4`;
       const encodedPath = encodeURIComponent(projectPath);
 
-      outputChannel.appendLine(`[ComponentService] Fetching versions for ${gitlabInstance}/${projectPath}`);
+      this.logger.info(`Fetching versions for ${gitlabInstance}/${projectPath}`);
 
       // First, get project info to get the project ID
-      const projectUrl = `${apiBaseUrl}/projects/${encodedPath}`;
-      const projectInfo = await this.fetchJson(projectUrl);
+      const projectInfo = await this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodedPath}`);
 
       if (!projectInfo || !projectInfo.id) {
-        outputChannel.appendLine(`[ComponentService] Could not get project info for ${projectPath}`);
+        this.logger.warn(`Could not get project info for ${projectPath}`);
         return ['main']; // Fallback to main branch
       }
 
-      // Fetch both tags and branches
+      // **PARALLEL OPTIMIZATION** - Fetch tags and branches in parallel
+      const [tagsResult, branchesResult] = await Promise.allSettled([
+        this.httpClient.fetchJson(`${apiBaseUrl}/projects/${projectInfo.id}/repository/tags?per_page=100&sort=desc`),
+        this.httpClient.fetchJson(`${apiBaseUrl}/projects/${projectInfo.id}/repository/branches?per_page=20`)
+      ]);
+
       const versions: string[] = [];
 
-      // Fetch tags (releases)
-      try {
-        const tagsUrl = `${apiBaseUrl}/projects/${projectInfo.id}/repository/tags?per_page=100&sort=desc`;
-        const tags = await this.fetchJson(tagsUrl);
-
-        if (Array.isArray(tags)) {
-          const tagVersions = tags.map((tag: any) => tag.name).filter((name: string) => name);
-          versions.push(...tagVersions);
-          outputChannel.appendLine(`[ComponentService] Found ${tagVersions.length} tags`);
-        }
-      } catch (error) {
-        outputChannel.appendLine(`[ComponentService] Error fetching tags: ${error}`);
+      // Process tags
+      if (tagsResult.status === 'fulfilled' && Array.isArray(tagsResult.value)) {
+        const tagVersions = tagsResult.value.map((tag: any) => tag.name).filter((name: string) => name);
+        versions.push(...tagVersions);
+        this.logger.debug(`Found ${tagVersions.length} tags`);
+      } else {
+        this.logger.warn(`Error fetching tags: ${tagsResult.status === 'rejected' ? tagsResult.reason : 'Unknown error'}`);
       }
 
-      // Fetch main branches (main, master, develop)
-      try {
-        const branchesUrl = `${apiBaseUrl}/projects/${projectInfo.id}/repository/branches?per_page=20`;
-        const branches = await this.fetchJson(branchesUrl);
-
-        if (Array.isArray(branches)) {
-          const importantBranches = branches
-            .map((branch: any) => branch.name)
-            .filter((name: string) => ['main', 'master', 'develop', 'dev'].includes(name));
-          versions.push(...importantBranches);
-          outputChannel.appendLine(`[ComponentService] Found ${importantBranches.length} important branches`);
-        }
-      } catch (error) {
-        outputChannel.appendLine(`[ComponentService] Error fetching branches: ${error}`);
+      // Process branches
+      if (branchesResult.status === 'fulfilled' && Array.isArray(branchesResult.value)) {
+        const importantBranches = branchesResult.value
+          .map((branch: any) => branch.name)
+          .filter((name: string) => ['main', 'master', 'develop', 'dev'].includes(name));
+        versions.push(...importantBranches);
+        this.logger.debug(`Found ${importantBranches.length} important branches`);
+      } else {
+        this.logger.warn(`Error fetching branches: ${branchesResult.status === 'rejected' ? branchesResult.reason : 'Unknown error'}`);
       }
 
       // Remove duplicates and sort
@@ -769,67 +801,45 @@ export class ComponentService implements ComponentSource {
         return b.localeCompare(a);
       });
 
-      outputChannel.appendLine(`[ComponentService] Returning ${sortedVersions.length} versions: ${sortedVersions.slice(0, 5).join(', ')}${sortedVersions.length > 5 ? '...' : ''}`);
-      return sortedVersions.length > 0 ? sortedVersions : ['main'];
+      const result = sortedVersions.length > 0 ? sortedVersions : ['main'];
+      
+      this.logger.info(`Returning ${result.length} versions: ${result.slice(0, 5).join(', ')}${result.length > 5 ? '...' : ''}`);
+      this.logger.logPerformance('fetchProjectVersions', Date.now() - startTime, {
+        projectPath,
+        versionCount: result.length
+      });
+      
+      return result;
 
     } catch (error) {
-      outputChannel.appendLine(`[ComponentService] Error fetching project versions: ${error}`);
+      this.logger.error(`Error fetching project versions: ${error}`);
       return ['main']; // Fallback
     }
   }
 
   /**
-   * Fetch all tags/versions for a GitLab project
+   * Fetch all tags/versions for a GitLab project (optimized version)
    */
   public async fetchProjectTags(gitlabInstance: string, projectPath: string): Promise<Array<{name: string, commit: any}>> {
-    outputChannel.appendLine(`[ComponentService] Fetching tags for ${gitlabInstance}/${projectPath}`);
+    const startTime = Date.now();
+    this.logger.info(`Fetching tags for ${gitlabInstance}/${projectPath}`);
 
-    return new Promise<Array<{name: string, commit: any}>>((resolve, reject) => {
-      const path = `/api/v4/projects/${encodeURIComponent(projectPath)}/repository/tags?per_page=100&order_by=updated&sort=desc`;
-
-      const options = {
-        hostname: gitlabInstance,
-        port: 443,
-        path: path,
-        method: 'GET',
-        headers: {
-          'User-Agent': 'vscode-gitlab-component-helper'
-        }
-      };
-
-      outputChannel.appendLine(`[ComponentService] Making request to: https://${gitlabInstance}${path}`);
-
-      const req = https.request(options, (res) => {
-        let data = '';
-
-        res.on('data', (chunk) => {
-          data += chunk;
-        });
-
-        res.on('end', () => {
-          try {
-            if (res.statusCode === 200) {
-              const tags = JSON.parse(data);
-              outputChannel.appendLine(`[ComponentService] Found ${tags.length} tags for ${projectPath}`);
-              resolve(tags);
-            } else {
-              outputChannel.appendLine(`[ComponentService] Failed to fetch tags: ${res.statusCode} - ${data}`);
-              resolve([]); // Return empty array instead of rejecting
-            }
-          } catch (error) {
-            outputChannel.appendLine(`[ComponentService] Error parsing tags response: ${error}`);
-            resolve([]); // Return empty array instead of rejecting
-          }
-        });
+    try {
+      const apiUrl = `https://${gitlabInstance}/api/v4/projects/${encodeURIComponent(projectPath)}/repository/tags?per_page=100&order_by=updated&sort=desc`;
+      
+      const tags = await this.httpClient.fetchJson(apiUrl);
+      
+      this.logger.info(`Found ${tags.length} tags for ${projectPath}`);
+      this.logger.logPerformance('fetchProjectTags', Date.now() - startTime, {
+        projectPath,
+        tagCount: tags.length
       });
-
-      req.on('error', (error) => {
-        outputChannel.appendLine(`[ComponentService] Error fetching tags: ${error}`);
-        resolve([]); // Return empty array instead of rejecting
-      });
-
-      req.end();
-    });
+      
+      return tags;
+    } catch (error) {
+      this.logger.warn(`Error fetching tags: ${error}`);
+      return []; // Return empty array instead of rejecting
+    }
   }
 
   // ...existing code...
