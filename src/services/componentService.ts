@@ -61,18 +61,49 @@ export class ComponentService implements ComponentSource {
   private catalogCache = new Map<string, any>();
 
   // Rate limiting properties
-  private rateLimiter: RateLimiter = {
-    tokens: 10, // Start with full tokens
-    lastRefill: Date.now(),
-    maxTokens: 10, // Max 10 requests
-    refillRate: 2 // 2 tokens per second
-  };
+  private rateLimiter: RateLimiter = this.initializeRateLimiter();
 
   private retryOptions: RetryOptions = {
     maxRetries: 3,
     baseDelay: 1000, // 1 second
     maxDelay: 8000 // 8 seconds max
   };
+
+  /**
+   * Initialize rate limiter with appropriate settings for GitLab instance
+   * GitLab.com: 2000 requests per minute per user (33.3 req/s)
+   * Self-hosted: Often higher limits, defaults to 10 req/s if not configured
+   */
+  private initializeRateLimiter(): RateLimiter {
+    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+    
+    // Allow configuration override
+    const configuredRate = config.get<number>('apiRateLimit');
+    const configuredMaxTokens = config.get<number>('apiMaxConcurrentRequests');
+    
+    let refillRate: number;
+    let maxTokens: number;
+    
+    if (configuredRate !== undefined) {
+      refillRate = configuredRate;
+      maxTokens = configuredMaxTokens || Math.min(10, configuredRate);
+    } else {
+      // Auto-detect based on instance type
+      // For gitlab.com, use conservative rate (10 req/s to be safe)
+      // For self-hosted, use moderate rate (5 req/s as safe default)
+      refillRate = 10; // Conservative default that works for most instances
+      maxTokens = 10;
+    }
+    
+    outputChannel.appendLine(`[ComponentService] Rate limiter initialized: ${refillRate} req/s, ${maxTokens} max concurrent`);
+    
+    return {
+      tokens: maxTokens,
+      lastRefill: Date.now(),
+      maxTokens: maxTokens,
+      refillRate: refillRate
+    };
+  }
 
   async getComponents(): Promise<Component[]> {
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
@@ -909,7 +940,7 @@ export class ComponentService implements ComponentSource {
       if (branches.status === 'fulfilled' && Array.isArray(branches.value)) {
         const importantBranches = branches.value
           .map((branch: any) => branch.name)
-          .filter((name: string) => ['main', 'master', 'develop', 'dev'].includes(name));
+          .filter((name: string) => ['main', 'master', 'develop', 'dev'].indexOf(name) !== -1);
         versions.push(...importantBranches);
         outputChannel.appendLine(`[ComponentService] Found ${importantBranches.length} important branches`);
       } else {

@@ -175,7 +175,7 @@ export function detectGitLabVariables(text: string): string[] {
   const variables = matches.map(match => match.substring(1)); // Remove the $
   const predefinedVariableNames = GITLAB_PREDEFINED_VARIABLES.map(v => v.name);
 
-  return variables.filter(variable => predefinedVariableNames.includes(variable));
+  return variables.filter(variable => predefinedVariableNames.indexOf(variable) !== -1);
 }
 
 /**
@@ -290,7 +290,7 @@ export function validateComponentUrlWithVariables(url: string): {
     const varInfo = GITLAB_PREDEFINED_VARIABLES.find(v => v.name === variable);
     if (varInfo) {
       // Check if this is a variable that can be reasonably resolved in development
-      if (['CI_SERVER_FQDN', 'CI_SERVER_HOST', 'CI_SERVER_URL', 'CI_PROJECT_PATH', 'CI_PROJECT_NAMESPACE', 'CI_PROJECT_NAME'].includes(variable)) {
+      if (['CI_SERVER_FQDN', 'CI_SERVER_HOST', 'CI_SERVER_URL', 'CI_PROJECT_PATH', 'CI_PROJECT_NAMESPACE', 'CI_PROJECT_NAME'].indexOf(variable) !== -1) {
         suggestions.push(`Consider setting ${variable} context or using a literal value for development`);
       } else {
         unresolvedVariables.push(variable);

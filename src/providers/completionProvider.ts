@@ -101,7 +101,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
 
       // Get components from cache and find the specific component
       const cacheManager = getComponentCacheManager();
-      const components = await cacheManager.getComponents();
+      const components = await cacheManager.getLegacyComponents(); // Use legacy format for now
 
       // Find the component by gitlab instance, project path, and component name
       const targetComponent = components.find(comp =>
@@ -121,7 +121,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       if (availableVersions.length === 0) {
         outputChannel.appendLine(`[CompletionProvider] No cached versions, fetching...`);
         try {
-          availableVersions = await cacheManager.fetchComponentVersions(targetComponent);
+          availableVersions = await cacheManager.fetchComponentVersionsLegacy(targetComponent);
         } catch (error) {
           outputChannel.appendLine(`[CompletionProvider] Error fetching versions: ${error}`);
           availableVersions = ['main', 'master']; // fallback
@@ -169,7 +169,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
     outputChannel.appendLine(`[CompletionProvider] Providing component completions`);
 
     const cacheManager = getComponentCacheManager();
-    const components = await cacheManager.getComponents();
+    const components = await cacheManager.getLegacyComponents(); // Use legacy format for backward compatibility
 
     outputChannel.appendLine(`[CompletionProvider] Found ${components.length} components in cache`);
 
@@ -275,15 +275,15 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       }
     }
 
-    if (defaultVersions[componentName] && availableVersions.includes(defaultVersions[componentName])) {
+    if (defaultVersions[componentName] && availableVersions.indexOf(defaultVersions[componentName]) !== -1) {
       return defaultVersions[componentName];
     }
 
     // Default priority: main > master > highest semantic version > first available
-    if (availableVersions.includes('main')) {
+    if (availableVersions.indexOf('main') !== -1) {
       return 'main';
     }
-    if (availableVersions.includes('master')) {
+    if (availableVersions.indexOf('master') !== -1) {
       return 'master';
     }
 

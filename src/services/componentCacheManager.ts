@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import { getComponentService } from '../services/componentService';
 import { outputChannel } from '../utils/outputChannel';
+import { GitComponent, GitComponentCache, GitComponentSource } from '../types/git-component';
 
+// Legacy interface for backward compatibility
 interface CachedComponent {
   name: string;
   description: string;
@@ -10,24 +12,24 @@ interface CachedComponent {
     description: string;
     required: boolean;
     type: string;
-    default?: any; // Allow any type for default values (string, boolean, number, etc.)
+    default?: any;
   }>;
   source: string;
   sourcePath: string;
   gitlabInstance: string;
   version: string;
   url: string;
-  availableVersions?: string[]; // All available versions for this component
+  availableVersions?: string[];
   readme?: string;
 }
 
 export class ComponentCacheManager {
-  private components: CachedComponent[] = [];
+  private components: GitComponent[] = [];
   private lastRefreshTime = 0;
   private refreshInProgress = false;
   private sourceErrors: Map<string, string> = new Map(); // Track errors per source
-  // Cache for project versions: key = `${gitlabInstance}|${sourcePath}`
-  private projectVersionsCache: Map<string, string[]> = new Map();
+  // Cache for project versions: key = `${platform}:${instance}|${path}`
+  private sourceVersionCache: Map<string, string[]> = new Map();
   private context: vscode.ExtensionContext | null = null;
 
   constructor(context?: vscode.ExtensionContext) {
@@ -56,7 +58,20 @@ export class ComponentCacheManager {
     });
   }
 
-  public async getComponents(): Promise<CachedComponent[]> {
+  /**
+   * Get components in legacy format for backward compatibility (DEPRECATED)
+   * Use getComponents() and work with GitComponent interface instead
+   */
+  public async getLegacyComponents(): Promise<CachedComponent[]> {
+    const components = await this.getComponents();
+    return components.map(this.convertToLegacyFormat);
+  }
+
+  /**
+   * Main method that returns generic GitComponent[]
+   * This should be used going forward for all new code
+   */
+  public async getComponents(): Promise<GitComponent[]> {
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
     const cacheTime = config.get<number>('cacheTime', 3600) * 1000; // Default 1 hour
 
@@ -74,6 +89,64 @@ export class ComponentCacheManager {
     }
 
     return this.components;
+  }
+
+  /**
+   * Get components in legacy format for backward compatibility
+   */
+  public async getLegacyComponents(): Promise<CachedComponent[]> {
+    const components = await this.getComponents();
+    return components.map(this.convertToLegacyFormat);
+  }
+
+  /**
+   * Convert GitComponent to legacy CachedComponent format
+   */
+  private convertToLegacyFormat(component: GitComponent): CachedComponent {
+    return {
+      name: component.name,
+      description: component.description,
+      parameters: component.parameters.map(p => ({
+        name: p.name,
+        description: p.description,
+        required: p.required,
+        type: p.type,
+        default: p.default
+      })),
+      source: `${component.source.platform}:${component.source.instance}`,
+      sourcePath: component.source.path,
+      gitlabInstance: component.source.instance, // Keep for backward compatibility
+      version: component.version,
+      url: component.url,
+      availableVersions: component.availableVersions,
+      readme: component.readme
+    };
+  }
+
+  /**
+   * Convert legacy CachedComponent to GitComponent format
+   */
+  private convertFromLegacyFormat(legacy: CachedComponent): GitComponent {
+    return {
+      name: legacy.name,
+      description: legacy.description,
+      parameters: legacy.parameters.map(p => ({
+        name: p.name,
+        description: p.description,
+        required: p.required,
+        type: p.type,
+        default: p.default
+      })),
+      source: {
+        platform: 'gitlab', // Assume GitLab for legacy entries
+        instance: legacy.gitlabInstance,
+        path: legacy.sourcePath
+      },
+      version: legacy.version,
+      url: legacy.url,
+      availableVersions: legacy.availableVersions,
+      readme: legacy.readme
+    };
   }
 
   /**
@@ -96,22 +169,36 @@ export class ComponentCacheManager {
     url: string;
   }): void {
     try {
+      // Convert legacy format to new generic format
+      const gitComponent: GitComponent = {
+        name: component.name,
+        description: component.description,
+        parameters: component.parameters,
+        source: {
+          platform: 'gitlab',
+          instance: component.gitlabInstance,
+          path: component.sourcePath
+        },
+        version: component.version,
+        url: component.url
+      };
+
       // Check if component already exists (avoid duplicates)
       const existingIndex = this.components.findIndex(comp =>
-        comp.name === component.name &&
-        comp.sourcePath === component.sourcePath &&
-        comp.gitlabInstance === component.gitlabInstance &&
-        comp.version === component.version
+        comp.name === gitComponent.name &&
+        comp.source.path === gitComponent.source.path &&
+        comp.source.instance === gitComponent.source.instance &&
+        comp.version === gitComponent.version
       );
 
       if (existingIndex >= 0) {
         // Update existing component
-        this.components[existingIndex] = component;
-        outputChannel.appendLine(`[ComponentCache] Updated existing dynamic component: ${component.name}@${component.version}`);
+        this.components[existingIndex] = gitComponent;
+        outputChannel.appendLine(`[ComponentCache] Updated existing dynamic component: ${gitComponent.name}@${gitComponent.version}`);
       } else {
         // Add new component
-        this.components.push(component);
-        outputChannel.appendLine(`[ComponentCache] Added new dynamic component: ${component.name}@${component.version} from ${component.gitlabInstance}/${component.sourcePath}`);
+        this.components.push(gitComponent);
+        outputChannel.appendLine(`[ComponentCache] Added new dynamic component: ${gitComponent.name}@${gitComponent.version} from ${gitComponent.source.platform}:${gitComponent.source.instance}/${gitComponent.source.path}`);
       }
     } catch (error) {
       outputChannel.appendLine(`[ComponentCache] Error adding dynamic component: ${error}`);
@@ -136,7 +223,7 @@ export class ComponentCacheManager {
     outputChannel.appendLine('[ComponentCache] Starting component refresh...');
 
     // Clear project versions cache on full refresh
-    this.projectVersionsCache.clear();
+    this.sourceVersionCache.clear();
 
     try {
       const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
@@ -149,7 +236,7 @@ export class ComponentCacheManager {
 
       outputChannel.appendLine(`[ComponentCache] Found ${sources.length} configured sources`);
 
-      const newComponents: CachedComponent[] = [];
+      const newComponents: GitComponent[] = [];
       this.sourceErrors.clear(); // Clear previous errors
 
       if (sources.length === 0) {
@@ -174,9 +261,11 @@ export class ComponentCacheManager {
                 default: 'latest'
               }
             ],
-            source: 'Local',
-            sourcePath: 'local',
-            gitlabInstance: 'local',
+            source: {
+              platform: 'local',
+              instance: 'local',
+              path: 'local'
+            },
             version: 'latest',
             url: 'deploy-component'
           },
@@ -198,9 +287,11 @@ export class ComponentCacheManager {
                 default: false
               }
             ],
-            source: 'Local',
-            sourcePath: 'local',
-            gitlabInstance: 'local',
+            source: {
+              platform: 'local',
+              instance: 'local',
+              path: 'local'
+            },
             version: 'latest',
             url: 'test-component'
           }
@@ -294,14 +385,14 @@ export class ComponentCacheManager {
     await this.refreshComponents();
   }
 
-  public addComponentToCache(component: CachedComponent): void {
+  public addComponentToCache(component: GitComponent): void {
     outputChannel.appendLine(`[ComponentCache] Adding component to cache: ${component.name}@${component.version}`);
 
     // Check if component already exists (same name, source, and version)
     const existingIndex = this.components.findIndex(c =>
       c.name === component.name &&
-      c.gitlabInstance === component.gitlabInstance &&
-      c.sourcePath === component.sourcePath &&
+      c.source.instance === component.source.instance &&
+      c.source.path === component.source.path &&
       c.version === component.version
     );
 
@@ -317,31 +408,40 @@ export class ComponentCacheManager {
   }
 
   /**
+   * Fetch and cache all available versions for a specific component (legacy interface)
+   */
+  public async fetchComponentVersionsLegacy(component: CachedComponent): Promise<string[]> {
+    // Convert to GitComponent and call the main method
+    const gitComponent = this.convertFromLegacyFormat(component);
+    return this.fetchComponentVersions(gitComponent);
+  }
+
+  /**
    * Fetch and cache all available versions for a specific component
    */
-  public async fetchComponentVersions(component: CachedComponent): Promise<string[]> {
+  public async fetchComponentVersions(component: GitComponent): Promise<string[]> {
     try {
-      const cacheKey = `${component.gitlabInstance}|${component.sourcePath}`;
-      let sortedVersions: string[] | undefined = this.projectVersionsCache.get(cacheKey);
+      const cacheKey = `${component.source.platform}:${component.source.instance}|${component.source.path}`;
+      let sortedVersions: string[] | undefined = this.sourceVersionCache.get(cacheKey);
       if (sortedVersions) {
-        outputChannel.appendLine(`[ComponentCache] [CACHE HIT] Reusing cached versions for project ${component.gitlabInstance}/${component.sourcePath}`);
+        outputChannel.appendLine(`[ComponentCache] [CACHE HIT] Reusing cached versions for ${component.source.platform} project ${component.source.instance}/${component.source.path}`);
       } else {
         const componentService = getComponentService();
-        const tags = await componentService.fetchProjectTags(component.gitlabInstance, component.sourcePath);
+        const tags = await componentService.fetchProjectTags(component.source.instance, component.source.path);
         // Extract version names and add common branch names
         const versions = ['main', 'master', ...tags.map(tag => tag.name)];
         // Remove duplicates and sort by priority
         const uniqueVersions = Array.from(new Set(versions));
         sortedVersions = this.sortVersionsByPriority(uniqueVersions);
-        this.projectVersionsCache.set(cacheKey, sortedVersions);
-        outputChannel.appendLine(`[ComponentCache] [API FETCH] Fetched ${sortedVersions.length} versions for project ${component.gitlabInstance}/${component.sourcePath}`);
+        this.sourceVersionCache.set(cacheKey, sortedVersions);
+        outputChannel.appendLine(`[ComponentCache] [API FETCH] Fetched ${sortedVersions.length} versions for ${component.source.platform} project ${component.source.instance}/${component.source.path}`);
       }
 
       // Update the component in cache with available versions
       const cachedComponent = this.components.find(c =>
         c.name === component.name &&
-        c.sourcePath === component.sourcePath &&
-        c.gitlabInstance === component.gitlabInstance
+        c.source.path === component.source.path &&
+        c.source.instance === component.source.instance
       );
       if (cachedComponent) {
         cachedComponent.availableVersions = sortedVersions;
@@ -385,7 +485,7 @@ export class ComponentCacheManager {
   /**
    * Fetch a specific version of a component and add it to cache
    */
-  public async fetchSpecificVersion(componentName: string, sourcePath: string, gitlabInstance: string, version: string): Promise<CachedComponent | null> {
+  public async fetchSpecificVersion(componentName: string, sourcePath: string, gitlabInstance: string, version: string): Promise<GitComponent | null> {
     try {
       outputChannel.appendLine(`[ComponentCache] Fetching specific version ${version} of ${componentName} from ${sourcePath}`);
 
@@ -394,8 +494,8 @@ export class ComponentCacheManager {
       // Check if this version is already cached
       const existingComponent = this.components.find(c =>
         c.name === componentName &&
-        c.sourcePath === sourcePath &&
-        c.gitlabInstance === gitlabInstance &&
+        c.source.path === sourcePath &&
+        c.source.instance === gitlabInstance &&
         c.version === version
       );
 
@@ -430,7 +530,7 @@ export class ComponentCacheManager {
       }
 
       // Create cached component entry
-      const cachedComponent: CachedComponent = {
+      const gitComponent: GitComponent = {
         name: catalogComponent.name,
         description: catalogComponent.description || `Component from ${sourcePath}`,
         parameters: (catalogComponent.variables || []).map((v: any) => ({
@@ -440,19 +540,21 @@ export class ComponentCacheManager {
           type: v.type || 'string',
           default: v.default
         })),
-        source: `Components from ${sourcePath}`,
-        sourcePath: sourcePath,
-        gitlabInstance: gitlabInstance,
+        source: {
+          platform: 'gitlab',
+          instance: gitlabInstance,
+          path: sourcePath
+        },
         version: version,
         url: `https://${gitlabInstance}/${sourcePath}/${catalogComponent.name}@${version}`,
         readme: catalogComponent.readme
       };
 
       // Add to cache
-      this.components.push(cachedComponent);
+      this.components.push(gitComponent);
 
       outputChannel.appendLine(`[ComponentCache] Successfully cached version ${version} of ${componentName}`);
-      return cachedComponent;
+      return gitComponent;
 
     } catch (error) {
       outputChannel.appendLine(`[ComponentCache] Error fetching specific version: ${error}`);
@@ -460,7 +562,7 @@ export class ComponentCacheManager {
     }
   }
 
-  private async fetchComponentsFromProject(gitlabInstance: string, projectPath: string, sourceName: string): Promise<CachedComponent[]> {
+  private async fetchComponentsFromProject(gitlabInstance: string, projectPath: string, sourceName: string): Promise<GitComponent[]> {
     const componentService = getComponentService();
 
     try {
@@ -476,7 +578,7 @@ export class ComponentCacheManager {
         // Clear any previous error for this source since it succeeded
         this.sourceErrors.delete(sourceName);
 
-        const sourceComponents: CachedComponent[] = catalogData.components.map((c: any) => {
+        const sourceComponents: GitComponent[] = catalogData.components.map((c: any) => {
           const componentUrl = `https://${gitlabInstance}/${projectPath}/${c.name}@${c.latest_version || 'main'}`;
 
           return {
@@ -489,9 +591,11 @@ export class ComponentCacheManager {
               type: v.type || 'string',
               default: v.default
             })),
-            source: sourceName,
-            sourcePath: projectPath,
-            gitlabInstance: gitlabInstance,
+            source: {
+              platform: 'gitlab',
+              instance: gitlabInstance,
+              path: projectPath
+            },
             version: c.latest_version || 'main',
             url: componentUrl
           };
@@ -512,7 +616,7 @@ export class ComponentCacheManager {
     }
   }
 
-  private async fetchComponentsFromGroup(gitlabInstance: string, groupPath: string, sourceName: string): Promise<CachedComponent[]> {
+  private async fetchComponentsFromGroup(gitlabInstance: string, groupPath: string, sourceName: string): Promise<GitComponent[]> {
     outputChannel.appendLine(`[ComponentCache] Fetching projects from group: ${gitlabInstance}/${groupPath}`);
 
     try {
@@ -531,7 +635,7 @@ export class ComponentCacheManager {
 
       // Process projects in batches to avoid overwhelming the API
       const batchSize = 5;
-      const allComponents: CachedComponent[] = [];
+      const allComponents: GitComponent[] = [];
       let projectsWithComponents = 0;
 
       for (let i = 0; i < groupProjects.length; i += batchSize) {
@@ -687,10 +791,29 @@ export class ComponentCacheManager {
         return;
       }
 
-      const cacheData = this.context.globalState.get<any>('componentCache');      if (cacheData && cacheData.components && Array.isArray(cacheData.components)) {
-        this.components = cacheData.components;
+      const cacheData = this.context.globalState.get<any>('componentCache');
+      
+      if (cacheData && cacheData.components && Array.isArray(cacheData.components)) {
+        // Handle both new format (GitComponent[]) and legacy format (CachedComponent[])
+        if (cacheData.version && cacheData.version >= '1.0.0') {
+          // New generic format
+          this.components = cacheData.components;
+          this.sourceVersionCache = new Map(cacheData.sourceVersionCache || []);
+        } else {
+          // Legacy format - convert to new format
+          outputChannel.appendLine('[ComponentCache] Converting legacy cache format to new generic format...');
+          this.components = cacheData.components.map((legacy: any) => this.convertFromLegacyFormat(legacy));
+          // Convert old projectVersionsCache to new sourceVersionCache
+          const oldVersionCache = new Map(cacheData.projectVersionsCache || []);
+          this.sourceVersionCache = new Map();
+          for (const [key, versions] of oldVersionCache.entries()) {
+            // Convert from "instance|path" to "gitlab:instance|path"
+            const newKey = key.includes(':') ? key : `gitlab:${key}`;
+            this.sourceVersionCache.set(newKey, versions);
+          }
+        }
+        
         this.lastRefreshTime = cacheData.lastRefreshTime || 0;
-        this.projectVersionsCache = new Map(cacheData.projectVersionsCache || []);
 
         outputChannel.appendLine(`[ComponentCache] Loaded ${this.components.length} components from global state`);
         outputChannel.appendLine(`[ComponentCache] Cache last updated: ${new Date(this.lastRefreshTime).toISOString()}`);
@@ -704,7 +827,7 @@ export class ComponentCacheManager {
       // Reset to empty cache on error
       this.components = [];
       this.lastRefreshTime = 0;
-      this.projectVersionsCache.clear();
+      this.sourceVersionCache.clear();
     }
   }
 
@@ -718,11 +841,11 @@ export class ComponentCacheManager {
         return;
       }
 
-      const cacheData = {
+      const cacheData: GitComponentCache = {
         components: this.components,
         lastRefreshTime: this.lastRefreshTime,
-        projectVersionsCache: Array.from(this.projectVersionsCache.entries()),
-        version: '1.0.0' // For future cache format migrations
+        sourceVersionCache: Array.from(this.sourceVersionCache.entries()),
+        version: '2.0.0' // Updated cache format version
       };
 
       await this.context.globalState.update('componentCache', cacheData);
