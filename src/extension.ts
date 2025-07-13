@@ -5,59 +5,60 @@ import { ComponentBrowserProvider } from './providers/componentBrowserProvider';
 import { detectIncludeComponent } from './providers/componentDetector';
 import { getComponentCacheManager, ComponentCacheManager } from './services/componentCacheManager';
 import { outputChannel } from './utils/outputChannel';
+import { Logger } from './utils/logger';
 
 export function activate(context: vscode.ExtensionContext) {
-  outputChannel.appendLine('GitLab Component Helper is now active!');
-  outputChannel.appendLine(`[Extension] VS Code version: ${vscode.version}`);
-  outputChannel.appendLine(`[Extension] Extension context: ${JSON.stringify({
+  const logger = Logger.getInstance();
+  logger.info('GitLab Component Helper is now active!', 'Extension');
+  logger.info(`[Extension] VS Code version: ${vscode.version}`, 'Extension');
+  logger.debug(`[Extension] Extension context: ${JSON.stringify({
     globalState: Object.keys(context.globalState.keys()),
     workspaceState: Object.keys(context.workspaceState.keys()),
     extensionPath: context.extensionPath,
     extensionUri: context.extensionUri.toString()
-  }, null, 2)}`);
+  }, null, 2)}`, 'Extension');
 
   try {
-    outputChannel.appendLine('[Extension] Starting activation process...');
-    outputChannel.appendLine('[Extension] Registering commands...');
+    logger.info('[Extension] Starting activation process...', 'Extension');
+    logger.debug('[Extension] Registering commands...', 'Extension');
 
     // Log current user settings
-    outputChannel.appendLine('[Extension] Loading user settings...');
+    logger.debug('[Extension] Loading user settings...', 'Extension');
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
     const componentSources = config.get('componentSources', []);
     const cacheTime = config.get('cacheTime', 3600);
     const componentSource = config.get('componentSource', 'local');
 
-    outputChannel.appendLine(`[Extension] User settings loaded:`);
-    outputChannel.appendLine(`[Extension]   - Component sources: ${JSON.stringify(componentSources, null, 2)}`);
-    outputChannel.appendLine(`[Extension]   - Cache time: ${cacheTime} seconds`);
-    outputChannel.appendLine(`[Extension]   - Component source type: ${componentSource}`);
+    logger.debug(`[Extension] User settings loaded:`, 'Extension');
+    logger.debug(`[Extension]   - Component sources: ${JSON.stringify(componentSources, null, 2)}`, 'Extension');
+    logger.debug(`[Extension]   - Cache time: ${cacheTime} seconds`, 'Extension');
+    logger.debug(`[Extension]   - Component source type: ${componentSource}`, 'Extension');
 
     // Initialize component cache manager (this will start loading components)
-    outputChannel.appendLine(`[Extension] About to import/initialize component cache manager...`);
+    logger.debug(`[Extension] About to import/initialize component cache manager...`, 'Extension');
     let cacheManager: ComponentCacheManager;
     try {
       cacheManager = getComponentCacheManager(context);
-      outputChannel.appendLine(`[Extension] Component cache manager initialized successfully`);
+      logger.info(`[Extension] Component cache manager initialized successfully`, 'Extension');
     } catch (cacheError) {
-      outputChannel.appendLine(`[Extension] ERROR initializing cache manager: ${cacheError}`);
+      logger.error(`[Extension] ERROR initializing cache manager: ${cacheError}`, 'Extension');
       throw cacheError;
     }
 
-    outputChannel.show();    // Listen for configuration changes
-    outputChannel.appendLine('[Extension] Registering configuration change listener...');
+    // Listen for configuration changes
     context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('gitlabComponentHelper')) {
-          outputChannel.appendLine(`[Extension] Configuration changed, reloading settings...`);
+          logger.info(`[Extension] Configuration changed, reloading settings...`, 'Extension');
           const updatedConfig = vscode.workspace.getConfiguration('gitlabComponentHelper');
           const updatedSources = updatedConfig.get('componentSources', []);
-          outputChannel.appendLine(`[Extension] Updated component sources: ${JSON.stringify(updatedSources, null, 2)}`);
+          logger.debug(`[Extension] Updated component sources: ${JSON.stringify(updatedSources, null, 2)}`, 'Extension');
         }
       })
     );
 
     // Register hover provider for GitLab CI files (broad registration, providers will filter)
-    outputChannel.appendLine('[Extension] Registering hover provider...');
+    logger.debug('[Extension] Registering hover provider...', 'Extension');
     context.subscriptions.push(
       vscode.languages.registerHoverProvider(
         [
@@ -70,7 +71,7 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     // Register completion provider for GitLab CI files (broad registration, providers will filter)
-    outputChannel.appendLine('[Extension] Registering completion provider...');
+    logger.debug('[Extension] Registering completion provider...', 'Extension');
     context.subscriptions.push(
       vscode.languages.registerCompletionItemProvider(
         [
@@ -84,7 +85,7 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     // Register component browser command
-    outputChannel.appendLine('[Extension] Registering browseComponents command...');
+    logger.debug('[Extension] Registering browseComponents command...', 'Extension');
     context.subscriptions.push(
       vscode.commands.registerCommand('gitlab-component-helper.browseComponents', async () => {
         // Get the active text editor
@@ -102,175 +103,173 @@ export function activate(context: vscode.ExtensionContext) {
           if (component && component.context) {
             // Extract context from the component if it exists
             componentContext = component.context;
-            outputChannel.appendLine(`[Extension] Found component context: ${componentContext.gitlabInstance}/${componentContext.path}`);
+            logger.debug(`[Extension] Found component context: ${componentContext.gitlabInstance}/${componentContext.path}`, 'Extension');
           }
         }
 
         // Create and show the browser with the context
-        const componentBrowser = new ComponentBrowserProvider(context, cacheManager, outputChannel);
+        const componentBrowser = new ComponentBrowserProvider(context, cacheManager);
         await componentBrowser.show(componentContext);
       })
     );
 
-  // Register command to refresh component cache
-  outputChannel.appendLine('[Extension] Registering refreshComponents command...');
-  context.subscriptions.push(
-    vscode.commands.registerCommand('gitlab-component-helper.refreshComponents', async () => {
-      outputChannel.appendLine(`[Extension] Manual refresh requested`);
-      await cacheManager.forceRefresh();
-      vscode.window.showInformationMessage('GitLab components refreshed successfully!');
-    })
-  );
+    // Register command to refresh component cache
+    logger.debug('[Extension] Registering refreshComponents command...', 'Extension');
+    context.subscriptions.push(
+      vscode.commands.registerCommand('gitlab-component-helper.refreshComponents', async () => {
+        logger.info(`[Extension] Manual refresh requested`, 'Extension');
+        await cacheManager.forceRefresh();
+        vscode.window.showInformationMessage('GitLab components refreshed successfully!');
+      })
+    );
 
-  // Register command to show cache status
-  outputChannel.appendLine('[Extension] Registering showCacheStatus command...');
-  context.subscriptions.push(
-    vscode.commands.registerCommand('gitlab-component-helper.showCacheStatus', async () => {
-      const cacheInfo = cacheManager.getCacheInfo();
-      const sourceErrors = cacheManager.getSourceErrors();
+    // Register command to show cache status
+    logger.debug('[Extension] Registering showCacheStatus command...', 'Extension');
+    context.subscriptions.push(
+      vscode.commands.registerCommand('gitlab-component-helper.showCacheStatus', async () => {
+        const cacheInfo = cacheManager.getCacheInfo();
+        const sourceErrors = cacheManager.getSourceErrors();
 
-      let statusMessage = `GitLab Component Helper - Cache Status\n\n`;
-      statusMessage += `📍 Location: ${cacheInfo.location}\n`;
-      statusMessage += `📦 Components: ${cacheInfo.size}\n`;
-      statusMessage += `🕒 Last Updated: ${cacheInfo.lastUpdate}\n`;
-      statusMessage += `💾 Persistence: ${cacheInfo.hasContext ? 'Enabled' : 'Disabled (memory only)'}\n`;
+        let statusMessage = `GitLab Component Helper - Cache Status\n\n`;
+        statusMessage += `📍 Location: ${cacheInfo.location}\n`;
+        statusMessage += `📦 Components: ${cacheInfo.size}\n`;
+        statusMessage += `🕒 Last Updated: ${cacheInfo.lastUpdate}\n`;
+        statusMessage += `💾 Persistence: ${cacheInfo.hasContext ? 'Enabled' : 'Disabled (memory only)'}\n`;
 
-      if (sourceErrors.size > 0) {
-        statusMessage += `\n⚠️ Source Errors:\n`;
-        sourceErrors.forEach((error, source) => {
-          statusMessage += `  • ${source}: ${error}\n`;
+        if (sourceErrors.size > 0) {
+          statusMessage += `\n⚠️ Source Errors:\n`;
+          sourceErrors.forEach((error, source) => {
+            statusMessage += `  • ${source}: ${error}\n`;
+          });
+        } else {
+          statusMessage += `\n✅ All sources loaded successfully\n`;
+        }
+
+        statusMessage += `\nCache is stored in VS Code's global state and persists across sessions.`;
+
+        vscode.window.showInformationMessage(statusMessage, { modal: true });
+        logger.info(`[Extension] Cache status shown to user`, 'Extension');
+      })
+    );
+
+    // Register command to show detailed cache debug info
+    logger.debug('[Extension] Registering debugCache command...', 'Extension');
+    context.subscriptions.push(
+      vscode.commands.registerCommand('gitlab-component-helper.debugCache', async () => {
+        const components = await cacheManager.getComponents();
+        const errors = cacheManager.getSourceErrors();
+
+        logger.info(`[Extension] === CACHE DEBUG INFO ===`, 'Extension');
+        logger.info(`[Extension] Total cached components: ${components.length}`, 'Extension');
+        logger.info(`[Extension] Total source errors: ${errors.size}`, 'Extension');
+
+        // Group components by source
+        const componentsBySource = new Map<string, any[]>();
+        components.forEach((comp: any) => {
+          const key = comp.source;
+          if (!componentsBySource.has(key)) {
+            componentsBySource.set(key, []);
+          }
+          componentsBySource.get(key)!.push(comp);
         });
-      } else {
-        statusMessage += `\n✅ All sources loaded successfully\n`;
-      }
 
-      statusMessage += `\nCache is stored in VS Code's global state and persists across sessions.`;
-
-      vscode.window.showInformationMessage(statusMessage, { modal: true });
-      outputChannel.appendLine(`[Extension] Cache status shown to user`);
-    })
-  );
-
-  // Register command to show detailed cache debug info
-  outputChannel.appendLine('[Extension] Registering debugCache command...');
-  context.subscriptions.push(
-    vscode.commands.registerCommand('gitlab-component-helper.debugCache', async () => {
-      const components = await cacheManager.getComponents();
-      const errors = cacheManager.getSourceErrors();
-
-      outputChannel.appendLine(`[Extension] === CACHE DEBUG INFO ===`);
-      outputChannel.appendLine(`[Extension] Total cached components: ${components.length}`);
-      outputChannel.appendLine(`[Extension] Total source errors: ${errors.size}`);
-
-      // Group components by source
-      const componentsBySource = new Map<string, any[]>();
-      components.forEach((comp: any) => {
-        const key = comp.source;
-        if (!componentsBySource.has(key)) {
-          componentsBySource.set(key, []);
-        }
-        componentsBySource.get(key)!.push(comp);
-      });
-
-      outputChannel.appendLine(`[Extension] Components grouped by source:`);
-      componentsBySource.forEach((comps: any[], source: string) => {
-        outputChannel.appendLine(`[Extension]   ${source}: ${comps.length} components`);
-        comps.forEach((comp: any) => {
-          outputChannel.appendLine(`[Extension]     - ${comp.name} (${comp.gitlabInstance}/${comp.sourcePath})`);
+        logger.info(`[Extension] Components grouped by source:`, 'Extension');
+        componentsBySource.forEach((comps: any[], source: string) => {
+          logger.info(`[Extension]   ${source}: ${comps.length} components`, 'Extension');
+          comps.forEach((comp: any) => {
+            logger.debug(`[Extension]     - ${comp.name} (${comp.gitlabInstance}/${comp.sourcePath})`, 'Extension');
+          });
         });
-      });
 
-      outputChannel.appendLine(`[Extension] Source errors:`);
-      errors.forEach((error: string, source: string) => {
-        outputChannel.appendLine(`[Extension]   ${source}: ${error}`);
-      });
+        logger.info(`[Extension] Source errors:`, 'Extension');
+        errors.forEach((error: string, source: string) => {
+          logger.warn(`[Extension]   ${source}: ${error}`, 'Extension');
+        });
 
-      outputChannel.appendLine(`[Extension] === END CACHE DEBUG ===`);
-      outputChannel.show();
-    })
-  );
+        logger.info(`[Extension] === END CACHE DEBUG ===`, 'Extension');
+      })
+    );
 
-  // Register command to detach hover window as a dedicated panel
-  outputChannel.appendLine('[Extension] Registering detachHover command...');
-  context.subscriptions.push(
-    vscode.commands.registerCommand('gitlab-component-helper.detachHover', async (component: any) => {
-      outputChannel.appendLine(`[Extension] Detaching hover for component: ${component?.name}`);
+    // Register command to detach hover window as a dedicated panel
+    logger.debug('[Extension] Registering detachHover command...', 'Extension');
+    context.subscriptions.push(
+      vscode.commands.registerCommand('gitlab-component-helper.detachHover', async (component: any) => {
+        logger.info(`[Extension] Detaching hover for component: ${component?.name}`, 'Extension');
 
-      if (!component) {
-        vscode.window.showErrorMessage('No component data available to detach');
-        return;
-      }
-
-      // Create a webview panel for the detached component details
-      const panel = vscode.window.createWebviewPanel(
-        'gitlabComponentDetails',
-        `${component.name} - Details`,
-        vscode.ViewColumn.Beside,
-        {
-          enableScripts: true,
-          retainContextWhenHidden: true
+        if (!component) {
+          vscode.window.showErrorMessage('No component data available to detach');
+          return;
         }
-      );
 
-      // Generate HTML content for the detached panel
-      panel.webview.html = getDetachedComponentHtml(component);
-    })
-  );
-
-  // Register test command for debugging providers
-  outputChannel.appendLine('[Extension] Registering testProviders command...');
-  context.subscriptions.push(
-    vscode.commands.registerCommand('gitlab-component-helper.testProviders', async () => {
-      const editor = vscode.window.activeTextEditor;
-      if (!editor) {
-        vscode.window.showErrorMessage('No active editor');
-        return;
-      }
-
-      outputChannel.appendLine('[Extension] === PROVIDER TEST ===');
-      outputChannel.appendLine(`[Extension] Current file: ${editor.document.fileName}`);
-      outputChannel.appendLine(`[Extension] File language: ${editor.document.languageId}`);
-      outputChannel.appendLine(`[Extension] Current position: Line ${editor.selection.active.line + 1}, Column ${editor.selection.active.character + 1}`);
-
-      // Test hover provider manually
-      const hoverProvider = new HoverProvider();
-      try {
-        const hover = await hoverProvider.provideHover(editor.document, editor.selection.active);
-        outputChannel.appendLine(`[Extension] Hover provider result: ${hover ? 'Found hover content' : 'No hover content'}`);
-        if (hover) {
-          outputChannel.appendLine(`[Extension] Hover content: ${hover.contents.map(c => typeof c === 'string' ? c : c.value).join('\n')}`);
-        }
-      } catch (error) {
-        outputChannel.appendLine(`[Extension] Hover provider error: ${error}`);
-      }
-
-      // Test completion provider manually
-      const completionProvider = new CompletionProvider();
-      try {
-        const completions = await completionProvider.provideCompletionItems(
-          editor.document,
-          editor.selection.active,
-          new vscode.CancellationTokenSource().token,
-          { triggerKind: vscode.CompletionTriggerKind.Invoke, triggerCharacter: undefined }
+        // Create a webview panel for the detached component details
+        const panel = vscode.window.createWebviewPanel(
+          'gitlabComponentDetails',
+          `${component.name} - Details`,
+          vscode.ViewColumn.Beside,
+          {
+            enableScripts: true,
+            retainContextWhenHidden: true
+          }
         );
-        outputChannel.appendLine(`[Extension] Completion provider result: ${completions ? (Array.isArray(completions) ? completions.length : completions.items.length) + ' items' : 'No completions'}`);
-      } catch (error) {
-        outputChannel.appendLine(`[Extension] Completion provider error: ${error}`);
-      }
 
-      outputChannel.appendLine('[Extension] === END PROVIDER TEST ===');
-      outputChannel.show();
-      vscode.window.showInformationMessage('Provider test completed. Check output panel for results.');
-    })
-  );
+        // Generate HTML content for the detached panel
+        panel.webview.html = getDetachedComponentHtml(component);
+      })
+    );
 
-    outputChannel.appendLine('[Extension] All commands registered successfully!');
-    outputChannel.appendLine('[Extension] Extension activation completed successfully!');
+    // Register test command for debugging providers
+    logger.debug('[Extension] Registering testProviders command...', 'Extension');
+    context.subscriptions.push(
+      vscode.commands.registerCommand('gitlab-component-helper.testProviders', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+          vscode.window.showErrorMessage('No active editor');
+          return;
+        }
+
+        logger.info('[Extension] === PROVIDER TEST ===', 'Extension');
+        logger.info(`[Extension] Current file: ${editor.document.fileName}`, 'Extension');
+        logger.info(`[Extension] File language: ${editor.document.languageId}`, 'Extension');
+        logger.info(`[Extension] Current position: Line ${editor.selection.active.line + 1}, Column ${editor.selection.active.character + 1}`, 'Extension');
+
+        // Test hover provider manually
+        const hoverProvider = new HoverProvider();
+        try {
+          const hover = await hoverProvider.provideHover(editor.document, editor.selection.active);
+          logger.info(`[Extension] Hover provider result: ${hover ? 'Found hover content' : 'No hover content'}`, 'Extension');
+          if (hover) {
+            logger.debug(`[Extension] Hover content: ${hover.contents.map(c => typeof c === 'string' ? c : c.value).join('\n')}`, 'Extension');
+          }
+        } catch (error) {
+          logger.error(`[Extension] Hover provider error: ${error}`, 'Extension');
+        }
+
+        // Test completion provider manually
+        const completionProvider = new CompletionProvider();
+        try {
+          const completions = await completionProvider.provideCompletionItems(
+            editor.document,
+            editor.selection.active,
+            new vscode.CancellationTokenSource().token,
+            { triggerKind: vscode.CompletionTriggerKind.Invoke, triggerCharacter: undefined }
+          );
+          logger.info(`[Extension] Completion provider result: ${completions ? (Array.isArray(completions) ? completions.length : completions.items.length) + ' items' : 'No completions'}`, 'Extension');
+        } catch (error) {
+          logger.error(`[Extension] Completion provider error: ${error}`, 'Extension');
+        }
+
+        logger.info('[Extension] === END PROVIDER TEST ===', 'Extension');
+        vscode.window.showInformationMessage('Provider test completed. Check output panel for results.');
+      })
+    );
+
+    logger.info('[Extension] All commands registered successfully!', 'Extension');
+    logger.info('[Extension] Extension activation completed successfully!', 'Extension');
 
   } catch (error) {
-    outputChannel.appendLine(`[Extension] ERROR during activation: ${error}`);
-    outputChannel.appendLine(`[Extension] Stack trace: ${error instanceof Error ? error.stack : 'No stack trace'}`);
-    outputChannel.show();
+    const logger = Logger.getInstance();
+    logger.error(`[Extension] ERROR during activation: ${error}`, 'Extension');
+    logger.error(`[Extension] Stack trace: ${error instanceof Error ? error.stack : 'No stack trace'}`, 'Extension');
     throw error; // Re-throw to ensure VS Code knows activation failed
   }
 }

@@ -4,14 +4,15 @@ import { ComponentCacheManager } from '../services/componentCacheManager';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
 import { Component, ComponentParameter } from './componentDetector';
 import { containsGitLabVariables, expandGitLabVariables } from '../utils/gitlabVariables';
+import { Logger } from '../utils/logger';
 
 export class ComponentBrowserProvider {
   private panel: vscode.WebviewPanel | undefined;
   private originalEditor: vscode.TextEditor | undefined;
-  private outputChannel: vscode.OutputChannel;
+  private logger = Logger.getInstance();
 
-  constructor(private context: vscode.ExtensionContext, private cacheManager: ComponentCacheManager, outputChannel: vscode.OutputChannel) {
-    this.outputChannel = outputChannel;
+  constructor(private context: vscode.ExtensionContext, private cacheManager: ComponentCacheManager) {
+    // Remove this.outputChannel assignment, now using logger
   }
 
   public async show(componentContext?: { gitlabInstance?: string; path?: string }) {
@@ -107,16 +108,16 @@ export class ComponentBrowserProvider {
       // Show loading state
       this.panel.webview.html = this.getLoadingHtml();
 
-      this.outputChannel.appendLine(`[ComponentBrowser] Loading components, forceRefresh: ${forceRefresh}`);
+      this.logger.debug(`[ComponentBrowser] Loading components, forceRefresh: ${forceRefresh}`, 'ComponentBrowser');
 
       // Log the context again at load time
       if (componentContext) {
-        this.outputChannel.appendLine(`[ComponentBrowser] Loading components with context: ${componentContext.gitlabInstance}/${componentContext.path}`);
+        this.logger.debug(`[ComponentBrowser] Loading components with context: ${componentContext.gitlabInstance}/${componentContext.path}`, 'ComponentBrowser');
       }
 
       // If force refresh requested, refresh the cache
       if (forceRefresh) {
-        this.outputChannel.appendLine('[ComponentBrowser] Force refreshing cache...');
+        this.logger.debug('[ComponentBrowser] Force refreshing cache...', 'ComponentBrowser');
         await this.cacheManager.forceRefresh();
       }
 
@@ -125,13 +126,13 @@ export class ComponentBrowserProvider {
       const sourceErrors = this.cacheManager.getSourceErrors();
 
       // Fetch versions for components that don't have them yet
-      this.outputChannel.appendLine('[ComponentBrowser] Fetching available versions for components...');
+      this.logger.debug('[ComponentBrowser] Fetching available versions for components...', 'ComponentBrowser');
       for (const component of cachedComponents) {
         if (!component.availableVersions || component.availableVersions.length === 0) {
           try {
             await this.cacheManager.fetchComponentVersions(component);
           } catch (error) {
-            this.outputChannel.appendLine(`[ComponentBrowser] Error fetching versions for ${component.name}: ${error}`);
+            this.logger.warn(`[ComponentBrowser] Error fetching versions for ${component.name}: ${error}`, 'ComponentBrowser');
           }
         }
       }
@@ -140,23 +141,23 @@ export class ComponentBrowserProvider {
       const allComponents = this.transformCachedComponentsToGroups(cachedComponents);
       const cacheErrors = Object.fromEntries(sourceErrors);
 
-      this.outputChannel.appendLine(`[ComponentBrowser] Retrieved ${allComponents.length} component groups from cache`);
-      this.outputChannel.appendLine(`[ComponentBrowser] Cache has ${Object.keys(cacheErrors).length} source errors`);
+      this.logger.debug(`[ComponentBrowser] Retrieved ${allComponents.length} component groups from cache`, 'ComponentBrowser');
+      this.logger.debug(`[ComponentBrowser] Cache has ${Object.keys(cacheErrors).length} source errors`, 'ComponentBrowser');
 
       // Debug: log what components we actually have
       allComponents.forEach((source: any, index: number) => {
-        this.outputChannel.appendLine(`[ComponentBrowser] Source ${index + 1}: ${source.source} (${source.totalComponents} total components)`);
+        this.logger.debug(`[ComponentBrowser] Source ${index + 1}: ${source.source} (${source.totalComponents} total components)`, 'ComponentBrowser');
         source.projects.forEach((project: any) => {
-          this.outputChannel.appendLine(`[ComponentBrowser]   Project: ${project.name} (${project.components.length} components)`);
+          this.logger.debug(`[ComponentBrowser]   Project: ${project.name} (${project.components.length} components)`, 'ComponentBrowser');
           project.components.forEach((comp: any) => {
-            this.outputChannel.appendLine(`[ComponentBrowser]     - ${comp.name}`);
+            this.logger.debug(`[ComponentBrowser]     - ${comp.name}`, 'ComponentBrowser');
           });
         });
       });
 
       // Debug: log what errors we have
       Object.entries(cacheErrors).forEach(([source, error]) => {
-        this.outputChannel.appendLine(`[ComponentBrowser] Error for ${source}: ${error}`);
+        this.logger.warn(`[ComponentBrowser] Error for ${source}: ${error}`, 'ComponentBrowser');
       });
 
       // Get component sources from settings to potentially add context source
@@ -179,7 +180,7 @@ export class ComponentBrowserProvider {
 
         // If not in cache, try to add it dynamically
         if (!contextSourceExists) {
-          this.outputChannel.appendLine(`[ComponentBrowser] Adding context source: ${contextInstance}/${contextPath}`);
+          this.logger.debug(`[ComponentBrowser] Adding context source: ${contextInstance}/${contextPath}`, 'ComponentBrowser');
           try {
             const componentService = getComponentService();
             const catalogData = await componentService.fetchCatalogData(
@@ -235,10 +236,10 @@ export class ComponentBrowserProvider {
                 }]
               });
 
-              this.outputChannel.appendLine(`[ComponentBrowser] Successfully added ${components.length} components from context source`);
+              this.logger.debug(`[ComponentBrowser] Successfully added ${components.length} components from context source`, 'ComponentBrowser');
             }
           } catch (error) {
-            this.outputChannel.appendLine(`[ComponentBrowser] Failed to load context source: ${error}`);
+            this.logger.warn(`[ComponentBrowser] Failed to load context source: ${error}`, 'ComponentBrowser');
             // Don't fail the whole browser for context source issues
           }
         }
@@ -271,15 +272,15 @@ export class ComponentBrowserProvider {
         if (!sourcesWithComponents.has(source)) {
           filteredErrors[source] = error;
         } else {
-          this.outputChannel.appendLine(`[ComponentBrowser] Suppressing error for ${source} since it has components`);
+          this.logger.debug(`[ComponentBrowser] Suppressing error for ${source} since it has components`, 'ComponentBrowser');
         }
       });
 
-      this.outputChannel.appendLine(`[ComponentBrowser] Filtered errors: ${Object.keys(filteredErrors).length} of ${Object.keys(cacheErrors).length}`);
+      this.logger.debug(`[ComponentBrowser] Filtered errors: ${Object.keys(filteredErrors).length} of ${Object.keys(cacheErrors).length}`, 'ComponentBrowser');
 
       this.panel.webview.html = this.getComponentBrowserHtml(allComponents, filteredErrors);
     } catch (error) {
-      this.outputChannel.appendLine(`[ComponentBrowser] Error in loadComponents: ${error}`);
+      this.logger.error(`[ComponentBrowser] Error in loadComponents: ${error}`, 'ComponentBrowser');
       if (this.panel) {
         this.panel.webview.html = this.getErrorHtml(error);
       }
@@ -443,7 +444,7 @@ export class ComponentBrowserProvider {
           // Fetch details for the selected version and update the display
           const { selectedVersion } = message;
           try {
-            this.outputChannel.appendLine(`[ComponentBrowser] Version changed to ${selectedVersion}, fetching details...`);
+            this.logger.debug(`[ComponentBrowser] Version changed to ${selectedVersion}, fetching details...`, 'ComponentBrowser');
 
             const updatedComponent = await this.cacheManager.fetchSpecificVersion(
               component.name,
@@ -464,7 +465,7 @@ export class ComponentBrowserProvider {
               });
             }
           } catch (error) {
-            this.outputChannel.appendLine(`[ComponentBrowser] Error fetching version details: ${error}`);
+            this.logger.error(`[ComponentBrowser] Error fetching version details: ${error}`, 'ComponentBrowser');
             detailsPanel.webview.postMessage({
               command: 'versionChangeError',
               error: error instanceof Error ? error.message : String(error)
@@ -1725,7 +1726,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     for (const comp of cachedComponents) {
       // Skip components with missing essential data
       if (!comp.source || !comp.sourcePath || !comp.name) {
-        this.outputChannel.appendLine(`[ComponentBrowser] Skipping component with missing data: ${JSON.stringify(comp)}`);
+        this.logger.warn(`[ComponentBrowser] Skipping component with missing data: ${JSON.stringify(comp)}`, 'ComponentBrowser');
         continue;
       }
 
@@ -1971,19 +1972,19 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
       // Construct project URL
       return `${url.protocol}//${url.host}/${pathParts.join('/')}`;
     } catch (error) {
-      this.outputChannel.appendLine(`[ComponentBrowser] Error extracting project URL from ${componentUrl}: ${error}`);
+      this.logger.warn(`[ComponentBrowser] Error extracting project URL from ${componentUrl}: ${error}`, 'ComponentBrowser');
       return componentUrl || '';
     }
   }
 
   private async fetchAndCacheVersion(componentName: string, sourcePath: string, gitlabInstance: string, version: string) {
     try {
-      this.outputChannel.appendLine(`[ComponentBrowser] Fetching version ${version} for ${componentName}`);
+      this.logger.debug(`[ComponentBrowser] Fetching version ${version} for ${componentName}`, 'ComponentBrowser');
 
       const cachedComponent = await this.cacheManager.fetchSpecificVersion(componentName, sourcePath, gitlabInstance, version);
 
       if (cachedComponent) {
-        this.outputChannel.appendLine(`[ComponentBrowser] Successfully cached version ${version}`);
+        this.logger.debug(`[ComponentBrowser] Successfully cached version ${version}`, 'ComponentBrowser');
 
         // Send update to webview
         if (this.panel) {
@@ -1995,11 +1996,11 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
           });
         }
       } else {
-        this.outputChannel.appendLine(`[ComponentBrowser] Failed to fetch version ${version}`);
+        this.logger.warn(`[ComponentBrowser] Failed to fetch version ${version}`, 'ComponentBrowser');
         vscode.window.showErrorMessage(`Failed to fetch version ${version} for component ${componentName}`);
       }
     } catch (error) {
-      this.outputChannel.appendLine(`[ComponentBrowser] Error fetching version: ${error}`);
+      this.logger.error(`[ComponentBrowser] Error fetching version: ${error}`, 'ComponentBrowser');
       vscode.window.showErrorMessage(`Error fetching version: ${error}`);
     }
   }
@@ -2012,11 +2013,11 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
       defaultVersions[componentName] = version;
       await config.update('defaultVersions', defaultVersions, vscode.ConfigurationTarget.Global);
 
-      this.outputChannel.appendLine(`[ComponentBrowser] Set default version for ${componentName} to ${version}`);
+      this.logger.debug(`[ComponentBrowser] Set default version for ${componentName} to ${version}`, 'ComponentBrowser');
       vscode.window.showInformationMessage(`Set default version for ${componentName} to ${version}`);
 
     } catch (error) {
-      this.outputChannel.appendLine(`[ComponentBrowser] Error setting default version: ${error}`);
+      this.logger.error(`[ComponentBrowser] Error setting default version: ${error}`, 'ComponentBrowser');
       vscode.window.showErrorMessage(`Error setting default version: ${error}`);
     }
   }
@@ -2038,18 +2039,18 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
         await config.update('defaultVersions', defaultVersions, vscode.ConfigurationTarget.Global);
       }
 
-      this.outputChannel.appendLine(`[ComponentBrowser] Set ${componentName} to always use latest version`);
+      this.logger.debug(`[ComponentBrowser] Set ${componentName} to always use latest version`, 'ComponentBrowser');
       vscode.window.showInformationMessage(`${componentName} will now always use the latest version`);
 
     } catch (error) {
-      this.outputChannel.appendLine(`[ComponentBrowser] Error setting always use latest: ${error}`);
+      this.logger.error(`[ComponentBrowser] Error setting always use latest: ${error}`, 'ComponentBrowser');
       vscode.window.showErrorMessage(`Error setting always use latest: ${error}`);
     }
   }
 
   private async fetchSpecificVersion(component: any, version: string): Promise<any | null> {
     try {
-      this.outputChannel.appendLine(`[ComponentBrowser] Fetching version ${version} of ${component.name}`);
+      this.logger.debug(`[ComponentBrowser] Fetching version ${version} of ${component.name}`, 'ComponentBrowser');
 
       // Use the cache manager to fetch the specific version
       const specificComponent = await this.cacheManager.fetchSpecificVersion(
@@ -2061,7 +2062,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
 
       return specificComponent;
     } catch (error) {
-      this.outputChannel.appendLine(`[ComponentBrowser] Error fetching version ${version}: ${error}`);
+      this.logger.error(`[ComponentBrowser] Error fetching version ${version}: ${error}`, 'ComponentBrowser');
       return null;
     }
   }

@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
 import { getComponentUnderCursor, Component, ComponentParameter, detectIncludeComponent } from './componentDetector';
-import { outputChannel } from '../utils/outputChannel';
-import { getVariableInfo, detectGitLabVariables } from '../utils/gitlabVariables';
+import { Logger } from '../utils/logger';
+import { getVariableInfo } from '../utils/gitlabVariables';
 
 export class HoverProvider implements vscode.HoverProvider {
+  private logger = Logger.getInstance();
+
   // Helper function to check if file is a GitLab CI file
   private isGitLabCIFile(document: vscode.TextDocument): boolean {
     const fileName = document.fileName.toLowerCase();
@@ -15,12 +17,12 @@ export class HoverProvider implements vscode.HoverProvider {
   public async provideHover(document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Hover | null> {
     // First check if this is a GitLab CI file
     if (!this.isGitLabCIFile(document)) {
-      outputChannel.appendLine(`[HoverProvider] Skipping hover for non-GitLab CI file: ${document.fileName} (language: ${document.languageId})`);
+      this.logger.debug(`[HoverProvider] Skipping hover for non-GitLab CI file: ${document.fileName} (language: ${document.languageId})`, 'HoverProvider');
       return null;
     }
 
-    outputChannel.appendLine(`[HoverProvider] Hover requested at line ${position.line + 1}, character ${position.character}`);
-    outputChannel.appendLine(`[HoverProvider] File: ${document.fileName} (language: ${document.languageId})`);
+    this.logger.debug(`[HoverProvider] Hover requested at line ${position.line + 1}, character ${position.character}`, 'HoverProvider');
+    this.logger.debug(`[HoverProvider] File: ${document.fileName} (language: ${document.languageId})`, 'HoverProvider');
 
     const line = document.lineAt(position.line).text;
     const wordRange = document.getWordRangeAtPosition(position);
@@ -28,7 +30,7 @@ export class HoverProvider implements vscode.HoverProvider {
     // Check for GitLab variables first
     if (wordRange) {
       const word = document.getText(wordRange);
-      outputChannel.appendLine(`[HoverProvider] Checking word at position: "${word}"`);
+      this.logger.debug(`[HoverProvider] Checking word at position: "${word}"`, 'HoverProvider');
 
       // Check if the word is a GitLab variable (with or without $)
       const variableName = word.startsWith('$') ? word.substring(1) : word;
@@ -47,7 +49,7 @@ export class HoverProvider implements vscode.HoverProvider {
 
       const variableInfo = getVariableInfo(fullVariableName);
       if (variableInfo) {
-        outputChannel.appendLine(`[HoverProvider] Found GitLab variable: ${fullVariableName}`);
+        this.logger.debug(`[HoverProvider] Found GitLab variable: ${fullVariableName}`, 'HoverProvider');
 
         const hoverContent = new vscode.MarkdownString();
         hoverContent.appendMarkdown(`## GitLab Variable: \`$${variableInfo.name}\`\n\n`);
@@ -68,9 +70,9 @@ export class HoverProvider implements vscode.HoverProvider {
     const component = await detectIncludeComponent(document, position);
 
     if (component) {
-      outputChannel.appendLine(`[HoverProvider] Found component: ${component.name}`);
-      outputChannel.appendLine(`[HoverProvider] Component source: ${component.context?.gitlabInstance || component.source || 'unknown'}`);
-      outputChannel.appendLine(`[HoverProvider] Component has ${component.parameters?.length || 0} parameters`);
+      this.logger.debug(`[HoverProvider] Found component: ${component.name}`, 'HoverProvider');
+      this.logger.debug(`[HoverProvider] Component source: ${component.context?.gitlabInstance || component.source || 'unknown'}`, 'HoverProvider');
+      this.logger.debug(`[HoverProvider] Component has ${component.parameters?.length || 0} parameters`, 'HoverProvider');
 
       // Create markdown content for hover with enhanced features
       const hoverContent = new vscode.MarkdownString();
@@ -133,12 +135,12 @@ export class HoverProvider implements vscode.HoverProvider {
       return new vscode.Hover(hoverContent);
     }
 
-    outputChannel.appendLine(`[HoverProvider] No component found at cursor position`);
+    this.logger.debug(`[HoverProvider] No component found at cursor position`, 'HoverProvider');
     return null;
   }
 
   private createComponentHover(component: Component): vscode.Hover {
-    outputChannel.appendLine(`Creating hover for component: ${component.name}`);
+    this.logger.debug(`Creating hover for component: ${component.name}`, 'HoverProvider');
     const markdown = new vscode.MarkdownString();
 
     markdown.appendMarkdown(`## ${component.name}\n\n`);
