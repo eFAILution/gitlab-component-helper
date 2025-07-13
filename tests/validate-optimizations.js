@@ -16,7 +16,7 @@ try {
       found: false
     },
     {
-      name: 'Structured Logging System', 
+      name: 'Structured Logging System',
       pattern: /class Logger|logLevel|DEBUG.*INFO.*WARN.*ERROR/i,
       found: false
     },
@@ -86,10 +86,10 @@ try {
   const packagePath = path.join(__dirname, '../package.json');
   const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
   const properties = packageJson.contributes?.configuration?.properties || {};
-  
+
   const expectedConfigs = [
     'gitlabComponentHelper.logLevel',
-    'gitlabComponentHelper.httpTimeout', 
+    'gitlabComponentHelper.httpTimeout',
     'gitlabComponentHelper.retryAttempts',
     'gitlabComponentHelper.batchSize'
   ];
@@ -117,13 +117,13 @@ try {
   }
 
   console.log('\n=== Validation Complete ===');
-  
+
   // Overall success criteria
   const hasHttpClient = /fetchJson|retryAttempts/.test(extensionCode);
   const hasLogger = /logLevel|Logger/.test(extensionCode);
   const hasMapCaching = /Map.*cache|sourceCache/.test(extensionCode);
   const hasParallelFetch = /Promise\.all/.test(extensionCode);
-  
+
   if (hasHttpClient && hasLogger && hasMapCaching && hasParallelFetch) {
     console.log('🎉 VALIDATION PASSED: Core optimizations are implemented!');
     process.exit(0);

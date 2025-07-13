@@ -44,15 +44,15 @@ export class HttpClient {
     for (let attempt = 0; attempt <= retryAttempts; attempt++) {
       try {
         this.logger.debug(`HTTP Request attempt ${attempt + 1}/${retryAttempts + 1}: ${url}`);
-        
+
         const data = await this.makeRequest(url, { timeout, headers });
         const jsonData = JSON.parse(data);
-        
+
         this.logger.debug(`HTTP Request successful: ${url} (${data.length} chars)`);
         return jsonData;
       } catch (error: any) {
         const isLastAttempt = attempt === retryAttempts;
-        
+
         if (error.statusCode && !this.shouldRetry(error.statusCode)) {
           this.logger.warn(`HTTP Request failed with client error ${error.statusCode}: ${url}`);
           throw error;
@@ -66,7 +66,7 @@ export class HttpClient {
         // Exponential backoff with jitter
         const baseDelay = options.retryDelay || 1000;
         const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
-        
+
         this.logger.warn(`HTTP Request failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${url} - ${error.message}`);
         await this.delay(delay);
       }
@@ -87,14 +87,14 @@ export class HttpClient {
     for (let attempt = 0; attempt <= retryAttempts; attempt++) {
       try {
         this.logger.debug(`HTTP Text Request attempt ${attempt + 1}/${retryAttempts + 1}: ${url}`);
-        
+
         const data = await this.makeRequest(url, { timeout, headers });
-        
+
         this.logger.debug(`HTTP Text Request successful: ${url} (${data.length} chars)`);
         return data;
       } catch (error: any) {
         const isLastAttempt = attempt === retryAttempts;
-        
+
         if (error.statusCode && !this.shouldRetry(error.statusCode)) {
           this.logger.warn(`HTTP Text Request failed with client error ${error.statusCode}: ${url}`);
           throw error;
@@ -108,7 +108,7 @@ export class HttpClient {
         // Exponential backoff with jitter
         const baseDelay = options.retryDelay || 1000;
         const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
-        
+
         this.logger.warn(`HTTP Text Request failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${url} - ${error.message}`);
         await this.delay(delay);
       }
@@ -134,7 +134,7 @@ export class HttpClient {
 
       const req = client.request(requestOptions, (res) => {
         let data = '';
-        
+
         res.on('data', (chunk) => {
           data += chunk;
         });
@@ -194,18 +194,18 @@ export class HttpClient {
     batchSize: number = 5
   ): Promise<R[]> {
     const results: R[] = [];
-    
+
     for (let i = 0; i < items.length; i += batchSize) {
       const batch = items.slice(i, i + batchSize);
       this.logger.debug(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(items.length / batchSize)} (${batch.length} items)`);
-      
+
       const batchResults = await Promise.all(
         batch.map(item => processor(item))
       );
-      
+
       results.push(...batchResults);
     }
-    
+
     return results;
   }
 }

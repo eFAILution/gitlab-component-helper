@@ -14,7 +14,7 @@ export class Logger {
 
   private constructor() {
     this.updateLogLevel();
-    
+
     // Watch for configuration changes
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('gitlabComponentHelper.logLevel')) {
@@ -34,6 +34,9 @@ export class Logger {
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
     const levelString = config.get<string>('logLevel', 'INFO');
     this.currentLevel = LogLevel[levelString as keyof typeof LogLevel] || LogLevel.INFO;
+    outputChannel.show(true); // Always show output when log level changes
+    const msg = `[Logger] Log level updated to: ${levelString}`;
+    outputChannel.appendLine(msg);
   }
 
   private shouldLog(level: LogLevel): boolean {

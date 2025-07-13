@@ -46,9 +46,9 @@ export class ComponentService implements ComponentSource {
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
     const cacheTime = config.get<number>('cacheTime', 3600) * 1000; // Default 1 hour
     const sourceType = config.get<string>('componentSource', 'local');
-    
+
     const cacheKey = `${sourceType}`;
-    
+
     this.logger.info(`getComponents() called for source: ${sourceType}`);
     this.logger.debug(`Cache time setting: ${cacheTime/1000}s`);
 
@@ -58,23 +58,23 @@ export class ComponentService implements ComponentSource {
 
     if (cachedEntry && !isExpired) {
       this.logger.info(`Returning cached components (${cachedEntry.components.length} items)`);
-      this.logger.logPerformance('getComponents (cached)', Date.now() - startTime, { 
-        source: sourceType, 
-        count: cachedEntry.components.length 
+      this.logger.logPerformance('getComponents (cached)', Date.now() - startTime, {
+        source: sourceType,
+        count: cachedEntry.components.length
       });
-      
+
       // Start background update if not already in progress
       if (!backgroundUpdateInProgress) {
         this.startBackgroundUpdate(sourceType, cacheKey);
       }
-      
+
       return cachedEntry.components;
     }
 
     try {
       this.logger.info(`Fetching fresh components from source: ${sourceType}`);
       const components = await this.fetchComponentsBySource(sourceType);
-      
+
       // Update cache
       sourceCache.set(cacheKey, {
         components,
@@ -82,23 +82,23 @@ export class ComponentService implements ComponentSource {
       });
 
       this.logger.info(`Successfully fetched ${components.length} components`);
-      this.logger.logPerformance('getComponents (fresh)', Date.now() - startTime, { 
-        source: sourceType, 
-        count: components.length 
+      this.logger.logPerformance('getComponents (fresh)', Date.now() - startTime, {
+        source: sourceType,
+        count: components.length
       });
-      
+
       return components;
     } catch (error) {
       this.logger.error(`Error fetching components: ${error}`);
       console.error(`Error fetching components: ${error}`);
       vscode.window.showErrorMessage(`Failed to fetch GitLab components: ${error}`);
-      
+
       // Return cached data if available, even if expired
       if (cachedEntry) {
         this.logger.warn('Falling back to expired cached components');
         return cachedEntry.components;
       }
-      
+
       this.logger.warn('Falling back to local components');
       return this.getLocalComponents();
     }
@@ -108,10 +108,10 @@ export class ComponentService implements ComponentSource {
     if (backgroundUpdateInProgress) {
       return;
     }
-    
+
     backgroundUpdateInProgress = true;
     this.logger.debug('Starting background cache update');
-    
+
     try {
       const components = await this.fetchComponentsBySource(sourceType);
       sourceCache.set(cacheKey, {
@@ -170,7 +170,7 @@ export class ComponentService implements ComponentSource {
 
   private async fetchComponentMetadata(url: string): Promise<Component> {
     const startTime = Date.now();
-    
+
     try {
       // Parse the GitLab component URL
       const urlObj = new URL(url);
@@ -320,7 +320,7 @@ export class ComponentService implements ComponentSource {
     try {
       const templatePath = `templates/${componentName}.yml`;
       const templateUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(templatePath)}/raw?ref=${version}`;
-      
+
       const templateContent = await this.httpClient.fetchText(templateUrl);
 
       // Extract variables/parameters from the template
@@ -445,7 +445,7 @@ export class ComponentService implements ComponentSource {
           'PRIVATE-TOKEN': token
         }
       });
-      
+
       this.logger.info(`Successfully fetched ${components.length} components from GitLab`);
       return components;
     } catch (error) {
@@ -505,7 +505,7 @@ export class ComponentService implements ComponentSource {
       // **PARALLEL OPTIMIZATION** - Fetch project info and templates in parallel
       const apiBaseUrl = `https://${cleanGitlabInstance}/api/v4`;
       const ref = version || 'main';
-      
+
       const [projectInfo, templates] = await Promise.all([
         this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`),
         this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`)
@@ -516,7 +516,7 @@ export class ComponentService implements ComponentSource {
       this.logger.debug(`Found ${templates.length} items in templates directory`);
 
       // Filter YAML files
-      const yamlFiles = templates.filter((file: GitLabTreeItem) => 
+      const yamlFiles = templates.filter((file: GitLabTreeItem) =>
         file.name.endsWith('.yml') || file.name.endsWith('.yaml')
       );
       this.logger.debug(`Found ${yamlFiles.length} YAML template files`);
@@ -531,13 +531,13 @@ export class ComponentService implements ComponentSource {
       // **BATCH PROCESSING OPTIMIZATION** - Process components in batches
       const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
       const batchSize = config.get<number>('batchSize', 5);
-      
+
       const components = await this.httpClient.processBatch(
         yamlFiles,
         async (file: GitLabTreeItem) => {
           const name = file.name.replace(/\.ya?ml$/, '');
           this.logger.debug(`Processing component: ${name} (${file.name})`);
-          
+
           // **PARALLEL CONTENT FETCHING** - Fetch template content and README in parallel
           const [templateResult, readmeResult] = await Promise.allSettled([
             this.fetchTemplateContent(apiBaseUrl, projectInfo.id, file.name, ref),
@@ -560,7 +560,7 @@ export class ComponentService implements ComponentSource {
           // Process README content
           if (readmeResult.status === 'fulfilled' && readmeResult.value) {
             readmeContent = readmeResult.value;
-            
+
             // Extract description from README if not found in template
             if (!description || description === `${name} component`) {
               const readmeLines = readmeContent.split('\n').filter(line => line.trim());
@@ -589,7 +589,7 @@ export class ComponentService implements ComponentSource {
 
       // Cache the result
       this.catalogCache.set(cacheKey, catalogData);
-      
+
       this.logger.info(`Successfully processed ${components.length} components`);
       this.logger.logPerformance('fetchCatalogData (fresh)', Date.now() - startTime, {
         componentCount: components.length,
@@ -723,7 +723,7 @@ export class ComponentService implements ComponentSource {
    */
   public async fetchProjectVersions(gitlabInstance: string, projectPath: string): Promise<string[]> {
     const startTime = Date.now();
-    
+
     try {
       const apiBaseUrl = `https://${gitlabInstance}/api/v4`;
       const encodedPath = encodeURIComponent(projectPath);
@@ -802,13 +802,13 @@ export class ComponentService implements ComponentSource {
       });
 
       const result = sortedVersions.length > 0 ? sortedVersions : ['main'];
-      
+
       this.logger.info(`Returning ${result.length} versions: ${result.slice(0, 5).join(', ')}${result.length > 5 ? '...' : ''}`);
       this.logger.logPerformance('fetchProjectVersions', Date.now() - startTime, {
         projectPath,
         versionCount: result.length
       });
-      
+
       return result;
 
     } catch (error) {
@@ -826,15 +826,15 @@ export class ComponentService implements ComponentSource {
 
     try {
       const apiUrl = `https://${gitlabInstance}/api/v4/projects/${encodeURIComponent(projectPath)}/repository/tags?per_page=100&order_by=updated&sort=desc`;
-      
+
       const tags = await this.httpClient.fetchJson(apiUrl);
-      
+
       this.logger.info(`Found ${tags.length} tags for ${projectPath}`);
       this.logger.logPerformance('fetchProjectTags', Date.now() - startTime, {
         projectPath,
         tagCount: tags.length
       });
-      
+
       return tags;
     } catch (error) {
       this.logger.warn(`Error fetching tags: ${error}`);

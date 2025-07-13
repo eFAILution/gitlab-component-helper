@@ -387,3 +387,40 @@ yarn compile # or npm run compile
 ## License
 
 Distributed under the MIT License. See `LICENSE` for more information.
+
+## User Settings Reference
+
+The following settings are available for the GitLab Component Helper extension. Add these to your VS Code `settings.json` or configure via the Settings UI:
+
+| Setting | Type | Default | Description |
+|--------|------|---------|-------------|
+| `gitlabComponentHelper.componentSource` | string | `local` | Source for component definitions. One of: `local`, `gitlab`, `url` |
+| `gitlabComponentHelper.gitlabUrl` | string | `https://gitlab.com` | GitLab instance URL |
+| `gitlabComponentHelper.gitlabProjectId` | string | `""` | GitLab project ID containing component definitions |
+| `gitlabComponentHelper.gitlabToken` | string | `""` | GitLab API access token |
+| `gitlabComponentHelper.gitlabComponentsFilePath` | string | `components.json` | Path to components JSON file in GitLab repository |
+| `gitlabComponentHelper.componentsUrl` | string | `""` | URL to a JSON file containing component definitions |
+| `gitlabComponentHelper.cacheTime` | number | `3600` | Cache time for components in seconds |
+| `gitlabComponentHelper.logLevel` | string | `INFO` | Logging level for component service. One of: `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `gitlabComponentHelper.httpTimeout` | number | `10000` | HTTP request timeout in milliseconds |
+| `gitlabComponentHelper.retryAttempts` | number | `3` | Number of retry attempts for failed HTTP requests |
+| `gitlabComponentHelper.batchSize` | number | `5` | Number of components to process in parallel batches |
+| `gitlabComponentHelper.componentSources` | array | See below | GitLab repositories containing reusable CI/CD components |
+
+### Example `componentSources` value:
+```json
+"gitlabComponentHelper.componentSources": [
+  {
+    "name": "GitLab CI Examples",
+    "path": "gitlab-org/gitlab-foss",
+    "gitlabInstance": "gitlab.com"
+  },
+  {
+    "name": "OpenTofu Components",
+    "path": "components/opentofu",
+    "gitlabInstance": "gitlab.com"
+  }
+]
+```
+
+> For more details on each setting, see the extension's package.json or the VS Code Settings UI.
