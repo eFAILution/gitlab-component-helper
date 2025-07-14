@@ -566,7 +566,7 @@ export class ComponentService implements ComponentSource {
     try {
       // **PARALLEL OPTIMIZATION** - Fetch project info and templates in parallel
       const apiBaseUrl = `https://${cleanGitlabInstance}/api/v4`;
-      const ref = version || 'main';
+      let ref = version || 'main';
       let token: string | undefined = await this.getTokenForProject(cleanGitlabInstance, projectPath);
       let fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
       let projectInfo: any, templates: any;
@@ -594,8 +594,15 @@ export class ComponentService implements ComponentSource {
           throw err;
         }
       }
-      this.logger.debug(`Found project: ${projectInfo.name} (ID: ${projectInfo.id})`);
-      this.logger.debug(`Found ${templates.length} items in templates directory`);
+      // --- Use the project's default branch if available ---
+      if (projectInfo && projectInfo.default_branch) {
+        ref = projectInfo.default_branch;
+      }
+      this.logger.debug(`Found project: ${projectInfo.name} (ID: ${projectInfo.id}), using ref: ${ref}`);
+      // Re-fetch templates with correct ref if needed
+      templates = await this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`, fetchOptions)
+        .catch(() => [] as GitLabTreeItem[]);
+
       // Filter YAML files
       const yamlFiles = templates.filter((file: GitLabTreeItem) =>
         file.name.endsWith('.yml') || file.name.endsWith('.yaml')
@@ -911,8 +918,6 @@ export class ComponentService implements ComponentSource {
       return []; // Return empty array instead of rejecting
     }
   }
-
-  // ...existing code...
 
   // Add this method to your ComponentService class
   public parseCustomComponentUrl(url: string): { gitlabInstance: string; path: string; name: string; version?: string } | null {
