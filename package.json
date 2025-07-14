@@ -179,6 +179,10 @@
       {
         "command": "gitlab-component-helper.testProviders",
         "title": "GitLab CI: Test Providers"
+      },
+      {
+        "command": "gitlabComponentHelper.addProjectToken",
+        "title": "GitLab CI: Add Component Project/Group"
       }
     ],
     "menus": {
