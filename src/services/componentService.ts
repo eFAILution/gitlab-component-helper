@@ -77,6 +77,27 @@ export function registerAddProjectTokenCommand(context: vscode.ExtensionContext,
       );
 
       let displayName: string;
+      let type: 'group' | 'project';
+
+      // Try to determine type from path
+      const pathSegments = projectPath.split('/').filter(Boolean);
+      if (pathSegments.length === 1) {
+        type = 'group';
+      } else if (pathSegments.length > 1) {
+        // Ambiguous, ask user
+        const typePick = await vscode.window.showQuickPick([
+          { label: 'Project', value: 'project', description: 'A single GitLab project' },
+          { label: 'Group', value: 'group', description: 'A GitLab group containing multiple projects' }
+        ], {
+          placeHolder: 'Is this a group or a project?',
+          ignoreFocusOut: true
+        });
+        if (!typePick) return; // User cancelled
+        type = typePick.value as 'group' | 'project';
+      } else {
+        // Fallback
+        type = 'project';
+      }
 
       if (!existingSource) {
         // Prompt for a display name
@@ -93,7 +114,8 @@ export function registerAddProjectTokenCommand(context: vscode.ExtensionContext,
         const newSource = {
           name: displayName,
           path: projectPath,
-          gitlabInstance: gitlabInstance
+          gitlabInstance: gitlabInstance,
+          type: type
         };
 
         componentSources.push(newSource);
