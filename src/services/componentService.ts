@@ -67,13 +67,39 @@ export function registerAddProjectTokenCommand(context: vscode.ExtensionContext,
       });
       if (token === undefined) return; // User cancelled
 
-      // Record the repo/group in user settings
+      // Add to component sources as a proper object
       const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-      const userProjects: string[] = config.get('userProjects', []);
-      const newEntry = `${gitlabInstance}/${projectPath}`;
-      if (!userProjects.includes(newEntry)) {
-        userProjects.push(newEntry);
-        await config.update('userProjects', userProjects, vscode.ConfigurationTarget.Global);
+      const componentSources: any[] = config.get('componentSources', []);
+
+      // Check if this source already exists
+      const existingSource = componentSources.find(source =>
+        source.path === projectPath && source.gitlabInstance === gitlabInstance
+      );
+
+      let displayName: string;
+
+      if (!existingSource) {
+        // Prompt for a display name
+        const inputDisplayName = await vscode.window.showInputBox({
+          prompt: 'Enter a display name for this component source',
+          value: projectPath.split('/').pop() || projectPath,
+          ignoreFocusOut: true
+        });
+
+        if (!inputDisplayName) return; // User cancelled
+
+        displayName = inputDisplayName;
+
+        const newSource = {
+          name: displayName,
+          path: projectPath,
+          gitlabInstance: gitlabInstance
+        };
+
+        componentSources.push(newSource);
+        await config.update('componentSources', componentSources, vscode.ConfigurationTarget.Global);
+      } else {
+        displayName = existingSource.name;
       }
 
       // Store the token if provided
@@ -83,12 +109,12 @@ export function registerAddProjectTokenCommand(context: vscode.ExtensionContext,
             service.setSecretStorage(context.secrets);
           }
           await service.setTokenForProject(gitlabInstance, projectPath, token.trim());
-          vscode.window.showInformationMessage(`Token saved for ${gitlabInstance}/${projectPath}`);
+          vscode.window.showInformationMessage(`Component source "${displayName}" added successfully with token!`);
         } catch (e) {
           vscode.window.showErrorMessage(`Failed to save token: ${e}`);
         }
       } else {
-        vscode.window.showInformationMessage(`No token saved. Public access will be used for ${gitlabInstance}/${projectPath}`);
+        vscode.window.showInformationMessage(`Component source "${displayName}" added successfully! Public access will be used.`);
       }
     })
   );

@@ -156,6 +156,37 @@
               }
             }
           }
+        },
+        "gitlabComponentHelper.userProjects": {
+          "type": "array",
+          "default": [],
+          "description": "User-configured GitLab projects with access tokens for private component repositories",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "gitlabInstance",
+              "projectOrGroupPath"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Display name for the project/group"
+              },
+              "gitlabInstance": {
+                "type": "string",
+                "description": "GitLab instance hostname (e.g., 'gitlab.com')"
+              },
+              "projectOrGroupPath": {
+                "type": "string",
+                "description": "GitLab project or group path (e.g., 'group/project' or 'group')"
+              },
+              "description": {
+                "type": "string",
+                "description": "Optional description of the project/group"
+              }
+            }
+          }
         }
       }
     },
