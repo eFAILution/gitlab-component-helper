@@ -73,19 +73,11 @@ Add your favorite sources in VS Code settings:
 ---
 
 ## 🧩 Commands
-
-- **GitLab: Browse Components** — Explore and insert from all your sources
+#### Use the Command Palette (`Ctrl+Shift+P`) to access:
+- **GitLab CI: Browse Components** — Explore and insert from all your sources
 - **GitLab CI: Add Component Project/Group** — Add any project/group (with optional token for private access)
-- **GitLab: Refresh Component Cache** — Refreshes cached data
-- **GitLab: Show Cache Status** — See cache info and stats
-
----
-
-## 💡 Pro Tips
-
-- Tokens are saved per GitLab instance—add once, use everywhere
-- Works with both public and private GitLab servers
-- All features are blazing fast, even with huge catalogs
+- **GitLab CI: Refresh Component Cache** — Refreshes cached data
+- **GitLab CI: Show Cache Status** — See cache info and stats
 
 ---
 
@@ -94,11 +86,6 @@ Add your favorite sources in VS Code settings:
 **Component browser not showing components?**
 - Check file language mode is set to YAML
 - Verify component sources are configured
-
-**GitLab variables not expanding?**
-- Ensure `enableGitLabVariables` is true
-- Check if component sources provide context for expansion
-- Review debug output for variable detection
 
 **Version dropdown not loading?**
 - Check network connectivity to GitLab instance
@@ -109,7 +96,7 @@ If you encounter issues:
 1. Enable debug output and check for error messages
 2. Verify your configuration matches the examples above
 3. Test with a simple, known-working component source
-4. File an issue with debug output and configuration details
+4. Submit an issue with debug output and configuration details
 
 ---
 
@@ -117,10 +104,10 @@ If you encounter issues:
 
 See the [CHANGELOG](./CHANGELOG.md) or below for highlights:
 
-### v0.1.11 (pre-release)
+### v0.1.12 (Latest)
 - Added support for private GitLab projects/groups with token authentication
 
-### v0.1.8 (stable)
+### v0.1.8
 - Reduced vsix package size for faster downloads
 
 ### v0.1.7
@@ -187,8 +174,8 @@ if (api) {
 ## 🧑‍💻 Development
 
 **Prerequisites:**
-- VSCode
-- Node.js 14.x or higher
+- VSCode 1.102.0 or higher
+- Node.js 22.x or higher
 - Yarn or npm
 
 **Setup:**
