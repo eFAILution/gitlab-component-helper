@@ -186,15 +186,23 @@ export class ComponentService implements ComponentSource {
   }
 
   public async getTokenForProject(gitlabInstance: string, projectPath: string): Promise<string | undefined> {
-    if (!this.secretStorage) return undefined;
+    if (!this.secretStorage) {
+      this.logger.debug(`No secretStorage available for ${gitlabInstance}/${projectPath}`);
+      return undefined;
+    }
     const key = `gitlab-token-${gitlabInstance}-${projectPath}`;
-    return await this.secretStorage.get(key);
+    this.logger.debug(`Looking for token with key: ${key}`);
+    const token = await this.secretStorage.get(key);
+    this.logger.debug(`Found token for ${gitlabInstance}/${projectPath}: ${token ? 'YES' : 'NO'}`);
+    return token;
   }
 
   public async setTokenForProject(gitlabInstance: string, projectPath: string, token: string): Promise<void> {
     if (!this.secretStorage) throw new Error('SecretStorage not available');
     const key = `gitlab-token-${gitlabInstance}-${projectPath}`;
+    this.logger.debug(`Storing token with key: ${key}`);
     await this.secretStorage.store(key, token);
+    this.logger.debug(`Token stored successfully for ${gitlabInstance}/${projectPath}`);
   }
 
   async getComponents(): Promise<Component[]> {
@@ -270,8 +278,13 @@ export class ComponentService implements ComponentSource {
         const namespaceProject = projectPath;
         const catalogApiUrl = `https://${gitlabInstance}/api/v4/ci/catalog/${encodeURIComponent(namespaceProject)}`;
 
+        // Try to get a token for catalog API as well
+        let token: string | undefined = await this.getTokenForProject(gitlabInstance, projectPath);
+        let catalogFetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+
         this.logger.debug(`Trying to fetch from GitLab Catalog API: ${catalogApiUrl}`);
-        const catalogData = await this.httpClient.fetchJson(catalogApiUrl) as GitLabCatalogData;
+        this.logger.debug(`Using token for catalog API: ${token ? 'YES' : 'NO'}`);
+        const catalogData = await this.httpClient.fetchJson(catalogApiUrl, catalogFetchOptions) as GitLabCatalogData;
 
         if (catalogData && catalogData.components) {
           const catalogComponent = catalogData.components.find((c: GitLabCatalogComponent) => c.name === componentName);
@@ -313,12 +326,38 @@ export class ComponentService implements ComponentSource {
 
       this.logger.debug(`Fetching project info from: ${projectApiUrl}`);
 
+      // Try to get a token for this project/instance
+      let token: string | undefined = await this.getTokenForProject(gitlabInstance, projectPath);
+      let fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+
+      this.logger.debug(`Using token for ${gitlabInstance}/${projectPath}: ${token ? 'YES' : 'NO'}`);
+
       // **PARALLEL FETCHING OPTIMIZATION** - Fetch project info, template, and README in parallel
-      const [projectInfo, templateResult, readmeResult] = await Promise.allSettled([
-        this.httpClient.fetchJson(projectApiUrl),
-        this.fetchTemplate(apiBaseUrl, encodedProjectPath, componentName, version),
-        this.fetchReadme(apiBaseUrl, encodedProjectPath, componentName, version)
-      ]);
+      let projectInfo: any, templateResult: any, readmeResult: any;
+      try {
+        [projectInfo, templateResult, readmeResult] = await Promise.allSettled([
+          this.httpClient.fetchJson(projectApiUrl, fetchOptions),
+          this.fetchTemplate(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions),
+          this.fetchReadme(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions)
+        ]);
+      } catch (err: any) {
+        if (err && (err.status === 401 || err.status === 403)) {
+          // Prompt for token and retry
+          token = await promptForTokenIfNeeded(context, this, gitlabInstance, projectPath);
+          if (token) {
+            fetchOptions = { headers: { 'PRIVATE-TOKEN': token } };
+            [projectInfo, templateResult, readmeResult] = await Promise.allSettled([
+              this.httpClient.fetchJson(projectApiUrl, fetchOptions),
+              this.fetchTemplate(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions),
+              this.fetchReadme(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions)
+            ]);
+          } else {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      }
 
       if (projectInfo.status === 'rejected') {
         throw new Error(`Failed to fetch project info: ${projectInfo.reason}`);
@@ -378,12 +417,12 @@ export class ComponentService implements ComponentSource {
   }
 
   // Helper method for parallel template fetching
-  private async fetchTemplate(apiBaseUrl: string, projectId: string, componentName: string, version: string): Promise<{ content: string; parameters: any[] } | null> {
+  private async fetchTemplate(apiBaseUrl: string, projectId: string, componentName: string, version: string, fetchOptions?: any): Promise<{ content: string; parameters: any[] } | null> {
     try {
       const templatePath = `templates/${componentName}.yml`;
       const templateUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(templatePath)}/raw?ref=${version}`;
 
-      const templateContent = await this.httpClient.fetchText(templateUrl);
+      const templateContent = await this.httpClient.fetchText(templateUrl, fetchOptions);
 
       // Extract variables/parameters from the template
       let parameters: any[] = [];
@@ -417,17 +456,17 @@ export class ComponentService implements ComponentSource {
   }
 
   // Helper method for parallel README fetching
-  private async fetchReadme(apiBaseUrl: string, projectId: string, componentName: string, version: string): Promise<string | null> {
+  private async fetchReadme(apiBaseUrl: string, projectId: string, componentName: string, version: string, fetchOptions?: any): Promise<string | null> {
     try {
       // First check if there's a component-specific README
       const componentReadmePath = `docs/${componentName}/README.md`;
       try {
         const readmeUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(componentReadmePath)}/raw?ref=${version}`;
-        return await this.httpClient.fetchText(readmeUrl);
+        return await this.httpClient.fetchText(readmeUrl, fetchOptions);
       } catch (e) {
         // Then try the project README
         const projectReadmeUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/README.md/raw?ref=${version}`;
-        return await this.httpClient.fetchText(projectReadmeUrl);
+        return await this.httpClient.fetchText(projectReadmeUrl, fetchOptions);
       }
     } catch (error) {
       this.logger.debug(`Could not fetch README: ${error}`);
@@ -624,8 +663,8 @@ export class ComponentService implements ComponentSource {
           this.logger.debug(`Processing component: ${name} (${file.name})`);
           // **PARALLEL CONTENT FETCHING** - Fetch template content and README in parallel
           const [templateResult, readmeResult] = await Promise.allSettled([
-            this.fetchTemplateContent(apiBaseUrl, projectInfo.id, file.name, ref),
-            this.fetchProjectReadme(apiBaseUrl, projectInfo.id, ref)
+            this.fetchTemplateContent(apiBaseUrl, projectInfo.id, file.name, ref, fetchOptions),
+            this.fetchProjectReadme(apiBaseUrl, projectInfo.id, ref, fetchOptions)
           ]);
           let description = '';
           let variables: ComponentVariable[] = [];
@@ -680,14 +719,14 @@ export class ComponentService implements ComponentSource {
   }
 
   // Helper method for parallel template content fetching
-  private async fetchTemplateContent(apiBaseUrl: string, projectId: string, fileName: string, ref: string): Promise<{
+  private async fetchTemplateContent(apiBaseUrl: string, projectId: string, fileName: string, ref: string, fetchOptions?: any): Promise<{
     content: string;
     extractedVariables: ComponentVariable[];
     extractedDescription?: string;
   } | null> {
     try {
       const contentUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent('templates/' + fileName)}/raw?ref=${ref}`;
-      const content = await this.httpClient.fetchText(contentUrl);
+      const content = await this.httpClient.fetchText(contentUrl, fetchOptions);
 
       let extractedDescription = '';
       let extractedVariables: ComponentVariable[] = [];
@@ -783,10 +822,10 @@ export class ComponentService implements ComponentSource {
   }
 
   // Helper method for parallel README fetching
-  private async fetchProjectReadme(apiBaseUrl: string, projectId: string, ref: string): Promise<string | null> {
+  private async fetchProjectReadme(apiBaseUrl: string, projectId: string, ref: string, fetchOptions?: any): Promise<string | null> {
     try {
       const readmeUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/README.md/raw?ref=${ref}`;
-      return await this.httpClient.fetchText(readmeUrl);
+      return await this.httpClient.fetchText(readmeUrl, fetchOptions);
     } catch (error) {
       this.logger.debug(`No README found: ${error}`);
       return null;
@@ -805,8 +844,14 @@ export class ComponentService implements ComponentSource {
 
       this.logger.info(`Fetching versions for ${gitlabInstance}/${projectPath}`);
 
+      // Try to get a token for this project/instance
+      let token: string | undefined = await this.getTokenForProject(gitlabInstance, projectPath);
+      let fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+
+      this.logger.debug(`Using token for versions fetch: ${token ? 'YES' : 'NO'}`);
+
       // First, get project info to get the project ID
-      const projectInfo = await this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodedPath}`);
+      const projectInfo = await this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodedPath}`, fetchOptions);
 
       if (!projectInfo || !projectInfo.id) {
         this.logger.warn(`Could not get project info for ${projectPath}`);
@@ -815,8 +860,8 @@ export class ComponentService implements ComponentSource {
 
       // **PARALLEL OPTIMIZATION** - Fetch tags and branches in parallel
       const [tagsResult, branchesResult] = await Promise.allSettled([
-        this.httpClient.fetchJson(`${apiBaseUrl}/projects/${projectInfo.id}/repository/tags?per_page=100&sort=desc`),
-        this.httpClient.fetchJson(`${apiBaseUrl}/projects/${projectInfo.id}/repository/branches?per_page=20`)
+        this.httpClient.fetchJson(`${apiBaseUrl}/projects/${projectInfo.id}/repository/tags?per_page=100&sort=desc`, fetchOptions),
+        this.httpClient.fetchJson(`${apiBaseUrl}/projects/${projectInfo.id}/repository/branches?per_page=20`, fetchOptions)
       ]);
 
       const versions: string[] = [];
