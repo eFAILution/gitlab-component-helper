@@ -13,7 +13,7 @@ async function promptForTokenIfNeeded(
   gitlabInstance: string,
   projectPath: string
 ): Promise<string | undefined> {
-  const tokenPrompt = 'This project/group requires a GitLab personal access token. Please enter one to continue.';
+  const tokenPrompt = `This project/group requires a GitLab personal access token for ${gitlabInstance}. Please enter one to continue.`;
   const token = await vscode.window.showInputBox({
     prompt: tokenPrompt,
     password: true,
@@ -24,7 +24,7 @@ async function promptForTokenIfNeeded(
       service.setSecretStorage(context.secrets);
     }
     await service.setTokenForProject(gitlabInstance, projectPath, token.trim());
-    vscode.window.showInformationMessage(`Token saved for ${gitlabInstance}/${projectPath}`);
+    vscode.window.showInformationMessage(`Token saved for ${gitlabInstance}`);
     return token.trim();
   } else if (token === '') {
     vscode.window.showInformationMessage('No token entered. Public access will be used.');
@@ -61,7 +61,7 @@ export function registerAddProjectTokenCommand(context: vscode.ExtensionContext,
 
       // Prompt for token (optional)
       const token = await vscode.window.showInputBox({
-        prompt: 'Enter GitLab personal access token (leave blank for public access)',
+        prompt: `Enter GitLab personal access token for ${gitlabInstance} (leave blank for public access)`,
         password: true,
         ignoreFocusOut: true
       });
@@ -131,7 +131,7 @@ export function registerAddProjectTokenCommand(context: vscode.ExtensionContext,
             service.setSecretStorage(context.secrets);
           }
           await service.setTokenForProject(gitlabInstance, projectPath, token.trim());
-          vscode.window.showInformationMessage(`Component source "${displayName}" added successfully with token!`);
+          vscode.window.showInformationMessage(`Component source "${displayName}" added successfully with token for ${gitlabInstance}!`);
         } catch (e) {
           vscode.window.showErrorMessage(`Failed to save token: ${e}`);
         }
@@ -187,22 +187,29 @@ export class ComponentService implements ComponentSource {
 
   public async getTokenForProject(gitlabInstance: string, projectPath: string): Promise<string | undefined> {
     if (!this.secretStorage) {
-      this.logger.debug(`No secretStorage available for ${gitlabInstance}/${projectPath}`);
+      this.logger.debug(`No secretStorage available for ${gitlabInstance}`);
       return undefined;
     }
-    const key = `gitlab-token-${gitlabInstance}-${projectPath}`;
+    const key = `gitlab-token-${gitlabInstance}`;
     this.logger.debug(`Looking for token with key: ${key}`);
     const token = await this.secretStorage.get(key);
-    this.logger.debug(`Found token for ${gitlabInstance}/${projectPath}: ${token ? 'YES' : 'NO'}`);
+    this.logger.debug(`Found token for ${gitlabInstance}: ${token ? 'YES' : 'NO'}`);
     return token;
   }
 
   public async setTokenForProject(gitlabInstance: string, projectPath: string, token: string): Promise<void> {
     if (!this.secretStorage) throw new Error('SecretStorage not available');
-    const key = `gitlab-token-${gitlabInstance}-${projectPath}`;
+    const key = `gitlab-token-${gitlabInstance}`;
     this.logger.debug(`Storing token with key: ${key}`);
     await this.secretStorage.store(key, token);
-    this.logger.debug(`Token stored successfully for ${gitlabInstance}/${projectPath}`);
+    this.logger.debug(`Token stored successfully for ${gitlabInstance}`);
+  }
+
+  // Helper method to get token for any GitLab instance
+  public async getTokenForInstance(gitlabInstance: string): Promise<string | undefined> {
+    if (!this.secretStorage) return undefined;
+    const key = `gitlab-token-${gitlabInstance}`;
+    return await this.secretStorage.get(key);
   }
 
   async getComponents(): Promise<Component[]> {
@@ -330,7 +337,7 @@ export class ComponentService implements ComponentSource {
       let token: string | undefined = await this.getTokenForProject(gitlabInstance, projectPath);
       let fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
 
-      this.logger.debug(`Using token for ${gitlabInstance}/${projectPath}: ${token ? 'YES' : 'NO'}`);
+      this.logger.debug(`Using token for ${gitlabInstance}: ${token ? 'YES' : 'NO'}`);
 
       // **PARALLEL FETCHING OPTIMIZATION** - Fetch project info, template, and README in parallel
       let projectInfo: any, templateResult: any, readmeResult: any;
