@@ -173,7 +173,7 @@ const sourceCache = new Map<string, CacheEntry>();
 let backgroundUpdateInProgress = false;
 
 export class ComponentService implements ComponentSource {
-  private httpClient = new HttpClient();
+  public httpClient = new HttpClient();
   private logger = Logger.getInstance();
   private componentCache = new Map<string, Component>();
   private catalogCache = new Map<string, any>();
@@ -482,8 +482,8 @@ export class ComponentService implements ComponentSource {
   }
 
   // Helper methods for HTTP requests - now using HttpClient
-  public async fetchJson(url: string): Promise<any> {
-    return this.httpClient.fetchJson(url);
+  public async fetchJson(url: string, options?: any): Promise<any> {
+    return this.httpClient.fetchJson(url, options);
   }
 
   private async fetchText(url: string): Promise<string> {
