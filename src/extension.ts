@@ -1,3 +1,4 @@
+import { registerAddProjectTokenCommand, getComponentService } from './services/componentService';
 import * as vscode from 'vscode';
 import { HoverProvider } from './providers/hoverProvider';
 import { CompletionProvider } from './providers/completionProvider';
@@ -83,6 +84,12 @@ export function activate(context: vscode.ExtensionContext) {
         ':', ' ', '@'  // Add @ as a trigger character for version completions
       )
     );
+
+    // Register command to add project/group token
+    logger.debug('[Extension] Registering addProjectToken command...', 'Extension');
+    const service = getComponentService();
+    service.setSecretStorage(context.secrets);
+    registerAddProjectTokenCommand(context, service);
 
     // Register component browser command
     logger.debug('[Extension] Registering browseComponents command...', 'Extension');

@@ -2,10 +2,11 @@
   "name": "gitlab-component-helper",
   "displayName": "GitLab Component Helper",
   "description": "Provides intellisense for GitLab CI components",
-  "version": "0.1.8",
+  "version": "0.1.12",
   "icon": "images/icon.png",
   "engines": {
-    "vscode": "^1.60.0"
+    "node": ">=22.0.0",
+    "vscode": ">=1.102.0"
   },
   "publisher": "eFAILution",
   "repository": {
@@ -15,7 +16,6 @@
   "main": "./out/extension.js",
   "activationEvents": [
     "onLanguage:yaml",
-    "onLanguage:gitlab-ci",
     "onLanguage:shellscript",
     "workspaceContains:.gitlab-ci.yml",
     "workspaceContains:.gitlab-ci.yaml"
@@ -179,6 +179,10 @@
       {
         "command": "gitlab-component-helper.testProviders",
         "title": "GitLab CI: Test Providers"
+      },
+      {
+        "command": "gitlabComponentHelper.addProjectToken",
+        "title": "GitLab CI: Add Component Project/Group"
       }
     ],
     "menus": {
@@ -210,38 +214,38 @@
     "@commitlint/cli": "^19.5.0",
     "@commitlint/config-conventional": "^19.5.0",
     "@digitalroute/cz-conventional-changelog-for-jira": "^8.0.1",
-    "@eslint/js": "^9.28.0",
-    "@octokit/core": "^7.0.2",
-    "@octokit/plugin-paginate-rest": "^13.0.0",
+    "@eslint/js": "^9.31.0",
+    "@octokit/core": "^7.0.3",
+    "@octokit/plugin-paginate-rest": "^13.1.1",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/commit-analyzer": "^13.0.0",
     "@semantic-release/exec": "^7.0.0",
     "@semantic-release/git": "^10.0.1",
     "@semantic-release/gitlab-config": "^14.0.1",
     "@semantic-release/release-notes-generator": "^14.0.1",
-    "@types/glob": "^7.2.0",
+    "@types/glob": "^9.0.0",
     "@types/js-yaml": "^4.0.9",
-    "@types/mocha": "^9.0.0",
-    "@types/node": "^16.18.126",
-    "@types/vscode": "^1.60.0",
-    "@typescript-eslint/eslint-plugin": "^8.36.0",
-    "@typescript-eslint/parser": "^8.36.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^24.0.13",
+    "@types/vscode": "^1.102.0",
+    "@typescript-eslint/eslint-plugin": "^8.37.0",
+    "@typescript-eslint/parser": "^8.37.0",
     "@vscode/test-electron": "^2.3.9",
     "commitizen": "^4.3.1",
-    "conventional-changelog-conventionalcommits": "^9.0.0",
+    "conventional-changelog-conventionalcommits": "^9.1.0",
     "cz-conventional-changelog": "^3.3.0",
     "cz-emoji-conventional": "^1.1.0",
     "dateformat": "^5.0.3",
     "esbuild": "^0.25.6",
-    "eslint": "^9.30.1",
+    "eslint": "^9.31.0",
     "eslint-plugin-react": "^7.37.5",
     "husky": "^9.1.6",
     "is-ci": "^4.0.0",
     "js-yaml": "^4.1.0",
-    "mocha": "^9.1.1",
+    "mocha": "^11.7.1",
     "npm-run-all": "^4.1.5",
-    "typescript": "^4.4.3",
-    "typescript-eslint": "^8.33.1"
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.37.0"
   },
   "keywords": [],
   "author": "eFAILution",

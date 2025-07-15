@@ -603,8 +603,14 @@ export class ComponentCacheManager {
       const groupApiUrl = `https://${gitlabInstance}/api/v4/groups/${encodeURIComponent(groupPath)}/projects?per_page=100&include_subgroups=true`;
       outputChannel.appendLine(`[ComponentCache] Fetching group projects from: ${groupApiUrl}`);
 
-      // Use the existing fetchJson method from componentService
-      const projects = await componentService.fetchJson(groupApiUrl);
+      // Get token for this GitLab instance
+      const token = await componentService.getTokenForInstance(gitlabInstance);
+      const fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+
+      outputChannel.appendLine(`[ComponentCache] Using token for ${gitlabInstance}: ${token ? 'YES' : 'NO'}`);
+
+      // Use the fetchJson method with authentication options
+      const projects = await componentService.fetchJson(groupApiUrl, fetchOptions);
 
       outputChannel.appendLine(`[ComponentCache] Found ${projects.length} total projects in group ${groupPath}`);
 

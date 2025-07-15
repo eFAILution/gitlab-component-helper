@@ -1,9 +1,146 @@
 import * as vscode from 'vscode';
 import { Component } from '../providers/componentDetector';
 import { GitLabCatalogComponent, GitLabCatalogVariable, GitLabCatalogData } from '../types/gitlab-catalog';
+
 import { outputChannel } from '../utils/outputChannel';
 import { HttpClient } from '../utils/httpClient';
 import { Logger } from '../utils/logger';
+
+// Helper: Prompt for token if needed and store it
+async function promptForTokenIfNeeded(
+  context: vscode.ExtensionContext | undefined,
+  service: ComponentService,
+  gitlabInstance: string,
+  projectPath: string
+): Promise<string | undefined> {
+  const tokenPrompt = `This project/group requires a GitLab personal access token for ${gitlabInstance}. Please enter one to continue.`;
+  const token = await vscode.window.showInputBox({
+    prompt: tokenPrompt,
+    password: true,
+    ignoreFocusOut: true
+  });
+  if (token && token.trim()) {
+    if (context && context.secrets) {
+      service.setSecretStorage(context.secrets);
+    }
+    await service.setTokenForProject(gitlabInstance, projectPath, token.trim());
+    vscode.window.showInformationMessage(`Token saved for ${gitlabInstance}`);
+    return token.trim();
+  } else if (token === '') {
+    vscode.window.showInformationMessage('No token entered. Public access will be used.');
+    return undefined;
+  }
+  return undefined;
+}
+
+
+// Register the command in your extension's activation (see README for usage)
+export function registerAddProjectTokenCommand(context: vscode.ExtensionContext, service: ComponentService) {
+  context.subscriptions.push(
+    vscode.commands.registerCommand('gitlabComponentHelper.addProjectToken', async () => {
+      // Prompt for the full GitLab URL
+      const url = await vscode.window.showInputBox({
+        prompt: 'Enter the full GitLab project or group URL (e.g. https://gitlab.com/mygroup/myproject)',
+        ignoreFocusOut: true,
+        placeHolder: 'https://gitlab.com/mygroup/myproject'
+      });
+      if (!url) return;
+
+      let gitlabInstance = '';
+      let projectPath = '';
+      try {
+        const parsed = new URL(url);
+        gitlabInstance = parsed.hostname;
+        // Remove leading/trailing slashes and join path
+        projectPath = parsed.pathname.replace(/^\/+|\/+$/g, '');
+        if (!gitlabInstance || !projectPath) throw new Error('Invalid URL');
+      } catch (e) {
+        vscode.window.showErrorMessage('Invalid GitLab URL. Please enter a valid project or group URL.');
+        return;
+      }
+
+      // Prompt for token (optional)
+      const token = await vscode.window.showInputBox({
+        prompt: `Enter GitLab personal access token for ${gitlabInstance} (leave blank for public access)`,
+        password: true,
+        ignoreFocusOut: true
+      });
+      if (token === undefined) return; // User cancelled
+
+      // Add to component sources as a proper object
+      const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+      const componentSources: any[] = config.get('componentSources', []);
+
+      // Check if this source already exists
+      const existingSource = componentSources.find(source =>
+        source.path === projectPath && source.gitlabInstance === gitlabInstance
+      );
+
+      let displayName: string;
+      let type: 'group' | 'project';
+
+      // Try to determine type from path
+      const pathSegments = projectPath.split('/').filter(Boolean);
+      if (pathSegments.length === 1) {
+        type = 'group';
+      } else if (pathSegments.length > 1) {
+        // Ambiguous, ask user
+        const typePick = await vscode.window.showQuickPick([
+          { label: 'Project', value: 'project', description: 'A single GitLab project' },
+          { label: 'Group', value: 'group', description: 'A GitLab group containing multiple projects' }
+        ], {
+          placeHolder: 'Is this a group or a project?',
+          ignoreFocusOut: true
+        });
+        if (!typePick) return; // User cancelled
+        type = typePick.value as 'group' | 'project';
+      } else {
+        // Fallback
+        type = 'project';
+      }
+
+      if (!existingSource) {
+        // Prompt for a display name
+        const inputDisplayName = await vscode.window.showInputBox({
+          prompt: 'Enter a display name for this component source',
+          value: projectPath.split('/').pop() || projectPath,
+          ignoreFocusOut: true
+        });
+
+        if (!inputDisplayName) return; // User cancelled
+
+        displayName = inputDisplayName;
+
+        const newSource = {
+          name: displayName,
+          path: projectPath,
+          gitlabInstance: gitlabInstance,
+          type: type
+        };
+
+        componentSources.push(newSource);
+        await config.update('componentSources', componentSources, vscode.ConfigurationTarget.Global);
+      } else {
+        displayName = existingSource.name;
+      }
+
+      // Store the token if provided
+      if (token && token.trim()) {
+        try {
+          if (!service['secretStorage'] && context.secrets) {
+            service.setSecretStorage(context.secrets);
+          }
+          await service.setTokenForProject(gitlabInstance, projectPath, token.trim());
+          vscode.window.showInformationMessage(`Component source "${displayName}" added successfully with token for ${gitlabInstance}!`);
+        } catch (e) {
+          vscode.window.showErrorMessage(`Failed to save token: ${e}`);
+        }
+      } else {
+        vscode.window.showInformationMessage(`Component source "${displayName}" added successfully! Public access will be used.`);
+      }
+    })
+  );
+}
 
 interface GitLabTreeItem {
   id: string;
@@ -36,106 +173,48 @@ const sourceCache = new Map<string, CacheEntry>();
 let backgroundUpdateInProgress = false;
 
 export class ComponentService implements ComponentSource {
-  private httpClient = new HttpClient();
+  public httpClient = new HttpClient();
   private logger = Logger.getInstance();
   private componentCache = new Map<string, Component>();
   private catalogCache = new Map<string, any>();
+  private secretStorage: vscode.SecretStorage | undefined;
+
+  constructor() {}
+
+  public setSecretStorage(secretStorage: vscode.SecretStorage) {
+    this.secretStorage = secretStorage;
+  }
+
+  public async getTokenForProject(gitlabInstance: string, projectPath: string): Promise<string | undefined> {
+    if (!this.secretStorage) {
+      this.logger.debug(`No secretStorage available for ${gitlabInstance}`);
+      return undefined;
+    }
+    const key = `gitlab-token-${gitlabInstance}`;
+    this.logger.debug(`Looking for token with key: ${key}`);
+    const token = await this.secretStorage.get(key);
+    this.logger.debug(`Found token for ${gitlabInstance}: ${token ? 'YES' : 'NO'}`);
+    return token;
+  }
+
+  public async setTokenForProject(gitlabInstance: string, projectPath: string, token: string): Promise<void> {
+    if (!this.secretStorage) throw new Error('SecretStorage not available');
+    const key = `gitlab-token-${gitlabInstance}`;
+    this.logger.debug(`Storing token with key: ${key}`);
+    await this.secretStorage.store(key, token);
+    this.logger.debug(`Token stored successfully for ${gitlabInstance}`);
+  }
+
+  // Helper method to get token for any GitLab instance
+  public async getTokenForInstance(gitlabInstance: string): Promise<string | undefined> {
+    if (!this.secretStorage) return undefined;
+    const key = `gitlab-token-${gitlabInstance}`;
+    return await this.secretStorage.get(key);
+  }
 
   async getComponents(): Promise<Component[]> {
-    const startTime = Date.now();
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-    const cacheTime = config.get<number>('cacheTime', 3600) * 1000; // Default 1 hour
-    const sourceType = config.get<string>('componentSource', 'local');
-
-    const cacheKey = `${sourceType}`;
-
-    this.logger.info(`getComponents() called for source: ${sourceType}`);
-    this.logger.debug(`Cache time setting: ${cacheTime/1000}s`);
-
-    // Check cache first
-    const cachedEntry = sourceCache.get(cacheKey);
-    const isExpired = !cachedEntry || (Date.now() - cachedEntry.timestamp) > cacheTime;
-
-    if (cachedEntry && !isExpired) {
-      this.logger.info(`Returning cached components (${cachedEntry.components.length} items)`);
-      this.logger.logPerformance('getComponents (cached)', Date.now() - startTime, {
-        source: sourceType,
-        count: cachedEntry.components.length
-      });
-
-      // Start background update if not already in progress
-      if (!backgroundUpdateInProgress) {
-        this.startBackgroundUpdate(sourceType, cacheKey);
-      }
-
-      return cachedEntry.components;
-    }
-
-    try {
-      this.logger.info(`Fetching fresh components from source: ${sourceType}`);
-      const components = await this.fetchComponentsBySource(sourceType);
-
-      // Update cache
-      sourceCache.set(cacheKey, {
-        components,
-        timestamp: Date.now()
-      });
-
-      this.logger.info(`Successfully fetched ${components.length} components`);
-      this.logger.logPerformance('getComponents (fresh)', Date.now() - startTime, {
-        source: sourceType,
-        count: components.length
-      });
-
-      return components;
-    } catch (error) {
-      this.logger.error(`Error fetching components: ${error}`);
-      console.error(`Error fetching components: ${error}`);
-      vscode.window.showErrorMessage(`Failed to fetch GitLab components: ${error}`);
-
-      // Return cached data if available, even if expired
-      if (cachedEntry) {
-        this.logger.warn('Falling back to expired cached components');
-        return cachedEntry.components;
-      }
-
-      this.logger.warn('Falling back to local components');
-      return this.getLocalComponents();
-    }
-  }
-
-  private async startBackgroundUpdate(sourceType: string, cacheKey: string): Promise<void> {
-    if (backgroundUpdateInProgress) {
-      return;
-    }
-
-    backgroundUpdateInProgress = true;
-    this.logger.debug('Starting background cache update');
-
-    try {
-      const components = await this.fetchComponentsBySource(sourceType);
-      sourceCache.set(cacheKey, {
-        components,
-        timestamp: Date.now()
-      });
-      this.logger.info(`Background update completed: ${components.length} components`);
-    } catch (error) {
-      this.logger.warn(`Background update failed: ${error}`);
-    } finally {
-      backgroundUpdateInProgress = false;
-    }
-  }
-
-  private async fetchComponentsBySource(sourceType: string): Promise<Component[]> {
-    switch (sourceType) {
-      case 'gitlab':
-        return this.fetchFromGitLab();
-      case 'url':
-        return this.fetchFromUrl();
-      case 'local':
-      default:
-        return this.getLocalComponents();
-    }
+    // Implementation for getting components
+    return this.getLocalComponents();
   }
 
   async getComponent(name: string): Promise<Component | undefined> {
@@ -144,11 +223,10 @@ export class ComponentService implements ComponentSource {
   }
 
   // Update getComponentFromUrl to ensure it sets the context property
-  public async getComponentFromUrl(url: string): Promise<Component | null> {
+  public async getComponentFromUrl(url: string, context?: vscode.ExtensionContext): Promise<Component | null> {
     try {
       // Existing code to fetch component
-      const component = await this.fetchComponentMetadata(url);
-
+      const component = await this.fetchComponentMetadata(url, context);
       // Make sure context is added
       if (component) {
         // Parse the URL for context info
@@ -160,7 +238,6 @@ export class ComponentService implements ComponentSource {
           };
         }
       }
-
       return component;
     } catch (error) {
       console.error(`Error fetching component from URL: ${error}`);
@@ -168,7 +245,7 @@ export class ComponentService implements ComponentSource {
     }
   }
 
-  private async fetchComponentMetadata(url: string): Promise<Component> {
+  private async fetchComponentMetadata(url: string, context?: vscode.ExtensionContext): Promise<Component> {
     const startTime = Date.now();
 
     try {
@@ -208,8 +285,13 @@ export class ComponentService implements ComponentSource {
         const namespaceProject = projectPath;
         const catalogApiUrl = `https://${gitlabInstance}/api/v4/ci/catalog/${encodeURIComponent(namespaceProject)}`;
 
+        // Try to get a token for catalog API as well
+        let token: string | undefined = await this.getTokenForProject(gitlabInstance, projectPath);
+        let catalogFetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+
         this.logger.debug(`Trying to fetch from GitLab Catalog API: ${catalogApiUrl}`);
-        const catalogData = await this.httpClient.fetchJson(catalogApiUrl) as GitLabCatalogData;
+        this.logger.debug(`Using token for catalog API: ${token ? 'YES' : 'NO'}`);
+        const catalogData = await this.httpClient.fetchJson(catalogApiUrl, catalogFetchOptions) as GitLabCatalogData;
 
         if (catalogData && catalogData.components) {
           const catalogComponent = catalogData.components.find((c: GitLabCatalogComponent) => c.name === componentName);
@@ -251,12 +333,38 @@ export class ComponentService implements ComponentSource {
 
       this.logger.debug(`Fetching project info from: ${projectApiUrl}`);
 
+      // Try to get a token for this project/instance
+      let token: string | undefined = await this.getTokenForProject(gitlabInstance, projectPath);
+      let fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+
+      this.logger.debug(`Using token for ${gitlabInstance}: ${token ? 'YES' : 'NO'}`);
+
       // **PARALLEL FETCHING OPTIMIZATION** - Fetch project info, template, and README in parallel
-      const [projectInfo, templateResult, readmeResult] = await Promise.allSettled([
-        this.httpClient.fetchJson(projectApiUrl),
-        this.fetchTemplate(apiBaseUrl, encodedProjectPath, componentName, version),
-        this.fetchReadme(apiBaseUrl, encodedProjectPath, componentName, version)
-      ]);
+      let projectInfo: any, templateResult: any, readmeResult: any;
+      try {
+        [projectInfo, templateResult, readmeResult] = await Promise.allSettled([
+          this.httpClient.fetchJson(projectApiUrl, fetchOptions),
+          this.fetchTemplate(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions),
+          this.fetchReadme(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions)
+        ]);
+      } catch (err: any) {
+        if (err && (err.status === 401 || err.status === 403)) {
+          // Prompt for token and retry
+          token = await promptForTokenIfNeeded(context, this, gitlabInstance, projectPath);
+          if (token) {
+            fetchOptions = { headers: { 'PRIVATE-TOKEN': token } };
+            [projectInfo, templateResult, readmeResult] = await Promise.allSettled([
+              this.httpClient.fetchJson(projectApiUrl, fetchOptions),
+              this.fetchTemplate(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions),
+              this.fetchReadme(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions)
+            ]);
+          } else {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      }
 
       if (projectInfo.status === 'rejected') {
         throw new Error(`Failed to fetch project info: ${projectInfo.reason}`);
@@ -316,12 +424,12 @@ export class ComponentService implements ComponentSource {
   }
 
   // Helper method for parallel template fetching
-  private async fetchTemplate(apiBaseUrl: string, projectId: string, componentName: string, version: string): Promise<{ content: string; parameters: any[] } | null> {
+  private async fetchTemplate(apiBaseUrl: string, projectId: string, componentName: string, version: string, fetchOptions?: any): Promise<{ content: string; parameters: any[] } | null> {
     try {
       const templatePath = `templates/${componentName}.yml`;
       const templateUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(templatePath)}/raw?ref=${version}`;
 
-      const templateContent = await this.httpClient.fetchText(templateUrl);
+      const templateContent = await this.httpClient.fetchText(templateUrl, fetchOptions);
 
       // Extract variables/parameters from the template
       let parameters: any[] = [];
@@ -355,17 +463,17 @@ export class ComponentService implements ComponentSource {
   }
 
   // Helper method for parallel README fetching
-  private async fetchReadme(apiBaseUrl: string, projectId: string, componentName: string, version: string): Promise<string | null> {
+  private async fetchReadme(apiBaseUrl: string, projectId: string, componentName: string, version: string, fetchOptions?: any): Promise<string | null> {
     try {
       // First check if there's a component-specific README
       const componentReadmePath = `docs/${componentName}/README.md`;
       try {
         const readmeUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(componentReadmePath)}/raw?ref=${version}`;
-        return await this.httpClient.fetchText(readmeUrl);
+        return await this.httpClient.fetchText(readmeUrl, fetchOptions);
       } catch (e) {
         // Then try the project README
         const projectReadmeUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/README.md/raw?ref=${version}`;
-        return await this.httpClient.fetchText(projectReadmeUrl);
+        return await this.httpClient.fetchText(projectReadmeUrl, fetchOptions);
       }
     } catch (error) {
       this.logger.debug(`Could not fetch README: ${error}`);
@@ -374,8 +482,8 @@ export class ComponentService implements ComponentSource {
   }
 
   // Helper methods for HTTP requests - now using HttpClient
-  public async fetchJson(url: string): Promise<any> {
-    return this.httpClient.fetchJson(url);
+  public async fetchJson(url: string, options?: any): Promise<any> {
+    return this.httpClient.fetchJson(url, options);
   }
 
   private async fetchText(url: string): Promise<string> {
@@ -475,7 +583,7 @@ export class ComponentService implements ComponentSource {
   /**
    * Fetch component catalog data from GitLab with optimizations
    */
-  async fetchCatalogData(gitlabInstance: string, projectPath: string, forceRefresh: boolean = false, version?: string): Promise<any> {
+  async fetchCatalogData(gitlabInstance: string, projectPath: string, forceRefresh: boolean = false, version?: string, context?: vscode.ExtensionContext): Promise<any> {
     const startTime = Date.now();
     const versionSuffix = version ? `@${version}` : '';
     const cacheKey = `catalog:${gitlabInstance}:${projectPath}${versionSuffix}`;
@@ -504,50 +612,70 @@ export class ComponentService implements ComponentSource {
     try {
       // **PARALLEL OPTIMIZATION** - Fetch project info and templates in parallel
       const apiBaseUrl = `https://${cleanGitlabInstance}/api/v4`;
-      const ref = version || 'main';
-
-      const [projectInfo, templates] = await Promise.all([
-        this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`),
-        this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`)
-          .catch(() => [] as GitLabTreeItem[]) // If templates folder doesn't exist, return empty array
-      ]);
-
-      this.logger.debug(`Found project: ${projectInfo.name} (ID: ${projectInfo.id})`);
-      this.logger.debug(`Found ${templates.length} items in templates directory`);
+      let ref = version || 'main';
+      let token: string | undefined = await this.getTokenForProject(cleanGitlabInstance, projectPath);
+      let fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+      let projectInfo: any, templates: any;
+      try {
+        [projectInfo, templates] = await Promise.all([
+          this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`, fetchOptions),
+          this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`, fetchOptions)
+            .catch(() => [] as GitLabTreeItem[])
+        ]);
+      } catch (err: any) {
+        if (err && (err.status === 401 || err.status === 403)) {
+          // Prompt for token and retry
+          token = await promptForTokenIfNeeded(context, this, cleanGitlabInstance, projectPath);
+          if (token) {
+            fetchOptions = { headers: { 'PRIVATE-TOKEN': token } };
+            [projectInfo, templates] = await Promise.all([
+              this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`, fetchOptions),
+              this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`, fetchOptions)
+                .catch(() => [] as GitLabTreeItem[])
+            ]);
+          } else {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      }
+      // --- Use the project's default branch if available ---
+      if (projectInfo && projectInfo.default_branch) {
+        ref = projectInfo.default_branch;
+      }
+      this.logger.debug(`Found project: ${projectInfo.name} (ID: ${projectInfo.id}), using ref: ${ref}`);
+      // Re-fetch templates with correct ref if needed
+      templates = await this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`, fetchOptions)
+        .catch(() => [] as GitLabTreeItem[]);
 
       // Filter YAML files
       const yamlFiles = templates.filter((file: GitLabTreeItem) =>
         file.name.endsWith('.yml') || file.name.endsWith('.yaml')
       );
       this.logger.debug(`Found ${yamlFiles.length} YAML template files`);
-
       if (yamlFiles.length === 0) {
         this.logger.info(`No YAML templates found in ${projectPath}`);
         const catalogData = { components: [] };
         this.catalogCache.set(cacheKey, catalogData);
         return catalogData;
       }
-
       // **BATCH PROCESSING OPTIMIZATION** - Process components in batches
       const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
       const batchSize = config.get<number>('batchSize', 5);
-
       const components = await this.httpClient.processBatch(
         yamlFiles,
         async (file: GitLabTreeItem) => {
           const name = file.name.replace(/\.ya?ml$/, '');
           this.logger.debug(`Processing component: ${name} (${file.name})`);
-
           // **PARALLEL CONTENT FETCHING** - Fetch template content and README in parallel
           const [templateResult, readmeResult] = await Promise.allSettled([
-            this.fetchTemplateContent(apiBaseUrl, projectInfo.id, file.name, ref),
-            this.fetchProjectReadme(apiBaseUrl, projectInfo.id, ref)
+            this.fetchTemplateContent(apiBaseUrl, projectInfo.id, file.name, ref, fetchOptions),
+            this.fetchProjectReadme(apiBaseUrl, projectInfo.id, ref, fetchOptions)
           ]);
-
           let description = '';
           let variables: ComponentVariable[] = [];
           let readmeContent = '';
-
           // Process template content
           if (templateResult.status === 'fulfilled' && templateResult.value) {
             const { content, extractedVariables, extractedDescription } = templateResult.value;
@@ -556,11 +684,9 @@ export class ComponentService implements ComponentSource {
           } else {
             description = `${name} component`;
           }
-
           // Process README content
           if (readmeResult.status === 'fulfilled' && readmeResult.value) {
             readmeContent = readmeResult.value;
-
             // Extract description from README if not found in template
             if (!description || description === `${name} component`) {
               const readmeLines = readmeContent.split('\n').filter(line => line.trim());
@@ -573,7 +699,6 @@ export class ComponentService implements ComponentSource {
               }
             }
           }
-
           return {
             name,
             description,
@@ -584,19 +709,15 @@ export class ComponentService implements ComponentSource {
         },
         batchSize
       );
-
       const catalogData = { components };
-
       // Cache the result
       this.catalogCache.set(cacheKey, catalogData);
-
       this.logger.info(`Successfully processed ${components.length} components`);
       this.logger.logPerformance('fetchCatalogData (fresh)', Date.now() - startTime, {
         componentCount: components.length,
         batchSize,
         projectPath
       });
-
       return catalogData;
     } catch (error) {
       this.logger.error(`Error fetching catalog data for ${projectPath}: ${error}`);
@@ -605,14 +726,14 @@ export class ComponentService implements ComponentSource {
   }
 
   // Helper method for parallel template content fetching
-  private async fetchTemplateContent(apiBaseUrl: string, projectId: string, fileName: string, ref: string): Promise<{
+  private async fetchTemplateContent(apiBaseUrl: string, projectId: string, fileName: string, ref: string, fetchOptions?: any): Promise<{
     content: string;
     extractedVariables: ComponentVariable[];
     extractedDescription?: string;
   } | null> {
     try {
       const contentUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent('templates/' + fileName)}/raw?ref=${ref}`;
-      const content = await this.httpClient.fetchText(contentUrl);
+      const content = await this.httpClient.fetchText(contentUrl, fetchOptions);
 
       let extractedDescription = '';
       let extractedVariables: ComponentVariable[] = [];
@@ -708,10 +829,10 @@ export class ComponentService implements ComponentSource {
   }
 
   // Helper method for parallel README fetching
-  private async fetchProjectReadme(apiBaseUrl: string, projectId: string, ref: string): Promise<string | null> {
+  private async fetchProjectReadme(apiBaseUrl: string, projectId: string, ref: string, fetchOptions?: any): Promise<string | null> {
     try {
       const readmeUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/README.md/raw?ref=${ref}`;
-      return await this.httpClient.fetchText(readmeUrl);
+      return await this.httpClient.fetchText(readmeUrl, fetchOptions);
     } catch (error) {
       this.logger.debug(`No README found: ${error}`);
       return null;
@@ -730,8 +851,14 @@ export class ComponentService implements ComponentSource {
 
       this.logger.info(`Fetching versions for ${gitlabInstance}/${projectPath}`);
 
+      // Try to get a token for this project/instance
+      let token: string | undefined = await this.getTokenForProject(gitlabInstance, projectPath);
+      let fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+
+      this.logger.debug(`Using token for versions fetch: ${token ? 'YES' : 'NO'}`);
+
       // First, get project info to get the project ID
-      const projectInfo = await this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodedPath}`);
+      const projectInfo = await this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodedPath}`, fetchOptions);
 
       if (!projectInfo || !projectInfo.id) {
         this.logger.warn(`Could not get project info for ${projectPath}`);
@@ -740,8 +867,8 @@ export class ComponentService implements ComponentSource {
 
       // **PARALLEL OPTIMIZATION** - Fetch tags and branches in parallel
       const [tagsResult, branchesResult] = await Promise.allSettled([
-        this.httpClient.fetchJson(`${apiBaseUrl}/projects/${projectInfo.id}/repository/tags?per_page=100&sort=desc`),
-        this.httpClient.fetchJson(`${apiBaseUrl}/projects/${projectInfo.id}/repository/branches?per_page=20`)
+        this.httpClient.fetchJson(`${apiBaseUrl}/projects/${projectInfo.id}/repository/tags?per_page=100&sort=desc`, fetchOptions),
+        this.httpClient.fetchJson(`${apiBaseUrl}/projects/${projectInfo.id}/repository/branches?per_page=20`, fetchOptions)
       ]);
 
       const versions: string[] = [];
@@ -826,8 +953,10 @@ export class ComponentService implements ComponentSource {
 
     try {
       const apiUrl = `https://${gitlabInstance}/api/v4/projects/${encodeURIComponent(projectPath)}/repository/tags?per_page=100&order_by=updated&sort=desc`;
-
-      const tags = await this.httpClient.fetchJson(apiUrl);
+      // Try to get a token for this project/group/instance
+      const token = await this.getTokenForProject(gitlabInstance, projectPath);
+      const options = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+      const tags = await this.httpClient.fetchJson(apiUrl, options);
 
       this.logger.info(`Found ${tags.length} tags for ${projectPath}`);
       this.logger.logPerformance('fetchProjectTags', Date.now() - startTime, {
@@ -841,8 +970,6 @@ export class ComponentService implements ComponentSource {
       return []; // Return empty array instead of rejecting
     }
   }
-
-  // ...existing code...
 
   // Add this method to your ComponentService class
   public parseCustomComponentUrl(url: string): { gitlabInstance: string; path: string; name: string; version?: string } | null {
