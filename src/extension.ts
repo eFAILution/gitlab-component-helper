@@ -7,6 +7,7 @@ import { detectIncludeComponent } from './providers/componentDetector';
 import { getComponentCacheManager, ComponentCacheManager } from './services/componentCacheManager';
 import { outputChannel } from './utils/outputChannel';
 import { Logger } from './utils/logger';
+import { ValidationProvider } from './providers/validationProvider';
 
 export function activate(context: vscode.ExtensionContext) {
   const logger = Logger.getInstance();
@@ -224,7 +225,7 @@ export function activate(context: vscode.ExtensionContext) {
       })
     );
 
-    // Register test command for debugging providers
+    // Register command to test providers for debugging
     logger.debug('[Extension] Registering testProviders command...', 'Extension');
     context.subscriptions.push(
       vscode.commands.registerCommand('gitlab-component-helper.testProviders', async () => {
@@ -269,6 +270,9 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage('Provider test completed. Check output panel for results.');
       })
     );
+
+    // Initialize the validation provider
+    new ValidationProvider(context);
 
     logger.info('[Extension] All commands registered successfully!', 'Extension');
     logger.info('[Extension] Extension activation completed successfully!', 'Extension');
