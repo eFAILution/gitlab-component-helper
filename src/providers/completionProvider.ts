@@ -2,11 +2,13 @@ import * as vscode from 'vscode';
 import { getComponentUnderCursor } from './componentDetector';
 import { getComponentService } from '../services/componentService';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
-import { outputChannel } from '../utils/outputChannel';
 import { getComponentCacheManager } from '../services/componentCacheManager';
 import { getVariableCompletions, GITLAB_PREDEFINED_VARIABLES } from '../utils/gitlabVariables';
+import { Logger } from '../utils/logger';
 
 export class CompletionProvider implements vscode.CompletionItemProvider {
+  private logger = Logger.getInstance();
+
   // Helper function to check if file is a GitLab CI file
   private isGitLabCIFile(document: vscode.TextDocument): boolean {
     const fileName = document.fileName.toLowerCase();
@@ -22,42 +24,42 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
   ): Promise<vscode.CompletionItem[] | vscode.CompletionList | null> {
     // First check if this is a GitLab CI file
     if (!this.isGitLabCIFile(document)) {
-      outputChannel.appendLine(`[CompletionProvider] Skipping completion for non-GitLab CI file: ${document.fileName} (language: ${document.languageId})`);
+      this.logger.debug(`[CompletionProvider] Skipping completion for non-GitLab CI file: ${document.fileName} (language: ${document.languageId})`, 'CompletionProvider');
       return null;
     }
 
     const linePrefix = document.lineAt(position.line).text.substr(0, position.character);
 
-    outputChannel.appendLine(`[CompletionProvider] Triggered at line ${position.line + 1}, character ${position.character}`);
-    outputChannel.appendLine(`[CompletionProvider] File: ${document.fileName} (language: ${document.languageId})`);
-    outputChannel.appendLine(`[CompletionProvider] Line prefix: "${linePrefix}"`);
+    this.logger.debug(`[CompletionProvider] Triggered at line ${position.line + 1}, character ${position.character}`, 'CompletionProvider');
+    this.logger.debug(`[CompletionProvider] File: ${document.fileName} (language: ${document.languageId})`, 'CompletionProvider');
+    this.logger.debug(`[CompletionProvider] Line prefix: "${linePrefix}"`, 'CompletionProvider');
 
     // Check for version completions after @
-    outputChannel.appendLine(`[CompletionProvider] Checking for version pattern in line prefix: "${linePrefix}"`);
+    this.logger.debug(`[CompletionProvider] Checking for version pattern in line prefix: "${linePrefix}"`, 'CompletionProvider');
     const versionMatch = linePrefix.match(/https:\/\/[^@\s]+@(.*)$/);
-    outputChannel.appendLine(`[CompletionProvider] Version regex match result: ${versionMatch ? 'MATCHED' : 'NO MATCH'}`);
+    this.logger.debug(`[CompletionProvider] Version regex match result: ${versionMatch ? 'MATCHED' : 'NO MATCH'}`, 'CompletionProvider');
     if (versionMatch) {
-      outputChannel.appendLine(`[CompletionProvider] Detected version completion request after @`);
+      this.logger.debug(`[CompletionProvider] Detected version completion request after @`, 'CompletionProvider');
       return this.provideVersionCompletions(linePrefix);
     }
 
     // Suggest components after "component: "
     if (linePrefix.trim().endsWith('component:') || linePrefix.trim().endsWith('component: ')) {
-      outputChannel.appendLine(`[CompletionProvider] Detected component completion request`);
+      this.logger.debug(`[CompletionProvider] Detected component completion request`, 'CompletionProvider');
       return this.provideComponentCompletions();
     }
 
     // Detect if we're in a component and suggest parameters
     const component = await getComponentUnderCursor(document, position);
     if (component) {
-      outputChannel.appendLine(`[CompletionProvider] Found component context: ${component.name}, providing parameter completions`);
+      this.logger.debug(`[CompletionProvider] Found component context: ${component.name}, providing parameter completions`, 'CompletionProvider');
       return this.provideParameterCompletions(component.parameters);
     }
 
-    outputChannel.appendLine(`[CompletionProvider] No completion context found`);
+    this.logger.debug(`[CompletionProvider] No completion context found`, 'CompletionProvider');
 
     // Provide GitLab predefined variable completions
-    outputChannel.appendLine(`[CompletionProvider] Providing GitLab predefined variable completions`);
+    this.logger.debug(`[CompletionProvider] Providing GitLab predefined variable completions`, 'CompletionProvider');
     return this.provideGitLabVariableCompletions(linePrefix);
   }
 
@@ -65,20 +67,20 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
    * Provide version/tag completions for a component URL after @
    */
   private async provideVersionCompletions(linePrefix: string): Promise<vscode.CompletionItem[]> {
-    outputChannel.appendLine(`[CompletionProvider] Starting version completions for: "${linePrefix}"`);
+    this.logger.debug(`[CompletionProvider] Starting version completions for: "${linePrefix}"`, 'CompletionProvider');
 
     // Extract the component URL before the @
     const urlMatch = linePrefix.match(/(https:\/\/[^@\s]+)@(.*)$/);
     if (!urlMatch) {
-      outputChannel.appendLine(`[CompletionProvider] Could not parse component URL from line prefix`);
+      this.logger.warn(`[CompletionProvider] Could not parse component URL from line prefix`, 'CompletionProvider');
       return [];
     }
 
     const componentUrlBase = urlMatch[1];
     const currentVersionInput = urlMatch[2];
 
-    outputChannel.appendLine(`[CompletionProvider] Component URL base: ${componentUrlBase}`);
-    outputChannel.appendLine(`[CompletionProvider] Current version input: "${currentVersionInput}"`);
+    this.logger.debug(`[CompletionProvider] Component URL base: ${componentUrlBase}`, 'CompletionProvider');
+    this.logger.debug(`[CompletionProvider] Current version input: "${currentVersionInput}"`, 'CompletionProvider');
 
     // Parse the component URL to extract GitLab instance, project path, and component/template name
     // Accepts URLs like:
@@ -91,13 +93,13 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       const gitlabInstance = url.host;
       const pathSegments = url.pathname.split('/').filter(Boolean); // remove empty segments
       if (pathSegments.length < 2) {
-        outputChannel.appendLine(`[CompletionProvider] Not enough path segments in URL: ${componentUrlBase}`);
+        this.logger.warn(`[CompletionProvider] Not enough path segments in URL: ${componentUrlBase}`, 'CompletionProvider');
         return [];
       }
       // Always treat the last two segments as project/template
       const projectPath = pathSegments.slice(0, -1).join('/');
       const componentName = pathSegments[pathSegments.length - 1];
-      outputChannel.appendLine(`[CompletionProvider] Parsed (simple) - GitLab: ${gitlabInstance}, Project: ${projectPath}, Template: ${componentName}`);
+      this.logger.debug(`[CompletionProvider] Parsed (simple) - GitLab: ${gitlabInstance}, Project: ${projectPath}, Template: ${componentName}`, 'CompletionProvider');
 
       // Get components from cache and find the specific component
       const cacheManager = getComponentCacheManager();
@@ -111,7 +113,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       );
 
       if (!targetComponent) {
-        outputChannel.appendLine(`[CompletionProvider] Component not found in cache: ${componentName} from ${gitlabInstance}/${projectPath}`);
+        this.logger.warn(`[CompletionProvider] Component not found in cache: ${componentName} from ${gitlabInstance}/${projectPath}`, 'CompletionProvider');
         return [];
       }
 
@@ -119,16 +121,16 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       let availableVersions = targetComponent.availableVersions || [];
       // If no versions cached, try to fetch them
       if (availableVersions.length === 0) {
-        outputChannel.appendLine(`[CompletionProvider] No cached versions, fetching...`);
+        this.logger.info(`[CompletionProvider] No cached versions, fetching...`, 'CompletionProvider');
         try {
           availableVersions = await cacheManager.fetchComponentVersions(targetComponent);
         } catch (error) {
-          outputChannel.appendLine(`[CompletionProvider] Error fetching versions: ${error}`);
+          this.logger.error(`[CompletionProvider] Error fetching versions: ${error}`, 'CompletionProvider');
           availableVersions = ['main', 'master']; // fallback
         }
       }
 
-      outputChannel.appendLine(`[CompletionProvider] Found ${availableVersions.length} versions: ${availableVersions.slice(0, 5).join(', ')}`);
+      this.logger.info(`[CompletionProvider] Found ${availableVersions.length} versions: ${availableVersions.slice(0, 5).join(', ')}`, 'CompletionProvider');
 
       // Create completion items for each version
       const completionItems: vscode.CompletionItem[] = [];
@@ -154,10 +156,10 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
         }
         completionItems.push(item);
       }
-      outputChannel.appendLine(`[CompletionProvider] Created ${completionItems.length} version completion items`);
+      this.logger.debug(`[CompletionProvider] Created ${completionItems.length} version completion items`, 'CompletionProvider');
       return completionItems;
     } catch (err) {
-      outputChannel.appendLine(`[CompletionProvider] Error parsing component URL: ${err}`);
+      this.logger.error(`[CompletionProvider] Error parsing component URL: ${err}`, 'CompletionProvider');
       return [];
     }
   }
@@ -166,12 +168,12 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
    * Provide component completions after "component: "
    */
   private async provideComponentCompletions(): Promise<vscode.CompletionItem[]> {
-    outputChannel.appendLine(`[CompletionProvider] Providing component completions`);
+    this.logger.debug(`[CompletionProvider] Providing component completions`, 'CompletionProvider');
 
     const cacheManager = getComponentCacheManager();
     const components = await cacheManager.getComponents();
 
-    outputChannel.appendLine(`[CompletionProvider] Found ${components.length} components in cache`);
+    this.logger.debug(`[CompletionProvider] Found ${components.length} components in cache`, 'CompletionProvider');
 
     const completionItems: vscode.CompletionItem[] = [];
     const seenComponents = new Set<string>();
@@ -239,7 +241,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       completionItems.push(item);
     }
 
-    outputChannel.appendLine(`[CompletionProvider] Created ${completionItems.length} component completion items`);
+    this.logger.debug(`[CompletionProvider] Created ${completionItems.length} component completion items`, 'CompletionProvider');
     return completionItems;
   }
 
@@ -325,7 +327,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
    * Provide GitLab predefined variable completions
    */
   private provideGitLabVariableCompletions(linePrefix: string): vscode.CompletionItem[] {
-    outputChannel.appendLine(`[CompletionProvider] Providing GitLab predefined variable completions`);
+    this.logger.debug(`[CompletionProvider] Providing GitLab predefined variable completions`, 'CompletionProvider');
 
     const completionItems: vscode.CompletionItem[] = [];
 
@@ -361,7 +363,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       }
     }
 
-    outputChannel.appendLine(`[CompletionProvider] Created ${completionItems.length} GitLab variable completion items`);
+    this.logger.debug(`[CompletionProvider] Created ${completionItems.length} GitLab variable completion items`, 'CompletionProvider');
     return completionItems;
   }
 }

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { getComponentService } from '../services/componentService';
-import { outputChannel } from '../utils/outputChannel';
+import { Logger } from '../utils/logger';
 
 interface CachedComponent {
   name: string;
@@ -22,6 +22,7 @@ interface CachedComponent {
 }
 
 export class ComponentCacheManager {
+  private logger = Logger.getInstance();
   private components: CachedComponent[] = [];
   private lastRefreshTime = 0;
   private refreshInProgress = false;
@@ -31,26 +32,26 @@ export class ComponentCacheManager {
   private context: vscode.ExtensionContext | null = null;
 
   constructor(context?: vscode.ExtensionContext) {
-    outputChannel.appendLine('[ComponentCache] Constructor called');
+    this.logger.debug('[ComponentCache] Constructor called', 'ComponentCache');
 
     // Store the extension context for storage access
     this.context = context || null;
 
     // Log cache location info
     const cacheInfo = this.getCacheInfo();
-    outputChannel.appendLine(`[ComponentCache] Cache location: ${cacheInfo.location}`);
+    this.logger.debug(`[ComponentCache] Cache location: ${cacheInfo.location}`, 'ComponentCache');
 
     // Load cache from disk first, then check if refresh is needed
     this.initializeCache().catch(error => {
-      outputChannel.appendLine(`[ComponentCache] Error during initial cache check: ${error}`);
+      this.logger.debug(`[ComponentCache] Error during initial cache check: ${error}`, 'ComponentCache');
     });
 
     // Listen for configuration changes to refresh cache
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('gitlabComponentHelper.componentSources')) {
-        outputChannel.appendLine('[ComponentCache] Configuration changed, forcing refresh...');
+        this.logger.debug('[ComponentCache] Configuration changed, forcing refresh...', 'ComponentCache');
         this.forceRefresh().catch(error => {
-          outputChannel.appendLine(`[ComponentCache] Error during config refresh: ${error}`);
+          this.logger.debug(`[ComponentCache] Error during config refresh: ${error}`, 'ComponentCache');
         });
       }
     });
@@ -62,14 +63,14 @@ export class ComponentCacheManager {
 
     // Check if cache needs refresh
     if (Date.now() - this.lastRefreshTime > cacheTime && !this.refreshInProgress) {
-      outputChannel.appendLine('[ComponentCache] Cache expired, refreshing components...');
+      this.logger.debug('[ComponentCache] Cache expired, refreshing components...', 'ComponentCache');
       this.refreshComponents().catch(error => {
-        outputChannel.appendLine(`[ComponentCache] Error during refresh: ${error}`);
+        this.logger.debug(`[ComponentCache] Error during refresh: ${error}`, 'ComponentCache');
       });
     } else if (this.components.length > 0) {
       // Components are cached and fresh, but maybe check if we need to refresh versions
       this.refreshVersions().catch(error => {
-        outputChannel.appendLine(`[ComponentCache] Error during version refresh: ${error}`);
+        this.logger.debug(`[ComponentCache] Error during version refresh: ${error}`, 'ComponentCache');
       });
     }
 
@@ -107,14 +108,14 @@ export class ComponentCacheManager {
       if (existingIndex >= 0) {
         // Update existing component
         this.components[existingIndex] = component;
-        outputChannel.appendLine(`[ComponentCache] Updated existing dynamic component: ${component.name}@${component.version}`);
+        this.logger.debug(`[ComponentCache] Updated existing dynamic component: ${component.name}@${component.version}`, 'ComponentCache');
       } else {
         // Add new component
         this.components.push(component);
-        outputChannel.appendLine(`[ComponentCache] Added new dynamic component: ${component.name}@${component.version} from ${component.gitlabInstance}/${component.sourcePath}`);
+        this.logger.debug(`[ComponentCache] Added new dynamic component: ${component.name}@${component.version} from ${component.gitlabInstance}/${component.sourcePath}`, 'ComponentCache');
       }
     } catch (error) {
-      outputChannel.appendLine(`[ComponentCache] Error adding dynamic component: ${error}`);
+      this.logger.debug(`[ComponentCache] Error adding dynamic component: ${error}`, 'ComponentCache');
     }
   }
 
@@ -128,12 +129,12 @@ export class ComponentCacheManager {
 
   public async refreshComponents(): Promise<void> {
     if (this.refreshInProgress) {
-      outputChannel.appendLine('[ComponentCache] Refresh already in progress, skipping...');
+      this.logger.debug('[ComponentCache] Refresh already in progress, skipping...', 'ComponentCache');
       return;
     }
 
     this.refreshInProgress = true;
-    outputChannel.appendLine('[ComponentCache] Starting component refresh...');
+    this.logger.debug('[ComponentCache] Starting component refresh...', 'ComponentCache');
 
     // Clear project versions cache on full refresh
     this.projectVersionsCache.clear();
@@ -147,13 +148,13 @@ export class ComponentCacheManager {
         type?: 'project' | 'group'; // Add support for group vs project sources
       }>>('componentSources', []);
 
-      outputChannel.appendLine(`[ComponentCache] Found ${sources.length} configured sources`);
+      this.logger.debug(`[ComponentCache] Found ${sources.length} configured sources`, 'ComponentCache');
 
       const newComponents: CachedComponent[] = [];
       this.sourceErrors.clear(); // Clear previous errors
 
       if (sources.length === 0) {
-        outputChannel.appendLine('[ComponentCache] No sources configured, using local components');
+        this.logger.debug('[ComponentCache] No sources configured, using local components', 'ComponentCache');
         // Add local fallback components
         newComponents.push(
           {
@@ -221,7 +222,7 @@ export class ComponentCacheManager {
             }
 
             const sourceType = source.type || 'project'; // Default to project for backward compatibility
-            outputChannel.appendLine(`[ComponentCache] Fetching from ${source.name} (${sourceType}: ${gitlabInstance}/${source.path})`);
+            this.logger.debug(`[ComponentCache] Fetching from ${source.name} (${sourceType}: ${gitlabInstance}/${source.path})`, 'ComponentCache');
 
             if (sourceType === 'group') {
               // Fetch all projects from the group and then get components from each
@@ -232,7 +233,7 @@ export class ComponentCacheManager {
             }
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            outputChannel.appendLine(`[ComponentCache] Error fetching from ${source.name}: ${errorMessage}`);
+            this.logger.error(`[ComponentCache] Error fetching from ${source.name}: ${errorMessage}`, 'ComponentCache');
             this.sourceErrors.set(source.name, errorMessage);
             return [];
           }
@@ -253,37 +254,37 @@ export class ComponentCacheManager {
       // Save cache to disk after successful refresh
       await this.saveCacheToDisk();
 
-      outputChannel.appendLine(`[ComponentCache] Cache updated with ${this.components.length} total components`);
+      this.logger.info(`[ComponentCache] Cache updated with ${this.components.length} total components`, 'ComponentCache');
       this.components.forEach(comp => {
-        outputChannel.appendLine(`[ComponentCache]   - ${comp.name} from ${comp.source}`);
+        this.logger.debug(`[ComponentCache]   - ${comp.name} from ${comp.source}`, 'ComponentCache');
       });
 
       // Fetch available versions for components that don't have them yet
       // Only fetch versions for new components or those without cached versions
-      outputChannel.appendLine(`[ComponentCache] Checking which components need version fetching...`);
+      this.logger.debug(`[ComponentCache] Checking which components need version fetching...`, 'ComponentCache');
       const componentsNeedingVersions = this.components.filter(comp =>
         !comp.availableVersions || comp.availableVersions.length === 0
       );
 
       if (componentsNeedingVersions.length > 0) {
-        outputChannel.appendLine(`[ComponentCache] Fetching versions for ${componentsNeedingVersions.length} components...`);
+        this.logger.info(`[ComponentCache] Fetching versions for ${componentsNeedingVersions.length} components...`, 'ComponentCache');
         for (const component of componentsNeedingVersions) {
           try {
             await this.fetchComponentVersions(component);
           } catch (error) {
-            outputChannel.appendLine(`[ComponentCache] Error fetching versions for ${component.name}: ${error}`);
+            this.logger.error(`[ComponentCache] Error fetching versions for ${component.name}: ${error}`, 'ComponentCache');
             // Don't fail the whole refresh for version fetch errors
           }
         }
       } else {
-        outputChannel.appendLine(`[ComponentCache] All components already have cached versions`);
+        this.logger.info(`[ComponentCache] All components already have cached versions`, 'ComponentCache');
       }
 
       // Save updated cache to disk
       await this.saveCacheToDisk();
 
     } catch (error) {
-      outputChannel.appendLine(`[ComponentCache] Error during refresh: ${error}`);
+      this.logger.error(`[ComponentCache] Error during refresh: ${error}`, 'ComponentCache');
     } finally {
       this.refreshInProgress = false;
     }
@@ -295,7 +296,7 @@ export class ComponentCacheManager {
   }
 
   public addComponentToCache(component: CachedComponent): void {
-    outputChannel.appendLine(`[ComponentCache] Adding component to cache: ${component.name}@${component.version}`);
+    this.logger.debug(`[ComponentCache] Adding component to cache: ${component.name}@${component.version}`, 'ComponentCache');
 
     // Check if component already exists (same name, source, and version)
     const existingIndex = this.components.findIndex(c =>
@@ -307,11 +308,11 @@ export class ComponentCacheManager {
 
     if (existingIndex >= 0) {
       // Update existing component
-      outputChannel.appendLine(`[ComponentCache] Updating existing component: ${component.name}@${component.version}`);
+      this.logger.debug(`[ComponentCache] Updating existing component: ${component.name}@${component.version}`, 'ComponentCache');
       this.components[existingIndex] = component;
     } else {
       // Add new component
-      outputChannel.appendLine(`[ComponentCache] Adding new component: ${component.name}@${component.version}`);
+      this.logger.debug(`[ComponentCache] Adding new component: ${component.name}@${component.version}`, 'ComponentCache');
       this.components.push(component);
     }
   }
@@ -324,7 +325,7 @@ export class ComponentCacheManager {
       const cacheKey = `${component.gitlabInstance}|${component.sourcePath}`;
       let sortedVersions: string[] | undefined = this.projectVersionsCache.get(cacheKey);
       if (sortedVersions) {
-        outputChannel.appendLine(`[ComponentCache] [CACHE HIT] Reusing cached versions for project ${component.gitlabInstance}/${component.sourcePath}`);
+        this.logger.info(`[ComponentCache] [CACHE HIT] Reusing cached versions for project ${component.gitlabInstance}/${component.sourcePath}`, 'ComponentCache');
       } else {
         const componentService = getComponentService();
         const tags = await componentService.fetchProjectTags(component.gitlabInstance, component.sourcePath);
@@ -334,7 +335,7 @@ export class ComponentCacheManager {
         const uniqueVersions = Array.from(new Set(versions));
         sortedVersions = this.sortVersionsByPriority(uniqueVersions);
         this.projectVersionsCache.set(cacheKey, sortedVersions);
-        outputChannel.appendLine(`[ComponentCache] [API FETCH] Fetched ${sortedVersions.length} versions for project ${component.gitlabInstance}/${component.sourcePath}`);
+        this.logger.info(`[ComponentCache] [API FETCH] Fetched ${sortedVersions.length} versions for project ${component.gitlabInstance}/${component.sourcePath}`, 'ComponentCache');
       }
 
       // Update the component in cache with available versions
@@ -348,10 +349,10 @@ export class ComponentCacheManager {
         // Save cache after updating versions
         await this.saveCacheToDisk();
       }
-      outputChannel.appendLine(`[ComponentCache] Available versions for ${component.name}: ${sortedVersions.slice(0, 5).join(', ')}${sortedVersions.length > 5 ? '...' : ''}`);
+      this.logger.debug(`[ComponentCache] Available versions for ${component.name}: ${sortedVersions.slice(0, 5).join(', ')}${sortedVersions.length > 5 ? '...' : ''}`, 'ComponentCache');
       return sortedVersions;
     } catch (error) {
-      outputChannel.appendLine(`[ComponentCache] Error fetching versions for ${component.name}: ${error}`);
+      this.logger.error(`[ComponentCache] Error fetching versions for ${component.name}: ${error}`, 'ComponentCache');
       return [component.version]; // Return current version as fallback
     }
   }
@@ -387,7 +388,7 @@ export class ComponentCacheManager {
    */
   public async fetchSpecificVersion(componentName: string, sourcePath: string, gitlabInstance: string, version: string): Promise<CachedComponent | null> {
     try {
-      outputChannel.appendLine(`[ComponentCache] Fetching specific version ${version} of ${componentName} from ${sourcePath}`);
+      this.logger.info(`[ComponentCache] Fetching specific version ${version} of ${componentName} from ${sourcePath}`, 'ComponentCache');
 
       const componentService = getComponentService();
 
@@ -400,17 +401,17 @@ export class ComponentCacheManager {
       );
 
       if (existingComponent) {
-        outputChannel.appendLine(`[ComponentCache] Version ${version} already cached`);
+        this.logger.info(`[ComponentCache] Version ${version} already cached`, 'ComponentCache');
         return existingComponent;
       }
 
       // First, validate that the version exists by fetching project tags
-      outputChannel.appendLine(`[ComponentCache] Validating version ${version} exists...`);
+      this.logger.debug(`[ComponentCache] Validating version ${version} exists...`, 'ComponentCache');
       const projectTags = await componentService.fetchProjectTags(gitlabInstance, sourcePath);
       const availableVersions = ['main', 'master', ...projectTags.map(tag => tag.name)];
 
       if (!availableVersions.includes(version)) {
-        outputChannel.appendLine(`[ComponentCache] Version ${version} does not exist. Available versions: ${availableVersions.slice(0, 10).join(', ')}`);
+        this.logger.warn(`[ComponentCache] Version ${version} does not exist. Available versions: ${availableVersions.slice(0, 10).join(', ')}`, 'ComponentCache');
         return null;
       }
 
@@ -418,14 +419,14 @@ export class ComponentCacheManager {
       const catalogData = await componentService.fetchCatalogData(gitlabInstance, sourcePath, true, version);
 
       if (!catalogData || !catalogData.components || catalogData.components.length === 0) {
-        outputChannel.appendLine(`[ComponentCache] No component data found for version ${version}`);
+        this.logger.warn(`[ComponentCache] No component data found for version ${version}`, 'ComponentCache');
         return null;
       }
 
       // Find the matching component in the catalog
       const catalogComponent = catalogData.components.find((c: any) => c.name === componentName);
       if (!catalogComponent) {
-        outputChannel.appendLine(`[ComponentCache] Component ${componentName} not found in version ${version}`);
+        this.logger.warn(`[ComponentCache] Component ${componentName} not found in version ${version}`, 'ComponentCache');
         return null;
       }
 
@@ -451,11 +452,11 @@ export class ComponentCacheManager {
       // Add to cache
       this.components.push(cachedComponent);
 
-      outputChannel.appendLine(`[ComponentCache] Successfully cached version ${version} of ${componentName}`);
+      this.logger.info(`[ComponentCache] Successfully cached version ${version} of ${componentName}`, 'ComponentCache');
       return cachedComponent;
 
     } catch (error) {
-      outputChannel.appendLine(`[ComponentCache] Error fetching specific version: ${error}`);
+      this.logger.error(`[ComponentCache] Error fetching specific version: ${error}`, 'ComponentCache');
       return null;
     }
   }
@@ -471,7 +472,7 @@ export class ComponentCacheManager {
       );
 
       if (catalogData && catalogData.components) {
-        outputChannel.appendLine(`[ComponentCache] Found ${catalogData.components.length} components in ${sourceName}`);
+        this.logger.info(`[ComponentCache] Found ${catalogData.components.length} components in ${sourceName}`, 'ComponentCache');
 
         // Clear any previous error for this source since it succeeded
         this.sourceErrors.delete(sourceName);
@@ -497,37 +498,37 @@ export class ComponentCacheManager {
           };
         });
 
-        outputChannel.appendLine(`[ComponentCache] Processed ${sourceComponents.length} components from ${sourceName}`);
+        this.logger.debug(`[ComponentCache] Processed ${sourceComponents.length} components from ${sourceName}`, 'ComponentCache');
         return sourceComponents;
       } else {
-        outputChannel.appendLine(`[ComponentCache] No components found in ${sourceName}`);
+        this.logger.info(`[ComponentCache] No components found in ${sourceName}`, 'ComponentCache');
         // Don't set this as an error - just no components found
         this.sourceErrors.delete(sourceName);
         return [];
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      outputChannel.appendLine(`[ComponentCache] Error fetching project ${projectPath}: ${errorMessage}`);
+      this.logger.error(`[ComponentCache] Error fetching project ${projectPath}: ${errorMessage}`, 'ComponentCache');
       throw error;
     }
   }
 
   private async fetchComponentsFromGroup(gitlabInstance: string, groupPath: string, sourceName: string): Promise<CachedComponent[]> {
-    outputChannel.appendLine(`[ComponentCache] Fetching projects from group: ${gitlabInstance}/${groupPath}`);
+    this.logger.info(`[ComponentCache] Fetching projects from group: ${gitlabInstance}/${groupPath}`, 'ComponentCache');
 
     try {
       // First, get all projects in the group
       const groupProjects = await this.fetchGroupProjects(gitlabInstance, groupPath);
-      outputChannel.appendLine(`[ComponentCache] Found ${groupProjects.length} projects in group ${groupPath}`);
+      this.logger.info(`[ComponentCache] Found ${groupProjects.length} projects in group ${groupPath}`, 'ComponentCache');
 
       if (groupProjects.length === 0) {
-        outputChannel.appendLine(`[ComponentCache] No projects found in group ${groupPath}`);
+        this.logger.info(`[ComponentCache] No projects found in group ${groupPath}`, 'ComponentCache');
         this.sourceErrors.delete(sourceName);
         return [];
       }
 
       // Fetch components from each project in parallel (but with some concurrency control)
-      outputChannel.appendLine(`[ComponentCache] Checking ${groupProjects.length} projects for components (this may take a moment)...`);
+      this.logger.debug(`[ComponentCache] Checking ${groupProjects.length} projects for components (this may take a moment)...`, 'ComponentCache');
 
       // Process projects in batches to avoid overwhelming the API
       const batchSize = 5;
@@ -536,11 +537,11 @@ export class ComponentCacheManager {
 
       for (let i = 0; i < groupProjects.length; i += batchSize) {
         const batch = groupProjects.slice(i, i + batchSize);
-        outputChannel.appendLine(`[ComponentCache] Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(groupProjects.length/batchSize)} (projects ${i + 1}-${Math.min(i + batchSize, groupProjects.length)})`);
+        this.logger.debug(`[ComponentCache] Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(groupProjects.length/batchSize)} (projects ${i + 1}-${Math.min(i + batchSize, groupProjects.length)})`, 'ComponentCache');
 
         const batchPromises = batch.map(async (project: any) => {
           try {
-            outputChannel.appendLine(`[ComponentCache] Checking ${project.path_with_namespace}...`);
+            this.logger.debug(`[ComponentCache] Checking ${project.path_with_namespace}...`, 'ComponentCache');
 
             // Try to fetch components from this project
             const components = await this.fetchComponentsFromProject(
@@ -550,15 +551,15 @@ export class ComponentCacheManager {
             );
 
             if (components.length > 0) {
-              outputChannel.appendLine(`[ComponentCache] ✓ Found ${components.length} components in ${project.path_with_namespace}`);
+              this.logger.info(`[ComponentCache] ✓ Found ${components.length} components in ${project.path_with_namespace}`, 'ComponentCache');
               return { project, components };
             } else {
-              outputChannel.appendLine(`[ComponentCache] - No components in ${project.path_with_namespace}`);
+              this.logger.debug(`[ComponentCache] - No components in ${project.path_with_namespace}`, 'ComponentCache');
               return { project, components: [] };
             }
           } catch (error) {
             // Log but don't fail the whole group if one project fails
-            outputChannel.appendLine(`[ComponentCache] ✗ Error checking ${project.path_with_namespace}: ${error}`);
+            this.logger.error(`[ComponentCache] ✗ Error checking ${project.path_with_namespace}: ${error}`, 'ComponentCache');
             return { project, components: [] };
           }
         });
@@ -574,10 +575,10 @@ export class ComponentCacheManager {
         }
       }
 
-      outputChannel.appendLine(`[ComponentCache] Group scan complete!`);
-      outputChannel.appendLine(`[ComponentCache] Projects scanned: ${groupProjects.length}`);
-      outputChannel.appendLine(`[ComponentCache] Projects with components: ${projectsWithComponents}`);
-      outputChannel.appendLine(`[ComponentCache] Total components found: ${allComponents.length}`);
+      this.logger.info(`[ComponentCache] Group scan complete!`, 'ComponentCache');
+      this.logger.info(`[ComponentCache] Projects scanned: ${groupProjects.length}`, 'ComponentCache');
+      this.logger.info(`[ComponentCache] Projects with components: ${projectsWithComponents}`, 'ComponentCache');
+      this.logger.info(`[ComponentCache] Total components found: ${allComponents.length}`, 'ComponentCache');
 
       // Clear any previous error for this source since we got some results
       if (allComponents.length > 0) {
@@ -590,7 +591,7 @@ export class ComponentCacheManager {
       return allComponents;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      outputChannel.appendLine(`[ComponentCache] Error fetching group ${groupPath}: ${errorMessage}`);
+      this.logger.error(`[ComponentCache] Error fetching group ${groupPath}: ${errorMessage}`, 'ComponentCache');
       throw error;
     }
   }
@@ -601,26 +602,26 @@ export class ComponentCacheManager {
     try {
       // Use GitLab Groups API to get all projects in the group
       const groupApiUrl = `https://${gitlabInstance}/api/v4/groups/${encodeURIComponent(groupPath)}/projects?per_page=100&include_subgroups=true`;
-      outputChannel.appendLine(`[ComponentCache] Fetching group projects from: ${groupApiUrl}`);
+      this.logger.info(`[ComponentCache] Fetching group projects from: ${groupApiUrl}`, 'ComponentCache');
 
       // Get token for this GitLab instance
       const token = await componentService.getTokenForInstance(gitlabInstance);
       const fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
 
-      outputChannel.appendLine(`[ComponentCache] Using token for ${gitlabInstance}: ${token ? 'YES' : 'NO'}`);
+      this.logger.debug(`[ComponentCache] Using token for ${gitlabInstance}: ${token ? 'YES' : 'NO'}`, 'ComponentCache');
 
       // Use the fetchJson method with authentication options
       const projects = await componentService.fetchJson(groupApiUrl, fetchOptions);
 
-      outputChannel.appendLine(`[ComponentCache] Found ${projects.length} total projects in group ${groupPath}`);
+      this.logger.info(`[ComponentCache] Found ${projects.length} total projects in group ${groupPath}`, 'ComponentCache');
 
       // Instead of filtering here, let's check each project for actual components
       // This is more accurate than guessing based on names/topics
-      outputChannel.appendLine(`[ComponentCache] Will check all ${projects.length} projects for components (no pre-filtering)`);
+      this.logger.debug(`[ComponentCache] Will check all ${projects.length} projects for components (no pre-filtering)`, 'ComponentCache');
 
       return projects;
     } catch (error) {
-      outputChannel.appendLine(`[ComponentCache] Error fetching group projects: ${error}`);
+      this.logger.error(`[ComponentCache] Error fetching group projects: ${error}`, 'ComponentCache');
       throw error;
     }
   }
@@ -638,13 +639,13 @@ export class ComponentCacheManager {
     // If we have components and cache is still valid, don't refresh
     if (this.components.length > 0 && Date.now() - this.lastRefreshTime < cacheTime) {
       const cacheInfo = this.getCacheInfo();
-      outputChannel.appendLine(`[ComponentCache] Cache is still valid (${this.components.length} components, ${Math.round((Date.now() - this.lastRefreshTime) / 1000)}s old), skipping refresh`);
-      outputChannel.appendLine(`[ComponentCache] Cache location: ${cacheInfo.location}`);
+      this.logger.info(`[ComponentCache] Cache is still valid (${this.components.length} components, ${Math.round((Date.now() - this.lastRefreshTime) / 1000)}s old), skipping refresh`, 'ComponentCache');
+      this.logger.debug(`[ComponentCache] Cache location: ${cacheInfo.location}`, 'ComponentCache');
       return;
     }
 
     // If cache is empty or expired, do initial refresh
-    outputChannel.appendLine('[ComponentCache] Cache is empty or expired, performing initial refresh...');
+    this.logger.info('[ComponentCache] Cache is empty or expired, performing initial refresh...', 'ComponentCache');
     await this.refreshComponents();
   }
 
@@ -667,18 +668,18 @@ export class ComponentCacheManager {
    */
   public async refreshVersions(): Promise<void> {
     if (!this.shouldRefreshVersions()) {
-      outputChannel.appendLine('[ComponentCache] Version cache is still fresh, skipping version refresh');
+      this.logger.info('[ComponentCache] Version cache is still fresh, skipping version refresh', 'ComponentCache');
       return;
     }
 
-    outputChannel.appendLine('[ComponentCache] Refreshing versions for all components...');
+    this.logger.info('[ComponentCache] Refreshing versions for all components...', 'ComponentCache');
     for (const component of this.components) {
       try {
         // Clear cached versions to force refresh
         component.availableVersions = undefined;
         await this.fetchComponentVersions(component);
       } catch (error) {
-        outputChannel.appendLine(`[ComponentCache] Error refreshing versions for ${component.name}: ${error}`);
+        this.logger.error(`[ComponentCache] Error refreshing versions for ${component.name}: ${error}`, 'ComponentCache');
       }
     }
   }
@@ -689,7 +690,7 @@ export class ComponentCacheManager {
   private async loadCacheFromDisk(): Promise<void> {
     try {
       if (!this.context) {
-        outputChannel.appendLine('[ComponentCache] No extension context available, starting with empty cache');
+        this.logger.warn('[ComponentCache] No extension context available, starting with empty cache', 'ComponentCache');
         return;
       }
 
@@ -698,15 +699,15 @@ export class ComponentCacheManager {
         this.lastRefreshTime = cacheData.lastRefreshTime || 0;
         this.projectVersionsCache = new Map(cacheData.projectVersionsCache || []);
 
-        outputChannel.appendLine(`[ComponentCache] Loaded ${this.components.length} components from global state`);
-        outputChannel.appendLine(`[ComponentCache] Cache last updated: ${new Date(this.lastRefreshTime).toISOString()}`);
-        outputChannel.appendLine(`[ComponentCache] Cache storage: VS Code Global State (persists across sessions)`);
+        this.logger.info(`[ComponentCache] Loaded ${this.components.length} components from global state`, 'ComponentCache');
+        this.logger.debug(`[ComponentCache] Cache last updated: ${new Date(this.lastRefreshTime).toISOString()}`, 'ComponentCache');
+        this.logger.debug(`[ComponentCache] Cache storage: VS Code Global State (persists across sessions)`, 'ComponentCache');
       } else {
-        outputChannel.appendLine('[ComponentCache] No cached data found in global state, will create new cache');
-        outputChannel.appendLine('[ComponentCache] Cache storage: VS Code Global State (persists across sessions)');
+        this.logger.info('[ComponentCache] No cached data found in global state, will create new cache', 'ComponentCache');
+        this.logger.debug('[ComponentCache] Cache storage: VS Code Global State (persists across sessions)', 'ComponentCache');
       }
     } catch (error) {
-      outputChannel.appendLine(`[ComponentCache] Error loading cache from global state: ${error}`);
+      this.logger.error(`[ComponentCache] Error loading cache from global state: ${error}`, 'ComponentCache');
       // Reset to empty cache on error
       this.components = [];
       this.lastRefreshTime = 0;
@@ -720,7 +721,7 @@ export class ComponentCacheManager {
   private async saveCacheToDisk(): Promise<void> {
     try {
       if (!this.context) {
-        outputChannel.appendLine('[ComponentCache] No extension context available, cannot save cache');
+        this.logger.warn('[ComponentCache] No extension context available, cannot save cache', 'ComponentCache');
         return;
       }
 
@@ -732,10 +733,10 @@ export class ComponentCacheManager {
       };
 
       await this.context.globalState.update('componentCache', cacheData);
-      outputChannel.appendLine(`[ComponentCache] Saved cache to global state (${this.components.length} components)`);
-      outputChannel.appendLine(`[ComponentCache] Cache storage: VS Code Global State (persists across sessions)`);
+      this.logger.info(`[ComponentCache] Saved cache to global state (${this.components.length} components)`, 'ComponentCache');
+      this.logger.debug(`[ComponentCache] Cache storage: VS Code Global State (persists across sessions)`, 'ComponentCache');
     } catch (error) {
-      outputChannel.appendLine(`[ComponentCache] Error saving cache to global state: ${error}`);
+      this.logger.error(`[ComponentCache] Error saving cache to global state: ${error}`, 'ComponentCache');
     }
   }
 
@@ -745,8 +746,8 @@ export class ComponentCacheManager {
   public setContext(context: vscode.ExtensionContext): void {
     if (!this.context) {
       this.context = context;
-      outputChannel.appendLine('[ComponentCache] Extension context set, cache persistence now enabled');
-      outputChannel.appendLine('[ComponentCache] Cache storage: VS Code Global State (persists across sessions)');
+      this.logger.info('[ComponentCache] Extension context set, cache persistence now enabled', 'ComponentCache');
+      this.logger.debug('[ComponentCache] Cache storage: VS Code Global State (persists across sessions)', 'ComponentCache');
     }
   }
 
