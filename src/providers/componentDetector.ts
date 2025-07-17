@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
 import { getComponentService } from '../services/componentService';
 import { getComponentCacheManager } from '../services/componentCacheManager';
-import { outputChannel } from '../utils/outputChannel';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
 import { expandGitLabVariables, containsGitLabVariables, detectGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
+import { Logger } from '../utils/logger';
+
+const logger = Logger.getInstance();
 
 // Update your Component interface to include the context property
 export interface Component {
@@ -72,20 +74,20 @@ export async function getComponentUnderCursor(document: vscode.TextDocument, pos
 
 export async function detectIncludeComponent(document: vscode.TextDocument, position: vscode.Position): Promise<Component | null> {
   const line = document.lineAt(position.line).text;
-  outputChannel.appendLine(`[ComponentDetector] Checking line for include component: ${line}`);
+  logger.debug(`[ComponentDetector] Checking line for include component: ${line}`, 'ComponentDetector');
 
   // Extract component URL from the line - handle both absolute URLs and those with GitLab variables
   let componentUrl = line.match(/component:\s*([^\s]+)/)?.[1];
   if (!componentUrl) {
-    outputChannel.appendLine(`[ComponentDetector] No component URL found in line`);
+    logger.debug(`[ComponentDetector] No component URL found in line`, 'ComponentDetector');
     return null;
   }
 
-  outputChannel.appendLine(`[ComponentDetector] Detected component URL: ${componentUrl}`);  // Check if the URL contains GitLab variables
+  logger.debug(`[ComponentDetector] Detected component URL: ${componentUrl}`, 'ComponentDetector');
   const originalUrl = componentUrl; // Store original URL with variables
   if (containsGitLabVariables(componentUrl)) {
     const variables = detectGitLabVariables(componentUrl);
-    outputChannel.appendLine(`[ComponentDetector] Component URL contains GitLab variables: ${variables.join(', ')}`);
+    logger.debug(`[ComponentDetector] Component URL contains GitLab variables: ${variables.join(', ')}`, 'ComponentDetector');
 
     // Try to expand variables based on available context
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
@@ -104,9 +106,9 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
         serverUrl: `https://${componentSources[0].gitlabInstance || 'gitlab.com'}`
       };
       expandedUrl = expandComponentUrl(componentUrl, context);
-      outputChannel.appendLine(`[ComponentDetector] Expanded URL: ${expandedUrl}`);
+      logger.debug(`[ComponentDetector] Expanded URL: ${expandedUrl}`, 'ComponentDetector');
     } else {
-      outputChannel.appendLine(`[ComponentDetector] No component sources configured, cannot expand variables`);
+      logger.debug(`[ComponentDetector] No component sources configured, cannot expand variables`, 'ComponentDetector');
       // Return a fallback component with information about the variables
       return {
         name: `Component with variables`,
@@ -160,7 +162,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
 
     const requestedGitlabInstance = new URL(componentUrl.split('@')[0]).hostname;
 
-    outputChannel.appendLine(`[ComponentDetector] Looking for component: ${requestedName} from ${requestedGitlabInstance}/${requestedProjectPath}${requestedVersion ? `@${requestedVersion}` : ''}`);
+    logger.debug(`[ComponentDetector] Looking for component: ${requestedName} from ${requestedGitlabInstance}/${requestedProjectPath}${requestedVersion ? `@${requestedVersion}` : ''}`, 'ComponentDetector');
 
     // First, try to find an exact match (same name, project path, AND version)
     if (requestedVersion) {
@@ -175,7 +177,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
       });
 
       if (exactMatch) {
-        outputChannel.appendLine(`[ComponentDetector] Found exact version match in cache: ${exactMatch.name}@${exactMatch.version}`);
+        logger.debug(`[ComponentDetector] Found exact version match in cache: ${exactMatch.name}@${exactMatch.version}`, 'ComponentDetector');
         return {
           name: exactMatch.name,
           description: exactMatch.description,
@@ -193,7 +195,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
         };
       }
 
-      outputChannel.appendLine(`[ComponentDetector] No exact version match found for ${requestedName}@${requestedVersion}`);
+      logger.debug(`[ComponentDetector] No exact version match found for ${requestedName}@${requestedVersion}`, 'ComponentDetector');
     }
 
     // If no exact match, look for any version of the same component
@@ -207,12 +209,12 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
     });
 
     if (cachedComponent) {
-      outputChannel.appendLine(`[ComponentDetector] Found matching component in cache: ${cachedComponent.name}`);
-      outputChannel.appendLine(`[ComponentDetector] Cached version: ${cachedComponent.version}, Requested version: ${requestedVersion || 'unspecified'}`);
+      logger.debug(`[ComponentDetector] Found matching component in cache: ${cachedComponent.name}`, 'ComponentDetector');
+      logger.debug(`[ComponentDetector] Cached version: ${cachedComponent.version}, Requested version: ${requestedVersion || 'unspecified'}`, 'ComponentDetector');
 
       // If the requested version matches the cached version, return cached data
       if (!requestedVersion || requestedVersion === cachedComponent.version) {
-        outputChannel.appendLine(`[ComponentDetector] Version matches cache, returning cached component`);
+        logger.debug(`[ComponentDetector] Version matches cache, returning cached component`, 'ComponentDetector');
         return {
           name: cachedComponent.name,
           description: cachedComponent.description,
@@ -231,14 +233,14 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
       }
 
       // If versions differ, try to fetch the specific version
-      outputChannel.appendLine(`[ComponentDetector] Version mismatch (cached: ${cachedComponent.version}, requested: ${requestedVersion}), attempting to fetch specific version`);
+      logger.debug(`[ComponentDetector] Version mismatch (cached: ${cachedComponent.version}, requested: ${requestedVersion}), attempting to fetch specific version`, 'ComponentDetector');
 
       try {
         const componentService = getComponentService();
         const specificVersionComponent = await componentService.getComponentFromUrl(componentUrl);
 
         if (specificVersionComponent) {
-          outputChannel.appendLine(`[ComponentDetector] Successfully fetched specific version ${requestedVersion} for ${cachedComponent.name}`);
+          logger.debug(`[ComponentDetector] Successfully fetched specific version ${requestedVersion} for ${cachedComponent.name}`, 'ComponentDetector');
 
           // Add the specific version to cache for future use
           cacheManager.addDynamicComponent({
@@ -254,10 +256,10 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
 
           return specificVersionComponent;
         } else {
-          outputChannel.appendLine(`[ComponentDetector] Failed to fetch specific version, falling back to cached version with note`);
+          logger.debug(`[ComponentDetector] Failed to fetch specific version, falling back to cached version with note`, 'ComponentDetector');
         }
       } catch (error) {
-        outputChannel.appendLine(`[ComponentDetector] Error fetching specific version: ${error}, falling back to cached version`);
+        logger.debug(`[ComponentDetector] Error fetching specific version: ${error}, falling back to cached version`, 'ComponentDetector');
       }
 
       // Fallback to cached version with a note about the version difference
@@ -275,14 +277,14 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
       };
     }
 
-    outputChannel.appendLine(`[ComponentDetector] No matching component found in cache for ${requestedName} from ${requestedGitlabInstance}/${requestedProjectPath}`);
+    logger.debug(`[ComponentDetector] No matching component found in cache for ${requestedName} from ${requestedGitlabInstance}/${requestedProjectPath}`, 'ComponentDetector');
   } catch (urlError) {
-    outputChannel.appendLine(`[ComponentDetector] Error parsing component URL for cache lookup: ${urlError}`);
+    logger.debug(`[ComponentDetector] Error parsing component URL for cache lookup: ${urlError}`, 'ComponentDetector');
 
     // Fallback to exact URL matching if URL parsing fails
     const cachedComponent = cachedComponents.find(comp => comp.url === componentUrl);
     if (cachedComponent) {
-      outputChannel.appendLine(`[ComponentDetector] Found component via exact URL match: ${cachedComponent.name}`);
+      logger.debug(`[ComponentDetector] Found component via exact URL match: ${cachedComponent.name}`, 'ComponentDetector');
       return {
         name: cachedComponent.name,
         description: cachedComponent.description,
@@ -301,17 +303,17 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
     }
   }
 
-  outputChannel.appendLine(`[ComponentDetector] Component not found in cache. Attempting dynamic fetch...`);
+  logger.debug(`[ComponentDetector] Component not found in cache. Attempting dynamic fetch...`, 'ComponentDetector');
 
   // Try to fetch the component dynamically before falling back
   try {
     const dynamicComponent = await fetchComponentDynamically(componentUrl, originalUrl);
     if (dynamicComponent) {
-      outputChannel.appendLine(`[ComponentDetector] Successfully fetched component dynamically: ${dynamicComponent.name}`);
+      logger.debug(`[ComponentDetector] Successfully fetched component dynamically: ${dynamicComponent.name}`, 'ComponentDetector');
       return dynamicComponent;
     }
   } catch (fetchError) {
-    outputChannel.appendLine(`[ComponentDetector] Failed to fetch component dynamically: ${fetchError}`);
+    logger.debug(`[ComponentDetector] Failed to fetch component dynamically: ${fetchError}`, 'ComponentDetector');
   }
 
   // Check if we can extract basic information from the URL for fallback display
@@ -346,7 +348,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
       version = undefined;
     }
 
-    outputChannel.appendLine(`[ComponentDetector] Providing basic fallback info for uncached component: ${componentName} from ${gitlabInstance}/${projectPath}`);
+    logger.debug(`[ComponentDetector] Providing basic fallback info for uncached component: ${componentName} from ${gitlabInstance}/${projectPath}`, 'ComponentDetector');
 
     return {
       name: componentName,
@@ -364,7 +366,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
       }
     };
   } catch (error) {
-    outputChannel.appendLine(`[ComponentDetector] Error parsing component URL ${componentUrl}: ${error}`);
+    logger.debug(`[ComponentDetector] Error parsing component URL ${componentUrl}: ${error}`, 'ComponentDetector');
 
     return {
       name: componentUrl,
@@ -385,7 +387,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
  */
 async function fetchComponentDynamically(componentUrl: string, originalUrl?: string): Promise<Component | null> {
   try {
-    outputChannel.appendLine(`[ComponentDetector] Attempting to fetch component: ${componentUrl}`);
+    logger.debug(`[ComponentDetector] Attempting to fetch component: ${componentUrl}`, 'ComponentDetector');
 
     // Parse the component URL to extract information
     // GitLab component URLs are: https://gitlab.instance/project/path/component@version
@@ -419,22 +421,22 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
 
     const gitlabInstance = url.hostname;
 
-    outputChannel.appendLine(`[ComponentDetector] Parsed GitLab project: ${gitlabInstance}/${projectPath}@${version}`);
-    outputChannel.appendLine(`[ComponentDetector] Looking for component named: ${componentName}`);
+    logger.debug(`[ComponentDetector] Parsed GitLab project: ${gitlabInstance}/${projectPath}@${version}`, 'ComponentDetector');
+    logger.debug(`[ComponentDetector] Looking for component named: ${componentName}`, 'ComponentDetector');
 
     // Use the component service to fetch catalog data
     const componentService = getComponentService();
     const catalogData = await componentService.fetchCatalogData(gitlabInstance, projectPath, true);
 
     if (!catalogData || !catalogData.components) {
-      outputChannel.appendLine(`[ComponentDetector] No catalog data found for ${gitlabInstance}/${projectPath}`);
+      logger.debug(`[ComponentDetector] No catalog data found for ${gitlabInstance}/${projectPath}`, 'ComponentDetector');
       return null;
     }
 
     // Find the specific component
     const foundComponent = catalogData.components.find((comp: GitLabCatalogComponent) => comp.name === componentName);
     if (!foundComponent) {
-      outputChannel.appendLine(`[ComponentDetector] Component ${componentName} not found in catalog. Available components: ${catalogData.components.map((c: GitLabCatalogComponent) => c.name).join(', ')}`);
+      logger.debug(`[ComponentDetector] Component ${componentName} not found in catalog. Available components: ${catalogData.components.map((c: GitLabCatalogComponent) => c.name).join(', ')}`, 'ComponentDetector');
       return null;
     }
 
@@ -484,15 +486,15 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
       };
 
       cacheManager.addDynamicComponent(cacheComponent);
-      outputChannel.appendLine(`[ComponentDetector] Added dynamically fetched component to cache: ${componentName}@${version}`);
+      logger.debug(`[ComponentDetector] Added dynamically fetched component to cache: ${componentName}@${version}`, 'ComponentDetector');
     } catch (cacheError) {
-      outputChannel.appendLine(`[ComponentDetector] Could not add to cache: ${cacheError}`);
+      logger.debug(`[ComponentDetector] Could not add to cache: ${cacheError}`, 'ComponentDetector');
     }
 
     return dynamicComponent;
 
   } catch (error) {
-    outputChannel.appendLine(`[ComponentDetector] Error in dynamic fetch: ${error}`);
+    logger.debug(`[ComponentDetector] Error in dynamic fetch: ${error}`, 'ComponentDetector');
     return null;
   }
 }
