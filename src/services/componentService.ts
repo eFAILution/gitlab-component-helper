@@ -1,8 +1,6 @@
 import * as vscode from 'vscode';
 import { Component } from '../providers/componentDetector';
 import { GitLabCatalogComponent, GitLabCatalogVariable, GitLabCatalogData } from '../types/gitlab-catalog';
-
-import { outputChannel } from '../utils/outputChannel';
 import { HttpClient } from '../utils/httpClient';
 import { Logger } from '../utils/logger';
 
