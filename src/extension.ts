@@ -5,7 +5,6 @@ import { CompletionProvider } from './providers/completionProvider';
 import { ComponentBrowserProvider } from './providers/componentBrowserProvider';
 import { detectIncludeComponent } from './providers/componentDetector';
 import { getComponentCacheManager, ComponentCacheManager } from './services/componentCacheManager';
-import { outputChannel } from './utils/outputChannel';
 import { Logger } from './utils/logger';
 import { ValidationProvider } from './providers/validationProvider';
 

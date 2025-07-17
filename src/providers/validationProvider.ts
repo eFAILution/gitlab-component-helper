@@ -4,7 +4,6 @@ import { getComponentCacheManager } from '../services/componentCacheManager';
 import { parseYaml } from '../utils/yamlParser';
 import { Component } from '../types/git-component';
 import { Logger } from '../utils/logger';
-import { outputChannel } from '../utils/outputChannel';
 
 // TODO: When there are too many input suggestions to list show them in details view
 // and allow user to select which ones to insert
