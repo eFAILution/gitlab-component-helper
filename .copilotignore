@@ -1,0 +1,5 @@
+# GitHub Copilot ignore patterns
+# Exclude .env files to protect sensitive data
+
+.env
+.env.*

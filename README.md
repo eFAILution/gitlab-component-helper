@@ -201,9 +201,24 @@ yarn compile # or npm run compile
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+3. Commit your changes using [conventional commits](https://www.conventionalcommits.org/):
+   - `feat:` for new features
+   - `fix:` for bug fixes
+   - `docs:` for documentation changes
+   - `chore:` for maintenance tasks
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
+
+### Automated Releases
+
+This project uses [semantic-release](https://semantic-release.gitbook.io/) for automated versioning and releases. When your PR is merged to `main`:
+
+- Version is automatically bumped based on commit messages
+- CHANGELOG.md is updated
+- GitHub release is created with packaged extension
+- No manual versioning needed!
+
+See [SEMANTIC_RELEASE.md](./SEMANTIC_RELEASE.md) for more details.
 
 ---
 

@@ -1,0 +1,29 @@
+# Git Configuration for Conventional Commits
+# This file provides git templates and hooks for conventional commit formatting
+
+# Configure git to use this template for commit messages
+# Run: git config commit.template .gitmessage
+
+# Conventional Commit Template
+# Format: <type>[optional scope]: <description>
+#
+# [optional body]
+#
+# [optional footer(s)]
+#
+# Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
+# Max 100 characters for first line
+# Body and footer are optional and should be separated by blank lines
+#
+# Examples:
+# feat: add new component detection algorithm
+# fix(parser): resolve YAML parsing edge case
+# feat!: redesign API with breaking changes
+# docs: update README with installation instructions
+#
+# Remember:
+# - Use imperative mood ("add" not "added" or "adds")
+# - Don't capitalize first letter of description
+# - No period at the end of description
+# - Include body for complex changes
+# - Use footer for breaking changes or issue references
