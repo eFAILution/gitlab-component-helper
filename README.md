@@ -100,31 +100,6 @@ If you encounter issues:
 
 ---
 
-## 📝 Changelog
-
-See the [CHANGELOG](./CHANGELOG.md) or below for highlights:
-
-### v0.1.12 (Latest)
-- Added support for private GitLab projects/groups with token authentication
-
-### v0.1.8
-- Reduced vsix package size for faster downloads
-
-### v0.1.7
-- GitLab Variables Support: Predefined variable completion, hover, and expansion
-- Enhanced error handling and dynamic content updates
-
-### v0.1.6
-- Bug fixes, performance improvements, and UI polish
-
-### v0.1.5
-- Hierarchical component browser, version management, and persistent cache
-
-### v0.1.0-0.1.4
-- Core completion, GitLab integration, and YAML detection
-
----
-
 ## 🔌 API Reference
 
 The extension exposes the following API for other extensions to consume:
