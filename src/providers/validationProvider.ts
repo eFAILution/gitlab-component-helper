@@ -5,9 +5,6 @@ import { parseYaml } from '../utils/yamlParser';
 import { Component } from '../types/git-component';
 import { Logger } from '../utils/logger';
 
-// TODO: When there are too many input suggestions to list show them in details view
-// and allow user to select which ones to insert
-// This will require a custom webview or quick pick UI to handle large lists of inputs
 export class ValidationProvider implements vscode.CodeActionProvider {
     private diagnosticCollection: vscode.DiagnosticCollection;
     private logger = Logger.getInstance();
@@ -61,6 +58,13 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                 }
                 this.diagnosticCollection.delete(doc.uri);
             })
+        );
+
+        // Register command for showing input suggestions
+        this.logger.debug('[ValidationProvider] Registering input suggestion commands', 'ValidationProvider');
+        context.subscriptions.push(
+            vscode.commands.registerCommand('gitlab-component-helper.showInputSuggestions',
+                (args) => this.showInputSuggestionsQuickPick(args))
         );
 
         this.logger.debug('[ValidationProvider] Validating currently open documents', 'ValidationProvider');
@@ -430,7 +434,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
                     // Only add "show all options" if there are more than the limited suggestions
                     if (suggestedInputs.length > maxIndividualSuggestions) {
-                        const showAllTitle = `Show all ${suggestedInputs.length} replacement options for '${unknownInput}'`;
+                        const showAllTitle = `Show all ${availableInputs.length} available inputs for '${metadata.componentName}'`;
 
                         if (!actionTitles.has(showAllTitle)) {
                             actionTitles.add(showAllTitle);
@@ -438,8 +442,15 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                             const showAllAction = new vscode.CodeAction(showAllTitle, vscode.CodeActionKind.QuickFix);
                             showAllAction.command = {
                                 title: showAllTitle,
-                                command: 'vscode.executeCodeActionProvider',
-                                arguments: [document.uri, diagnostic.range]
+                                command: 'gitlab-component-helper.showInputSuggestions',
+                                arguments: [{
+                                    type: 'replace',
+                                    documentUri: document.uri.toString(),
+                                    range: diagnostic.range,
+                                    unknownInput: unknownInput,
+                                    availableInputs: availableInputs,
+                                    componentName: metadata.componentName
+                                }]
                             };
                             actions.push(showAllAction);
                         }
@@ -504,6 +515,42 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     addInputAction.diagnostics = [diagnostic];
                     addInputAction.isPreferred = true;
                     actions.push(addInputAction);
+
+                    // Add action to show all missing inputs for this component if there are multiple
+                    const componentUrl = metadata.componentUrl;
+                    const allMissingForComponent = relevantDiagnostics.filter(d =>
+                        d.code === 'missing-required-input' &&
+                        (d as any).metadata?.componentUrl === componentUrl
+                    );
+
+                    if (allMissingForComponent.length > 1) {
+                        const showAllMissingTitle = `Add all ${allMissingForComponent.length} missing inputs for '${metadata.componentName}'`;
+
+                        if (!actionTitles.has(showAllMissingTitle)) {
+                            actionTitles.add(showAllMissingTitle);
+
+                            const showAllMissingAction = new vscode.CodeAction(showAllMissingTitle, vscode.CodeActionKind.QuickFix);
+                            showAllMissingAction.command = {
+                                title: showAllMissingTitle,
+                                command: 'gitlab-component-helper.showInputSuggestions',
+                                arguments: [{
+                                    type: 'add',
+                                    documentUri: document.uri.toString(),
+                                    range: diagnostic.range,
+                                    availableInputs: allMissingForComponent.map(d => (d as any).metadata.missingInput),
+                                    componentName: metadata.componentName,
+                                    missingInputs: allMissingForComponent.map(d => ({
+                                        name: (d as any).metadata.missingInput,
+                                        description: (d as any).metadata.inputDescription || '',
+                                        type: (d as any).metadata.inputType || 'string',
+                                        default: (d as any).metadata.inputDefault,
+                                        required: true
+                                    }))
+                                }]
+                            };
+                            actions.push(showAllMissingAction);
+                        }
+                    }
                 }
             }
         }
@@ -729,5 +776,182 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             indentation: inputsIndentation,
             needsInputsSection: true
         };
+    }
+
+    /**
+     * Show input suggestions in a QuickPick UI for better handling of large lists
+     */
+    private async showInputSuggestionsQuickPick(args: {
+        type: 'replace' | 'add';
+        documentUri: string;
+        range: vscode.Range;
+        unknownInput?: string;
+        availableInputs: string[];
+        componentName: string;
+        missingInputs?: Array<{
+            name: string;
+            description: string;
+            type: string;
+            default?: any;
+            required: boolean;
+        }>;
+    }): Promise<void> {
+        this.logger.debug(`[ValidationProvider] Showing QuickPick for ${args.type} with ${args.availableInputs.length} options`, 'ValidationProvider');
+
+        const quickPick = vscode.window.createQuickPick();
+
+        if (args.type === 'replace') {
+            quickPick.title = `Replace '${args.unknownInput}' in component '${args.componentName}'`;
+            quickPick.placeholder = 'Type to search, then press Enter to replace...';
+
+            // Create items for replacement suggestions with enhanced details
+            quickPick.items = args.availableInputs.map(input => {
+                // Check if this is a close match to the unknown input for better sorting
+                const similarity = this.calculateStringSimilarity(args.unknownInput || '', input);
+                const isCloseMatch = similarity > 0.3;
+
+                return {
+                    label: input,
+                    description: isCloseMatch ? '$(star) Close match' : '',
+                    detail: `Replace '${args.unknownInput}' with '${input}'${isCloseMatch ? ' (recommended)' : ''}`
+                };
+            }).sort((a, b) => {
+                // Sort by close matches first, then alphabetically
+                const aIsClose = a.description.includes('Close match');
+                const bIsClose = b.description.includes('Close match');
+                if (aIsClose && !bIsClose) return -1;
+                if (!aIsClose && bIsClose) return 1;
+                return a.label.localeCompare(b.label);
+            });
+        } else {
+            quickPick.title = `Add missing inputs to component '${args.componentName}'`;
+            quickPick.placeholder = 'Select input(s) to add (use Ctrl/Cmd+Click for multiple)...';
+            quickPick.canSelectMany = true;
+
+            // Create items for missing inputs with detailed information
+            quickPick.items = (args.missingInputs || []).map(input => ({
+                label: input.name,
+                description: input.required ? 'Required' : 'Optional',
+                detail: `${input.description} (${input.type}${input.default !== undefined ? `, default: ${JSON.stringify(input.default)}` : ''})`
+            }));
+        }
+
+        quickPick.onDidAccept(async () => {
+            const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(args.documentUri));
+            const editor = await vscode.window.showTextDocument(document);
+
+            if (args.type === 'replace' && quickPick.selectedItems.length === 1) {
+                // Replace the unknown input with the selected one
+                const selectedInput = quickPick.selectedItems[0].label;
+                this.logger.debug(`[ValidationProvider] Replacing '${args.unknownInput}' with '${selectedInput}'`, 'ValidationProvider');
+
+                const edit = new vscode.WorkspaceEdit();
+                edit.replace(document.uri, args.range, selectedInput);
+                await vscode.workspace.applyEdit(edit);
+
+                // Show confirmation message
+                vscode.window.showInformationMessage(`Replaced '${args.unknownInput}' with '${selectedInput}'`);
+
+            } else if (args.type === 'add' && quickPick.selectedItems.length > 0) {
+                // Add selected missing inputs
+                const selectedInputs = quickPick.selectedItems.map(item => item.label);
+                this.logger.debug(`[ValidationProvider] Adding inputs: ${selectedInputs.join(', ')}`, 'ValidationProvider');
+
+                const edit = new vscode.WorkspaceEdit();
+                const componentLine = args.range.start.line;
+                const insertInfo = this.findInputsInsertPosition(document, componentLine);
+
+                let insertText = '';
+                if (insertInfo.needsInputsSection) {
+                    insertText += `${insertInfo.indentation}inputs:\n`;
+                }
+
+                // Add each selected input
+                for (const inputName of selectedInputs) {
+                    const inputInfo = args.missingInputs?.find(i => i.name === inputName);
+                    const indentation = insertInfo.needsInputsSection ?
+                        insertInfo.indentation + '  ' : insertInfo.indentation;
+
+                    insertText += `${indentation}${inputName}: `;
+
+                    // Add appropriate default value
+                    if (inputInfo?.default !== undefined) {
+                        insertText += `${JSON.stringify(inputInfo.default)}`;
+                    } else {
+                        switch (inputInfo?.type?.toLowerCase()) {
+                            case 'boolean':
+                                insertText += 'true';
+                                break;
+                            case 'number':
+                            case 'integer':
+                                insertText += '0';
+                                break;
+                            case 'array':
+                                insertText += '[]';
+                                break;
+                            case 'object':
+                                insertText += '{}';
+                                break;
+                            default:
+                                insertText += `"" # ${inputInfo?.description || 'Set value'}`;
+                        }
+                    }
+                    insertText += '\n';
+                }
+
+                edit.insert(document.uri, insertInfo.position, insertText);
+                await vscode.workspace.applyEdit(edit);
+
+                // Show confirmation message
+                const inputCount = selectedInputs.length;
+                const inputWord = inputCount === 1 ? 'input' : 'inputs';
+                vscode.window.showInformationMessage(`Added ${inputCount} ${inputWord}: ${selectedInputs.join(', ')}`);
+            }
+
+            quickPick.dispose();
+        });
+
+        quickPick.onDidHide(() => {
+            quickPick.dispose();
+        });
+
+        quickPick.show();
+    }
+
+    /**
+     * Calculate string similarity using Levenshtein distance for better input suggestions
+     */
+    private calculateStringSimilarity(str1: string, str2: string): number {
+        if (str1.length === 0) return str2.length === 0 ? 1 : 0;
+        if (str2.length === 0) return 0;
+
+        const matrix: number[][] = [];
+
+        // Initialize matrix
+        for (let i = 0; i <= str2.length; i++) {
+            matrix[i] = [i];
+        }
+        for (let j = 0; j <= str1.length; j++) {
+            matrix[0][j] = j;
+        }
+
+        // Fill matrix
+        for (let i = 1; i <= str2.length; i++) {
+            for (let j = 1; j <= str1.length; j++) {
+                if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+                    matrix[i][j] = matrix[i - 1][j - 1];
+                } else {
+                    matrix[i][j] = Math.min(
+                        matrix[i - 1][j - 1] + 1, // substitution
+                        matrix[i][j - 1] + 1,     // insertion
+                        matrix[i - 1][j] + 1      // deletion
+                    );
+                }
+            }
+        }
+
+        const maxLength = Math.max(str1.length, str2.length);
+        const distance = matrix[str2.length][str1.length];
+        return (maxLength - distance) / maxLength;
     }
 }
