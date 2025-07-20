@@ -9,6 +9,7 @@
 - **Component Browser**: Explore and insert components from any GitLab project or group
 - **Smart Completion**: Context-aware suggestions for components and versions as you type
 - **Hover Docs**: See full documentation and parameter hints instantly
+- **Input Validation**: Real-time validation of component inputs with intelligent Quick Fix suggestions
 - **Version/Tag Picker**: Always use the right version—no more guessing
 - **Variable Expansion**: Full support for GitLab CI/CD variables in URLs and parameters
 - **Lightning Fast**: Caching, batch API calls, and performance optimizations for huge catalogs

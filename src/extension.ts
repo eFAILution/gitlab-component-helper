@@ -7,6 +7,7 @@ import { detectIncludeComponent } from './providers/componentDetector';
 import { getComponentCacheManager, ComponentCacheManager } from './services/componentCacheManager';
 import { Logger } from './utils/logger';
 import { ValidationProvider } from './providers/validationProvider';
+import { parseYaml } from './utils/yamlParser';
 
 export function activate(context: vscode.ExtensionContext) {
   const logger = Logger.getInstance();
@@ -219,8 +220,38 @@ export function activate(context: vscode.ExtensionContext) {
           }
         );
 
-        // Generate HTML content for the detached panel
-        panel.webview.html = getDetachedComponentHtml(component);
+        // Generate HTML content for the detached panel with interactive features
+        panel.webview.html = await getDetachedComponentHtml(component);
+
+        // Handle messages from the detached webview
+        panel.webview.onDidReceiveMessage(async (message) => {
+          switch (message.command) {
+            case 'insertComponent':
+              // Get the active editor
+              const editor = vscode.window.activeTextEditor;
+              if (!editor) {
+                vscode.window.showErrorMessage('No active editor found');
+                return;
+              }
+
+              try {
+                // Use the same insertion logic as the component browser
+                const componentBrowser = new ComponentBrowserProvider(context, cacheManager);
+                await componentBrowser.insertComponentFromDetached(
+                  component,
+                  message.includeInputs || false,
+                  message.selectedInputs || []
+                );
+
+                // Optionally close the panel after insertion
+                panel.dispose();
+              } catch (error) {
+                logger.error(`[Extension] Error inserting component from detached view: ${error}`, 'Extension');
+                vscode.window.showErrorMessage(`Error inserting component: ${error}`);
+              }
+              break;
+          }
+        });
       })
     );
 
@@ -285,11 +316,84 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 // Helper function to generate HTML for detached component details
-function getDetachedComponentHtml(component: any): string {
+async function getDetachedComponentHtml(component: any): Promise<string> {
   const parameters = component.parameters || [];
   const readme = component.readme || '';
 
-  return `
+  // Detect existing inputs for this component in the active editor
+  const existingInputs: string[] = [];
+  const editor = vscode.window.activeTextEditor;
+  if (editor && parameters.length > 0) {
+    try {
+      const document = editor.document;
+      const text = document.getText();
+
+      // Parse the YAML to find component includes and their inputs
+      const parsedYaml = parseYaml(text);
+      if (parsedYaml && parsedYaml.include) {
+        const includes = Array.isArray(parsedYaml.include) ? parsedYaml.include : [parsedYaml.include];
+
+        for (const include of includes) {
+          if (include.component && include.inputs) {
+            // Check if this include is for the current component
+            const componentUrl = include.component;
+            if (componentUrl.includes(component.name)) {
+              // Extract input parameter names from this component's inputs
+              for (const inputName in include.inputs) {
+                if (parameters.some((p: any) => p.name === inputName)) {
+                  existingInputs.push(inputName);
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (error) {
+      // Silently ignore parsing errors and fall back to regex-based detection
+      try {
+        const document = editor.document;
+        const text = document.getText();
+
+        // Simple regex-based detection of component inputs as fallback
+        const componentUrlPattern = component.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const componentRegex = new RegExp(`component:\\s*[^\\n]*${componentUrlPattern}[^\\n]*`, 'g');
+        const match = componentRegex.exec(text);
+
+        if (match) {
+          // Find the inputs section for this component
+          const startIndex = match.index + match[0].length;
+          const remainingText = text.substring(startIndex);
+
+          // Look for inputs: section
+          const inputsMatch = remainingText.match(/^\s*inputs:\s*$/m);
+          if (inputsMatch) {
+            const inputsStartIndex = startIndex + inputsMatch.index! + inputsMatch[0].length;
+            const afterInputsText = text.substring(inputsStartIndex);
+
+            // Extract input parameter names
+            const inputLines = afterInputsText.split('\n');
+            for (const line of inputLines) {
+              // Stop at next job or section
+              if (line.match(/^\S/) && !line.trim().startsWith('#')) {
+                break;
+              }
+
+              // Match input parameter lines (indented with parameter name)
+              const paramMatch = line.match(/^\s{2,}([a-zA-Z][a-zA-Z0-9_-]*)\s*:/);
+              if (paramMatch) {
+                const paramName = paramMatch[1];
+                if (parameters.some((p: any) => p.name === paramName)) {
+                  existingInputs.push(paramName);
+                }
+              }
+            }
+          }
+        }
+      } catch (fallbackError) {
+        // Ignore both parsing errors
+      }
+    }
+  }  return `
     <!DOCTYPE html>
     <html lang="en">
     <head>
@@ -342,36 +446,127 @@ function getDetachedComponentHtml(component: any): string {
           padding-bottom: 8px;
           margin-bottom: 15px;
         }
-        table {
-          width: 100%;
-          border-collapse: collapse;
-          margin-bottom: 20px;
+        .parameters-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 15px;
         }
-        th, td {
-          padding: 12px 8px;
-          text-align: left;
+        .select-all-group {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          font-size: 0.9em;
+        }
+        .parameters {
+          border: 1px solid var(--vscode-panel-border);
+          border-radius: 5px;
+        }
+        .parameter {
+          padding: 15px;
           border-bottom: 1px solid var(--vscode-panel-border);
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
         }
-        th {
-          background-color: var(--vscode-panel-background);
+        .parameter:last-child {
+          border-bottom: none;
+        }
+        .parameter-content {
+          flex: 1;
+          margin-right: 15px;
+        }
+        .parameter-checkbox {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          margin-top: 5px;
+        }
+        .parameter-checkbox.existing {
+          background-color: var(--vscode-diffEditor-insertedTextBackground);
+          padding: 5px;
+          border-radius: 3px;
+          border: 1px solid var(--vscode-diffEditor-insertedTextBorder);
+        }
+        .parameter-checkbox.existing label {
+          color: var(--vscode-diffEditor-insertedLineBackground);
+          font-weight: 500;
+        }
+        .parameter-name {
           font-weight: bold;
+          font-size: 1.1em;
+          margin-bottom: 5px;
         }
-        tr:hover {
-          background-color: var(--vscode-list-hoverBackground);
-        }
-        .required {
+        .parameter-required {
           color: var(--vscode-errorForeground);
+          font-size: 0.9em;
           font-weight: bold;
         }
-        .optional {
+        .parameter-optional {
           color: var(--vscode-disabledForeground);
+          font-size: 0.9em;
         }
-        .default-value {
+        .parameter-description {
+          margin: 8px 0;
+          line-height: 1.4;
+        }
+        .parameter-details {
+          display: flex;
+          gap: 15px;
+          margin-top: 8px;
+          font-size: 0.9em;
+        }
+        .parameter-default {
           background-color: var(--vscode-textCodeBlock-background);
           padding: 2px 6px;
           border-radius: 3px;
           font-family: monospace;
           font-size: 0.9em;
+        }
+        .insert-options {
+          background-color: var(--vscode-panel-background);
+          border: 1px solid var(--vscode-panel-border);
+          border-radius: 5px;
+          padding: 20px;
+          margin-top: 25px;
+        }
+        .insert-options h3 {
+          margin-top: 0;
+          margin-bottom: 15px;
+          color: var(--vscode-editor-foreground);
+        }
+        .checkbox-group {
+          margin-bottom: 15px;
+        }
+        .checkbox-group label {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          cursor: pointer;
+        }
+        .button-group {
+          display: flex;
+          gap: 10px;
+        }
+        button {
+          background-color: var(--vscode-button-background);
+          color: var(--vscode-button-foreground);
+          border: none;
+          padding: 10px 20px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-size: 0.9em;
+          font-weight: 500;
+        }
+        button:hover {
+          background-color: var(--vscode-button-hoverBackground);
+        }
+        button.secondary {
+          background-color: var(--vscode-button-secondaryBackground);
+          color: var(--vscode-button-secondaryForeground);
+        }
+        button.secondary:hover {
+          background-color: var(--vscode-button-secondaryHoverBackground);
         }
         .readme {
           background-color: var(--vscode-editor-background);
@@ -434,32 +629,61 @@ function getDetachedComponentHtml(component: any): string {
       ` : ''}
 
       <div class="section">
-        <h2>Parameters</h2>
+        <div class="parameters-header">
+          <h2>Parameters</h2>
+          <div style="display: flex; align-items: center; gap: 15px;">
+            ${existingInputs.length > 0 ? `
+              <div style="font-size: 0.8em; color: var(--vscode-charts-green); background-color: var(--vscode-diffEditor-insertedTextBackground); padding: 3px 8px; border-radius: 3px;">
+                ${existingInputs.length} already in file
+              </div>
+            ` : ''}
+            ${parameters.length > 0 ? `
+              <div class="select-all-group">
+                <input type="checkbox" id="selectAllInputs" onchange="toggleAllInputs()">
+                <label for="selectAllInputs">Select All</label>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+
         ${parameters.length === 0 ?
           '<div class="no-content">No parameters documented for this component.</div>' :
-          `<table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Description</th>
-                <th>Required</th>
-                <th>Type</th>
-                <th>Default</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${parameters.map((param: any) => `
-                <tr>
-                  <td><strong>${param.name}</strong></td>
-                  <td>${param.description || `Parameter: ${param.name}`}</td>
-                  <td><span class="${param.required ? 'required' : 'optional'}">${param.required ? 'Required' : 'Optional'}</span></td>
-                  <td>${param.type || 'string'}</td>
-                  <td>${param.default !== undefined ? `<span class="default-value">${param.default}</span>` : '-'}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>`
+          `<div class="parameters">
+            ${parameters.map((param: any) => `
+              <div class="parameter">
+                <div class="parameter-content">
+                  <div class="parameter-name">${param.name}</div>
+                  <div class="${param.required ? 'parameter-required' : 'parameter-optional'}">
+                    (${param.required ? 'required' : 'optional'})
+                  </div>
+                  <div class="parameter-description">${param.description || `Parameter: ${param.name}`}</div>
+                  <div class="parameter-details">
+                    <div><strong>Type:</strong> ${param.type || 'string'}</div>
+                    ${param.default !== undefined ?
+                      `<div><strong>Default:</strong> <span class="parameter-default">${param.default}</span></div>` : ''}
+                  </div>
+                </div>
+                <div class="parameter-checkbox${existingInputs.includes(param.name) ? ' existing' : ''}">
+                  <input type="checkbox" id="input-${param.name}" class="input-checkbox" onchange="updateInputSelection()" data-param-name="${param.name}"${existingInputs.includes(param.name) ? ' checked' : ''}>
+                  <label for="input-${param.name}">${existingInputs.includes(param.name) ? 'Already Present' : 'Insert'}</label>
+                </div>
+              </div>
+            `).join('')}
+          </div>`
         }
+      </div>
+
+      <div class="insert-options">
+        <h3>Insert Component</h3>
+        <div class="checkbox-group">
+          <label>
+            <input type="checkbox" id="includeInputs">
+            Include input parameters with default values
+          </label>
+        </div>
+        <div class="button-group">
+          <button onclick="insertComponent()">Insert Component</button>
+        </div>
       </div>
 
       ${readme ? `
@@ -470,6 +694,73 @@ function getDetachedComponentHtml(component: any): string {
           </div>
         </div>
       ` : ''}
+
+      <script>
+        const vscode = acquireVsCodeApi();
+
+        function insertComponent() {
+          const includeInputs = document.getElementById('includeInputs')?.checked || false;
+
+          // Get selected individual inputs
+          const selectedInputs = [];
+          const inputCheckboxes = document.querySelectorAll('.input-checkbox:checked');
+          inputCheckboxes.forEach(checkbox => {
+            selectedInputs.push(checkbox.getAttribute('data-param-name'));
+          });
+
+          vscode.postMessage({
+            command: 'insertComponent',
+            includeInputs: includeInputs,
+            selectedInputs: selectedInputs
+          });
+        }
+
+        function toggleAllInputs() {
+          const selectAllCheckbox = document.getElementById('selectAllInputs');
+          const inputCheckboxes = document.querySelectorAll('.input-checkbox');
+
+          inputCheckboxes.forEach(checkbox => {
+            checkbox.checked = selectAllCheckbox.checked;
+          });
+
+          updateInputSelection();
+        }
+
+        function updateInputSelection() {
+          const inputCheckboxes = document.querySelectorAll('.input-checkbox');
+          const checkedInputs = document.querySelectorAll('.input-checkbox:checked');
+          const selectAllCheckbox = document.getElementById('selectAllInputs');
+          const includeInputsCheckbox = document.getElementById('includeInputs');
+
+          // Update select all checkbox state
+          if (checkedInputs.length === 0) {
+            selectAllCheckbox.checked = false;
+            selectAllCheckbox.indeterminate = false;
+          } else if (checkedInputs.length === inputCheckboxes.length) {
+            selectAllCheckbox.checked = true;
+            selectAllCheckbox.indeterminate = false;
+          } else {
+            selectAllCheckbox.checked = false;
+            selectAllCheckbox.indeterminate = true;
+          }
+
+          // Auto-check "Include input parameters" if any individual inputs are selected
+          if (checkedInputs.length > 0) {
+            includeInputsCheckbox.checked = true;
+          }
+        }
+
+        // Initialize the checkbox states on load
+        document.addEventListener('DOMContentLoaded', function() {
+          updateInputSelection();
+
+          // Show a helpful message if existing inputs were detected
+          const checkedInputs = document.querySelectorAll('.input-checkbox:checked');
+          if (checkedInputs.length > 0) {
+            console.log('Pre-selected existing inputs from your GitLab CI file');
+          }
+        });
+      </script>
     </body>
     </html>
   `;

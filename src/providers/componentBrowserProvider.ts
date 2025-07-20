@@ -287,7 +287,7 @@ export class ComponentBrowserProvider {
     }
   }
 
-  private async insertComponent(component: any, includeInputs: boolean = false) {
+  private async insertComponent(component: any, includeInputs: boolean = false, selectedInputs?: string[]) {
     // Get the active text editor
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -325,7 +325,14 @@ export class ComponentBrowserProvider {
     if (includeInputs && component.parameters && component.parameters.length > 0) {
       insertion += '\n    inputs:';
 
-      for (const param of component.parameters) {
+      // Determine which parameters to include
+      let parametersToInclude = component.parameters;
+      if (selectedInputs && selectedInputs.length > 0) {
+        // Only include specifically selected inputs
+        parametersToInclude = component.parameters.filter((param: any) => selectedInputs.includes(param.name));
+      }
+
+      for (const param of parametersToInclude) {
         let defaultValue = param.default;
 
         // Format default value based on type
@@ -381,11 +388,22 @@ export class ComponentBrowserProvider {
       editBuilder.insert(editor.selection.active, insertion);
     });
 
-    const message = includeInputs && component.parameters?.length > 0
-      ? `Inserted component: ${component.name} with ${component.parameters.length} input parameters`
-      : `Inserted component: ${component.name}`;
+    // Create appropriate success message
+    let message = `Inserted component: ${component.name}`;
+    if (includeInputs && component.parameters && component.parameters.length > 0) {
+      if (selectedInputs && selectedInputs.length > 0) {
+        message += ` with ${selectedInputs.length} selected input parameter${selectedInputs.length === 1 ? '' : 's'}`;
+      } else {
+        message += ` with ${component.parameters.length} input parameter${component.parameters.length === 1 ? '' : 's'}`;
+      }
+    }
 
     vscode.window.showInformationMessage(message);
+  }
+
+  // Public method to insert component from detached view (called from extension.ts)
+  public async insertComponentFromDetached(component: any, includeInputs: boolean = false, selectedInputs?: string[]) {
+    return this.insertComponent(component, includeInputs, selectedInputs);
   }
 
   private async showComponentDetails(component: any) {
@@ -407,7 +425,7 @@ export class ComponentBrowserProvider {
       async message => {
         if (message.command === 'insertComponent') {
           // Handle different insertion options
-          const { version, includeInputs } = message;
+          const { version, includeInputs, selectedInputs } = message;
 
           // Update component version if specified
           if (version && version !== component.version) {
@@ -418,12 +436,12 @@ export class ComponentBrowserProvider {
               version
             );
             if (updatedComponent) {
-              await this.insertComponent(updatedComponent, includeInputs);
+              await this.insertComponent(updatedComponent, includeInputs, selectedInputs);
             } else {
               vscode.window.showErrorMessage(`Failed to fetch version ${version} of component ${component.name}`);
             }
           } else {
-            await this.insertComponent(component, includeInputs);
+            await this.insertComponent(component, includeInputs, selectedInputs);
           }
         } else if (message.command === 'fetchVersions') {
           // Fetch available versions for the component
@@ -1262,9 +1280,22 @@ export class ComponentBrowserProvider {
           .parameter {
             padding: 10px;
             border-bottom: 1px solid var(--vscode-panel-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
           }
           .parameter:last-child {
             border-bottom: none;
+          }
+          .parameter-content {
+            flex: 1;
+            margin-right: 15px;
+          }
+          .parameter-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-top: 5px;
           }
           .parameter-name {
             font-weight: bold;
@@ -1282,6 +1313,18 @@ export class ComponentBrowserProvider {
             background-color: var(--vscode-textCodeBlock-background);
             padding: 2px 4px;
             border-radius: 3px;
+          }
+          .parameters-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+          }
+          .select-all-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.9em;
           }
           .insert-options {
             margin-top: 20px;
@@ -1352,23 +1395,37 @@ export class ComponentBrowserProvider {
             `<div><strong>Documentation:</strong> <a href="${component.documentationUrl}" target="_blank" id="componentDocUrl">${component.documentationUrl}</a></div>` : ''}
         </div>
 
-        <h2>Parameters</h2>
+        <div class="parameters-header">
+          <h2>Parameters</h2>
+          ${parameters.length > 0 ? `
+            <div class="select-all-group">
+              <input type="checkbox" id="selectAllInputs" onchange="toggleAllInputs()">
+              <label for="selectAllInputs">Select All</label>
+            </div>
+          ` : ''}
+        </div>
         <div id="parametersContainer">
           ${parameters.length === 0 ?
             '<p>No parameters documented for this component.</p>' :
             `<div class="parameters">
               ${parameters.map((param: ComponentParameter) => `
                 <div class="parameter">
-                  <div>
-                    <span class="parameter-name">${param.name}</span>
-                    <span class="${param.required ? 'parameter-required' : 'parameter-optional'}">
-                      (${param.required ? 'required' : 'optional'})
-                    </span>
+                  <div class="parameter-content">
+                    <div>
+                      <span class="parameter-name">${param.name}</span>
+                      <span class="${param.required ? 'parameter-required' : 'parameter-optional'}">
+                        (${param.required ? 'required' : 'optional'})
+                      </span>
+                    </div>
+                    <div>${param.description || `Parameter: ${param.name}`}</div>
+                    <div><strong>Type:</strong> ${param.type || 'string'}</div>
+                    ${param.default !== undefined ?
+                      `<div><strong>Default:</strong> <span class="parameter-default">${param.default}</span></div>` : ''}
                   </div>
-                  <div>${param.description || `Parameter: ${param.name}`}</div>
-                  <div><strong>Type:</strong> ${param.type || 'string'}</div>
-                  ${param.default !== undefined ?
-                    `<div><strong>Default:</strong> <span class="parameter-default">${param.default}</span></div>` : ''}
+                  <div class="parameter-checkbox">
+                    <input type="checkbox" id="input-${param.name}" class="input-checkbox" onchange="updateInputSelection()" data-param-name="${param.name}">
+                    <label for="input-${param.name}">Insert</label>
+                  </div>
                 </div>
               `).join('')}
             </div>`
@@ -1377,14 +1434,12 @@ export class ComponentBrowserProvider {
 
         <div class="insert-options">
           <h3>Insert Options</h3>
-          ${parameters.length > 0 ? `
-            <div class="checkbox-group">
-              <label>
-                <input type="checkbox" id="includeInputs">
-                Include input parameters with default values
-              </label>
-            </div>
-          ` : ''}
+          <div class="checkbox-group">
+            <label>
+              <input type="checkbox" id="includeInputs">
+              Include input parameters with default values
+            </label>
+          </div>
           <div class="button-group">
             <button onclick="insertComponent()">Insert Component</button>
             <button class="secondary" onclick="refreshVersions()">Refresh Versions</button>
@@ -1400,11 +1455,54 @@ export class ComponentBrowserProvider {
             const selectedVersion = document.getElementById('versionSelect').value;
             const includeInputs = document.getElementById('includeInputs')?.checked || false;
 
+            // Get selected individual inputs
+            const selectedInputs = [];
+            const inputCheckboxes = document.querySelectorAll('.input-checkbox:checked');
+            inputCheckboxes.forEach(checkbox => {
+              selectedInputs.push(checkbox.getAttribute('data-param-name'));
+            });
+
             vscode.postMessage({
               command: 'insertComponent',
               version: selectedVersion,
-              includeInputs: includeInputs
+              includeInputs: includeInputs,
+              selectedInputs: selectedInputs
             });
+          }
+
+          function toggleAllInputs() {
+            const selectAllCheckbox = document.getElementById('selectAllInputs');
+            const inputCheckboxes = document.querySelectorAll('.input-checkbox');
+
+            inputCheckboxes.forEach(checkbox => {
+              checkbox.checked = selectAllCheckbox.checked;
+            });
+
+            updateInputSelection();
+          }
+
+          function updateInputSelection() {
+            const inputCheckboxes = document.querySelectorAll('.input-checkbox');
+            const checkedInputs = document.querySelectorAll('.input-checkbox:checked');
+            const selectAllCheckbox = document.getElementById('selectAllInputs');
+            const includeInputsCheckbox = document.getElementById('includeInputs');
+
+            // Update select all checkbox state
+            if (checkedInputs.length === 0) {
+              selectAllCheckbox.checked = false;
+              selectAllCheckbox.indeterminate = false;
+            } else if (checkedInputs.length === inputCheckboxes.length) {
+              selectAllCheckbox.checked = true;
+              selectAllCheckbox.indeterminate = false;
+            } else {
+              selectAllCheckbox.checked = false;
+              selectAllCheckbox.indeterminate = true;
+            }
+
+            // Auto-check "Include input parameters" if any individual inputs are selected
+            if (checkedInputs.length > 0) {
+              includeInputsCheckbox.checked = true;
+            }
           }
 
           function onVersionChange() {
@@ -1469,6 +1567,7 @@ export class ComponentBrowserProvider {
               let parametersHtml = '<div class="parameters">';
               parameters.forEach(param => {
                 parametersHtml += '<div class="parameter">';
+                parametersHtml += '<div class="parameter-content">';
                 parametersHtml += '<div>';
                 parametersHtml += '<span class="parameter-name">' + param.name + '</span>';
                 parametersHtml += '<span class="' + (param.required ? 'parameter-required' : 'parameter-optional') + '">';
@@ -1481,9 +1580,26 @@ export class ComponentBrowserProvider {
                   parametersHtml += '<div><strong>Default:</strong> <span class="parameter-default">' + param.default + '</span></div>';
                 }
                 parametersHtml += '</div>';
+                parametersHtml += '<div class="parameter-checkbox">';
+                parametersHtml += '<input type="checkbox" id="input-' + param.name + '" class="input-checkbox" onchange="updateInputSelection()" data-param-name="' + param.name + '">';
+                parametersHtml += '<label for="input-' + param.name + '">Insert</label>';
+                parametersHtml += '</div>';
+                parametersHtml += '</div>';
               });
               parametersHtml += '</div>';
               parametersContainer.innerHTML = parametersHtml;
+            }
+
+            // Update select all checkbox visibility and reset state
+            const selectAllGroup = document.querySelector('.select-all-group');
+            if (selectAllGroup) {
+              selectAllGroup.style.display = parameters.length > 0 ? 'flex' : 'none';
+              // Reset select all checkbox state
+              const selectAllCheckbox = document.getElementById('selectAllInputs');
+              if (selectAllCheckbox) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = false;
+              }
             }
 
             // Update checkbox visibility based on parameters
