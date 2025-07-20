@@ -169,6 +169,23 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     const providedInputs = include.inputs || {};
                     const componentInputs = component.parameters;
 
+                    // Defensive check: validate that provided inputs are reasonable
+                    // Skip validation if inputs seem malformed (e.g., numeric keys, function names)
+                    const inputKeys = Object.keys(providedInputs);
+                    const suspiciousKeys = inputKeys.filter(key =>
+                        // Filter out numeric keys (like '0', '1', '2')
+                        /^\d+$/.test(key) ||
+                        // Filter out function-like names that shouldn't be component inputs
+                        /^(toCommandArgument|fileToCommandArgument|trimQuotes|format|splitLines|fileToCommandArgumentForPythonExt|toCommandArgumentForPythonExt)/.test(key) ||
+                        // Filter out very short keys that are likely incomplete typing
+                        key.length <= 2
+                    );
+
+                    if (suspiciousKeys.length > 0) {
+                        this.logger.debug(`[ValidationProvider] Skipping validation due to suspicious input keys: ${suspiciousKeys.join(', ')}`, 'ValidationProvider');
+                        continue;
+                    }
+
                     for (const providedInput in providedInputs) {
                         if (!componentInputs.some((p: any) => p.name === providedInput)) {
                             const line = this.findLineForInput(document, include, providedInput);
