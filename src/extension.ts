@@ -235,15 +235,28 @@ export function activate(context: vscode.ExtensionContext) {
               }
 
               try {
-                // Use the same insertion logic as the component browser
                 const componentBrowser = new ComponentBrowserProvider(context, cacheManager);
-                await componentBrowser.insertComponentFromDetached(
-                  component,
-                  message.includeInputs || false,
-                  message.selectedInputs || []
-                );
 
-                // Optionally close the panel after insertion
+                // Check if we have hover context (editing existing component)
+                if (component._hoverContext) {
+                  // Edit the existing component at the hover position
+                  await componentBrowser.editExistingComponentFromDetached(
+                    component,
+                    component._hoverContext.documentUri,
+                    component._hoverContext.position,
+                    message.includeInputs || false,
+                    message.selectedInputs || []
+                  );
+                } else {
+                  // Insert new component at cursor position
+                  await componentBrowser.insertComponentFromDetached(
+                    component,
+                    message.includeInputs || false,
+                    message.selectedInputs || []
+                  );
+                }
+
+                // Optionally close the panel after insertion/edit
                 panel.dispose();
               } catch (error) {
                 logger.error(`[Extension] Error inserting component from detached view: ${error}`, 'Extension');
@@ -674,7 +687,12 @@ async function getDetachedComponentHtml(component: any): Promise<string> {
       </div>
 
       <div class="insert-options">
-        <h3>Insert Component</h3>
+        <h3>${existingInputs.length > 0 ? 'Edit Component' : 'Insert Component'}</h3>
+        ${existingInputs.length > 0 ? `
+          <div style="background-color: var(--vscode-diffEditor-insertedTextBackground); padding: 10px; border-radius: 5px; margin-bottom: 15px; border: 1px solid var(--vscode-diffEditor-insertedTextBorder);">
+            <strong>📝 Edit Mode:</strong> This will update the existing component in your GitLab CI file. Uncheck inputs to remove them, check new ones to add them.
+          </div>
+        ` : ''}
         <div class="checkbox-group">
           <label>
             <input type="checkbox" id="includeInputs">
@@ -682,7 +700,7 @@ async function getDetachedComponentHtml(component: any): Promise<string> {
           </label>
         </div>
         <div class="button-group">
-          <button onclick="insertComponent()">Insert Component</button>
+          <button onclick="insertComponent()">${existingInputs.length > 0 ? 'Update Component' : 'Insert Component'}</button>
         </div>
       </div>
 

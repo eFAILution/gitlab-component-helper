@@ -80,8 +80,15 @@ export class HoverProvider implements vscode.HoverProvider {
       // Header with title and detach link
       hoverContent.appendMarkdown(`## ${component.name}\n\n`);
 
-      // Add a command link to detach the hover window
-      const detachCommand = vscode.Uri.parse(`command:gitlab-component-helper.detachHover?${encodeURIComponent(JSON.stringify(component))}`);
+      // Add a command link to detach the hover window with position context
+      const componentWithContext = {
+        ...component,
+        _hoverContext: {
+          documentUri: document.uri.toString(),
+          position: { line: position.line, character: position.character }
+        }
+      };
+      const detachCommand = vscode.Uri.parse(`command:gitlab-component-helper.detachHover?${encodeURIComponent(JSON.stringify(componentWithContext))}`);
       hoverContent.appendMarkdown(`[🔗 Open in Detailed View](${detachCommand.toString()})\n\n`);
 
       // Description

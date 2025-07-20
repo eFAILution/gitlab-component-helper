@@ -1348,10 +1348,6 @@ export class ComponentBrowserProvider {
           .checkbox-group input[type="checkbox"] {
             margin: 0;
           }
-          .button-group {
-            display: flex;
-            gap: 10px;
-          }
           button {
             background-color: var(--vscode-button-background);
             color: var(--vscode-button-foreground);
@@ -2182,4 +2178,334 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
       return null;
     }
   }
+
+  // Public method to edit an existing component from detached view (called from extension.ts)
+  public async editExistingComponentFromDetached(
+    component: any,
+    documentUri: string,
+    position: { line: number; character: number },
+    includeInputs: boolean = false,
+    selectedInputs?: string[]
+  ) {
+    // Open the document that contains the component
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(documentUri));
+    const editor = await vscode.window.showTextDocument(document);
+
+    // Find the component block starting from the hover position
+    const componentPosition = new vscode.Position(position.line, position.character);
+    const componentRange = await this.findComponentRange(document, componentPosition, component.name);
+
+    if (!componentRange) {
+      vscode.window.showErrorMessage(`Could not locate component ${component.name} in the document`);
+      return;
+    }
+
+    // Parse the existing component to see what inputs it already has
+    const existingComponent = await this.parseExistingComponent(document, componentRange);
+
+    // Generate the new component text with updated inputs
+    const newComponentText = this.generateComponentText(
+      component,
+      includeInputs,
+      selectedInputs,
+      existingComponent
+    );
+
+    // Replace the existing component with the updated version
+    await editor.edit(editBuilder => {
+      editBuilder.replace(componentRange, newComponentText);
+    });
+
+    // Show success message
+    let message = `Updated component: ${component.name}`;
+    if (selectedInputs && selectedInputs.length > 0) {
+      message += ` with ${selectedInputs.length} selected input parameter${selectedInputs.length === 1 ? '' : 's'}`;
+    }
+    vscode.window.showInformationMessage(message);
+  }
+
+  // Helper method to find the range of a component block in the document
+  private async findComponentRange(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    componentName: string
+  ): Promise<vscode.Range | null> {
+    const text = document.getText();
+    const lines = text.split('\n');
+
+    // Find the line with the component declaration
+    let componentLineIndex = -1;
+    for (let i = position.line; i >= Math.max(0, position.line - 10); i--) {
+      if (lines[i] && lines[i].includes('component:') && lines[i].includes(componentName)) {
+        componentLineIndex = i;
+        break;
+      }
+    }
+
+    // Also search forward a few lines
+    if (componentLineIndex === -1) {
+      for (let i = position.line; i < Math.min(lines.length, position.line + 10); i++) {
+        if (lines[i] && lines[i].includes('component:') && lines[i].includes(componentName)) {
+          componentLineIndex = i;
+          break;
+        }
+      }
+    }
+
+    if (componentLineIndex === -1) {
+      this.logger.warn(`[ComponentBrowser] Could not find component line for ${componentName}`, 'ComponentBrowser');
+      return null;
+    }
+
+    // Find the start of the component block (look for the '- component:' line)
+    let startLine = componentLineIndex;
+    const componentLine = lines[componentLineIndex];
+    const indentMatch = componentLine.match(/^(\s*)/);
+    const componentIndent = indentMatch ? indentMatch[1].length : 0;
+
+    // Look backwards to find the start of this list item
+    for (let i = componentLineIndex; i >= 0; i--) {
+      const line = lines[i];
+      const lineIndentMatch = line.match(/^(\s*)/);
+      const lineIndent = lineIndentMatch ? lineIndentMatch[1].length : 0;
+
+      // If we find a line that starts with '- ' at the same or lesser indent, that's our start
+      if (line.trim().startsWith('- ') && lineIndent <= componentIndent) {
+        startLine = i;
+        break;
+      }
+    }
+
+    // Find the end of the component block
+    let endLine = componentLineIndex;
+    for (let i = componentLineIndex + 1; i < lines.length; i++) {
+      const line = lines[i];
+      const lineIndentMatch = line.match(/^(\s*)/);
+      const lineIndent = lineIndentMatch ? lineIndentMatch[1].length : 0;
+
+      // If we find a line at the same or lesser indent that's not just whitespace, that's where we stop
+      if (line.trim() && lineIndent <= componentIndent && line.trim().startsWith('-')) {
+        endLine = i - 1;
+        break;
+      }
+
+      // If we find any content at lesser indent, stop there
+      if (line.trim() && lineIndent < componentIndent) {
+        endLine = i - 1;
+        break;
+      }
+
+      endLine = i;
+    }
+
+    // Make sure we don't include trailing empty lines
+    while (endLine > componentLineIndex && !lines[endLine].trim()) {
+      endLine--;
+    }
+
+    const startPos = new vscode.Position(startLine, 0);
+    const endPos = new vscode.Position(endLine, lines[endLine].length);
+
+    this.logger.debug(`[ComponentBrowser] Found component range: ${startLine}:0 to ${endLine}:${lines[endLine].length}`, 'ComponentBrowser');
+
+    return new vscode.Range(startPos, endPos);
+  }
+
+  // Helper method to parse an existing component to extract its current inputs
+  private async parseExistingComponent(document: vscode.TextDocument, range: vscode.Range): Promise<any> {
+    const componentText = document.getText(range);
+
+    try {
+      // Use the YAML parser to parse just this component block
+      const { parseYaml } = await import('../utils/yamlParser');
+
+      // Wrap the component in a temporary YAML structure for parsing
+      const wrappedYaml = `include:\n${componentText}`;
+      const parsed = parseYaml(wrappedYaml);
+
+      if (parsed && parsed.include && Array.isArray(parsed.include) && parsed.include[0]) {
+        return parsed.include[0];
+      } else if (parsed && parsed.include) {
+        return parsed.include;
+      }
+    } catch (error) {
+      this.logger.warn(`[ComponentBrowser] Could not parse existing component: ${error}`, 'ComponentBrowser');
+    }
+
+    return null;
+  }
+
+  // Helper method to generate the component text with updated inputs
+  private generateComponentText(
+    component: any,
+    includeInputs: boolean,
+    selectedInputs: string[] = [],
+    existingComponent: any = null
+  ): string {
+    const gitlabInstance = component.gitlabInstance || 'gitlab.com';
+
+    // Create the component reference
+    let componentUrl: string;
+
+    // If the component has a preserved URL with variables, use that
+    if (component.originalUrl && containsGitLabVariables(component.originalUrl)) {
+      componentUrl = component.originalUrl;
+      // Update version if different
+      if (component.version && !component.originalUrl.includes('@')) {
+        componentUrl += `@${component.version}`;
+      } else if (component.version && component.originalUrl.includes('@')) {
+        componentUrl = component.originalUrl.replace(/@[^@]*$/, `@${component.version}`);
+      }
+    } else {
+      // Create standard URL
+      componentUrl = `https://${gitlabInstance}/${component.sourcePath}/${component.name}@${component.version}`;
+    }
+
+    let insertion = `  - component: ${componentUrl}`;
+
+    // Handle inputs
+    if (includeInputs || (selectedInputs && selectedInputs.length > 0)) {
+      insertion += '\n    inputs:';
+
+      // Start with existing inputs if we're editing
+      const finalInputs = new Map<string, any>();
+
+      // Add existing inputs first
+      if (existingComponent && existingComponent.inputs) {
+        for (const [key, value] of Object.entries(existingComponent.inputs)) {
+          finalInputs.set(key, value);
+        }
+      }
+
+      // If selectedInputs is specified, only include those (removing unselected ones)
+      if (selectedInputs && selectedInputs.length > 0) {
+        // Keep only the selected inputs from existing ones
+        const filteredInputs = new Map<string, any>();
+        for (const inputName of selectedInputs) {
+          if (finalInputs.has(inputName)) {
+            filteredInputs.set(inputName, finalInputs.get(inputName));
+          }
+        }
+        finalInputs.clear();
+        for (const [key, value] of filteredInputs) {
+          finalInputs.set(key, value);
+        }
+
+        // Add new selected inputs with default values
+        if (component.parameters) {
+          for (const param of component.parameters) {
+            if (selectedInputs.includes(param.name) && !finalInputs.has(param.name)) {
+              let defaultValue = param.default;
+
+              // Format default value based on type
+              if (defaultValue !== undefined) {
+                if (typeof defaultValue === 'string') {
+                  // Check if it contains GitLab variables and preserve them
+                  if (containsGitLabVariables(defaultValue)) {
+                    defaultValue = `"${defaultValue}"`; // Keep variables as-is in quotes
+                  } else {
+                    defaultValue = `"${defaultValue}"`;
+                  }
+                } else if (typeof defaultValue === 'boolean') {
+                  defaultValue = defaultValue.toString();
+                } else if (typeof defaultValue === 'number') {
+                  defaultValue = defaultValue.toString();
+                } else {
+                  defaultValue = JSON.stringify(defaultValue);
+                }
+              } else {
+                // Provide placeholder based on type and required status
+                if (param.required) {
+                  switch (param.type) {
+                    case 'boolean':
+                      defaultValue = 'true';
+                      break;
+                    case 'number':
+                      defaultValue = '0';
+                      break;
+                    default:
+                      defaultValue = '"TODO: set value"';
+                  }
+                } else {
+                  switch (param.type) {
+                    case 'boolean':
+                      defaultValue = 'false';
+                      break;
+                    case 'number':
+                      defaultValue = '0';
+                      break;
+                    default:
+                      defaultValue = '""';
+                  }
+                }
+              }
+
+              finalInputs.set(param.name, defaultValue);
+            }
+          }
+        }
+      } else if (includeInputs && component.parameters) {
+        // Add all parameters if includeInputs is true and no specific selection
+        for (const param of component.parameters) {
+          if (!finalInputs.has(param.name)) {
+            let defaultValue = param.default;
+
+            // Format default value (same logic as above)
+            if (defaultValue !== undefined) {
+              if (typeof defaultValue === 'string') {
+                if (containsGitLabVariables(defaultValue)) {
+                  defaultValue = `"${defaultValue}"`;
+                } else {
+                  defaultValue = `"${defaultValue}"`;
+                }
+              } else if (typeof defaultValue === 'boolean') {
+                defaultValue = defaultValue.toString();
+              } else if (typeof defaultValue === 'number') {
+                defaultValue = defaultValue.toString();
+              } else {
+                defaultValue = JSON.stringify(defaultValue);
+              }
+            } else {
+              if (param.required) {
+                switch (param.type) {
+                  case 'boolean':
+                    defaultValue = 'true';
+                    break;
+                  case 'number':
+                    defaultValue = '0';
+                    break;
+                  default:
+                    defaultValue = '"TODO: set value"';
+                }
+              } else {
+                switch (param.type) {
+                  case 'boolean':
+                    defaultValue = 'false';
+                    break;
+                  case 'number':
+                    defaultValue = '0';
+                    break;
+                  default:
+                    defaultValue = '""';
+                }
+              }
+            }
+
+            finalInputs.set(param.name, defaultValue);
+          }
+        }
+      }
+
+      // Generate the inputs section
+      for (const [inputName, inputValue] of finalInputs) {
+        const param = component.parameters?.find((p: any) => p.name === inputName);
+        const comment = param?.required ? ' # required' : ' # optional';
+        insertion += `\n      ${inputName}: ${inputValue}${comment}`;
+      }
+    }
+
+    return insertion;
+  }
+
+  // ...existing code...
 }
