@@ -209,6 +209,13 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
 
+        // Store the current active editor before opening the panel
+        const originalEditor = vscode.window.activeTextEditor;
+        if (!originalEditor) {
+          vscode.window.showErrorMessage('No active editor found to work with');
+          return;
+        }
+
         // Create a webview panel for the detached component details
         const panel = vscode.window.createWebviewPanel(
           'gitlabComponentDetails',
@@ -216,25 +223,40 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.ViewColumn.Beside,
           {
             enableScripts: true,
-            retainContextWhenHidden: true
+            retainContextWhenHidden: true,
+            localResourceRoots: []
           }
         );
 
         // Generate HTML content for the detached panel with interactive features
         panel.webview.html = await getDetachedComponentHtml(component);
 
+        // Ensure the original editor remains focused after panel creation
+        setTimeout(async () => {
+          await vscode.window.showTextDocument(originalEditor.document, {
+            viewColumn: originalEditor.viewColumn,
+            preserveFocus: false
+          });
+        }, 100);
+
         // Handle messages from the detached webview
         panel.webview.onDidReceiveMessage(async (message) => {
           switch (message.command) {
             case 'insertComponent':
-              // Get the active editor
-              const editor = vscode.window.activeTextEditor;
-              if (!editor) {
-                vscode.window.showErrorMessage('No active editor found');
-                return;
-              }
-
               try {
+                // Ensure the original editor is active and focused
+                await vscode.window.showTextDocument(originalEditor.document, originalEditor.viewColumn);
+
+                // Wait a brief moment for the editor to fully activate
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                // Verify we have the correct active editor
+                const currentEditor = vscode.window.activeTextEditor;
+                if (!currentEditor || currentEditor.document.uri.toString() !== originalEditor.document.uri.toString()) {
+                  vscode.window.showErrorMessage('Could not activate the original editor');
+                  return;
+                }
+
                 const componentBrowser = new ComponentBrowserProvider(context, cacheManager);
 
                 // Check if we have hover context (editing existing component)
@@ -256,7 +278,7 @@ export function activate(context: vscode.ExtensionContext) {
                   );
                 }
 
-                // Optionally close the panel after insertion/edit
+                // Close the panel after successful insertion/edit
                 panel.dispose();
               } catch (error) {
                 logger.error(`[Extension] Error inserting component from detached view: ${error}`, 'Extension');

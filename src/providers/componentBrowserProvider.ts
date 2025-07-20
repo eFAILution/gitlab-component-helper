@@ -296,7 +296,13 @@ export class ComponentBrowserProvider {
     }
 
     // Make sure the editor is visible and has focus
-    await vscode.window.showTextDocument(editor.document, editor.viewColumn);
+    await vscode.window.showTextDocument(editor.document, {
+      viewColumn: editor.viewColumn,
+      preserveFocus: false
+    });
+
+    // Brief wait to ensure editor is fully activated
+    await new Promise(resolve => setTimeout(resolve, 50));
 
     // Use the GitLab instance from the component or default to gitlab.com
     const gitlabInstance = component.gitlabInstance || 'gitlab.com';
@@ -2189,7 +2195,15 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
   ) {
     // Open the document that contains the component
     const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(documentUri));
-    const editor = await vscode.window.showTextDocument(document);
+    const editor = await vscode.window.showTextDocument(document, { preserveFocus: false });
+
+    // Ensure the editor is fully activated and focused
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    // Verify the editor is properly active
+    if (vscode.window.activeTextEditor !== editor) {
+      await vscode.window.showTextDocument(document, editor.viewColumn);
+    }
 
     // Find the component block starting from the hover position
     const componentPosition = new vscode.Position(position.line, position.character);
