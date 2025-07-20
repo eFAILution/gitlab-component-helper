@@ -1,7 +1,10 @@
 include:
   - component: https://gitlab.com/components/opentofu/full-pipeline@2.6.1
-  - component: $CI_SERVER_FQDN/components/opentofu/full-pipeline@2.6.1
-  - component: https://gitlab.com/components/opentofu/full-pipeline
+  # - component: $CI_SERVER_FQDN/components/opentofu/full-pipeline@2.6.1
+  - component: https://gitlab.com/components/opentofu/full-pipeline@main
+    inputs:
+      invalid_input: "test"  # This should show as unknown input
+      another_wrong_input: "value"  # This should also show as unknown
 
 # Test GitLab CI file
 stages:
