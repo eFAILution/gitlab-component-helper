@@ -212,6 +212,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                                 componentUrl: componentUrl,
                                 unknownInput: providedInput,
                                 availableInputs: componentInputs.map((p: any) => p.name),
+                                componentInputs: componentInputs, // Include full input details for descriptions
                                 // Only include the current unknown input, not all provided inputs
                                 currentInputOnly: true
                             };
@@ -449,6 +450,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                                     range: diagnostic.range,
                                     unknownInput: unknownInput,
                                     availableInputs: availableInputs,
+                                    componentInputs: metadata.componentInputs, // Include full input details
                                     componentName: metadata.componentName
                                 }]
                             };
@@ -787,6 +789,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         range: vscode.Range;
         unknownInput?: string;
         availableInputs: string[];
+        componentInputs?: Array<{ name: string; description?: string; type?: string; required?: boolean; default?: any }>; // Add full input details
         componentName: string;
         missingInputs?: Array<{
             name: string;
@@ -810,10 +813,21 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                 const similarity = this.calculateStringSimilarity(args.unknownInput || '', input);
                 const isCloseMatch = similarity > 0.3;
 
+                // Find the full input details if available
+                const inputDetails = args.componentInputs?.find(ci => ci.name === input);
+
+                // Use the input description if available, otherwise fall back to replacement text
+                let detail: string;
+                if (inputDetails?.description) {
+                    detail = `${inputDetails.description}${inputDetails.type ? ` (${inputDetails.type})` : ''}${isCloseMatch ? ' (recommended)' : ''}`;
+                } else {
+                    detail = `Replace '${args.unknownInput}' with '${input}'${isCloseMatch ? ' (recommended)' : ''}`;
+                }
+
                 return {
                     label: input,
                     description: isCloseMatch ? '$(star) Close match' : '',
-                    detail: `Replace '${args.unknownInput}' with '${input}'${isCloseMatch ? ' (recommended)' : ''}`
+                    detail: detail
                 };
             }).sort((a, b) => {
                 // Sort by close matches first, then alphabetically
