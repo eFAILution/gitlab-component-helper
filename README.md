@@ -3,7 +3,7 @@
 > Turbocharge your GitLab CI/CD workflow in VS Code! Instantly browse, insert, and manage reusable components from any GitLab instance—public or private.
 
 ### 🎬 See it in Action: Component Browser
-**INSERT VIDEO: componentBrowser**
+![componentBrowser](https://github.com/user-attachments/assets/6e4ad12e-d3f5-4165-8b72-c59bda51ae38)
 
 ---
 
@@ -19,7 +19,7 @@
 - **Private Access**: 🔑 Add private projects/groups with a token (per GitLab instance)
 
 ### 🎬 Smart Autocomplete in Action
-**INSERT VIDEO: componentAutofill**
+![componentAutofill](https://github.com/user-attachments/assets/a76ba19a-240b-4799-a08f-88a78a5cf004)
 
 ---
 
@@ -32,7 +32,7 @@
 5. **Hover for Docs**: Hover any component URL for instant documentation
 
 ### 🎬 Hover Documentation Demo
-**INSERT VIDEO: hoverContext**
+![hoverContext](https://github.com/user-attachments/assets/3c92f336-db04-4a68-80cf-43732d96b6f1)
 
 ---
 
@@ -58,10 +58,10 @@ include:
 ```
 
 ### 🎬 Adding Component Inputs
-**INSERT VIDEO: insertInputs**
+![insertInputs](https://github.com/user-attachments/assets/098f4eaf-3c4a-45a8-9caf-9a1351730b93)
 
 ### 🎬 Input Validation & Quick Fixes
-**INSERT VIDEO: inputsValidation**
+![inputsValidation](https://github.com/user-attachments/assets/54d4b2ce-ad84-4bbc-8cd7-911a01565536)
 
 ---
 
