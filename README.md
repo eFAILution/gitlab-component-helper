@@ -2,6 +2,9 @@
 
 > Turbocharge your GitLab CI/CD workflow in VS Code! Instantly browse, insert, and manage reusable components from any GitLab instance—public or private.
 
+### 🎬 See it in Action: Component Browser
+**INSERT VIDEO: componentBrowser**
+
 ---
 
 ## ✨ Key Features
@@ -15,6 +18,9 @@
 - **Lightning Fast**: Caching, batch API calls, and performance optimizations for huge catalogs
 - **Private Access**: 🔑 Add private projects/groups with a token (per GitLab instance)
 
+### 🎬 Smart Autocomplete in Action
+**INSERT VIDEO: componentAutofill**
+
 ---
 
 ## 🛠️ Quick Start
@@ -24,6 +30,9 @@
 3. **Add Project/Group**: `Ctrl+Shift+P` → "GitLab CI: Add Component Project/Group" (add public or private sources, with or without a token)
 4. **Insert & Complete**: Type `component:` in `.gitlab-ci.yml` and get instant, real versioned suggestions
 5. **Hover for Docs**: Hover any component URL for instant documentation
+
+### 🎬 Hover Documentation Demo
+**INSERT VIDEO: hoverContext**
 
 ---
 
@@ -47,6 +56,12 @@ include:
       workspace: "default"
       apply: true
 ```
+
+### 🎬 Adding Component Inputs
+**INSERT VIDEO: insertInputs**
+
+### 🎬 Input Validation & Quick Fixes
+**INSERT VIDEO: inputsValidation**
 
 ---
 
