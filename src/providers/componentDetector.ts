@@ -89,38 +89,99 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
     const variables = detectGitLabVariables(componentUrl);
     logger.debug(`[ComponentDetector] Component URL contains GitLab variables: ${variables.join(', ')}`, 'ComponentDetector');
 
-    // Try to expand variables based on available context
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-    const componentSources = config.get<Array<{
-      name: string;
-      path: string;
-      gitlabInstance?: string;
-    }>>('componentSources', []);
-
-    // Use the first configured source as context for variable expansion
+    // Try to get Git repository context first
+    const gitContext = await getGitRepositoryContext();
     let expandedUrl = componentUrl;
-    if (componentSources.length > 0) {
+
+    if (gitContext.gitlabInstance && gitContext.projectPath) {
+      logger.debug(`[ComponentDetector] Using Git repository context: ${gitContext.gitlabInstance}/${gitContext.projectPath}`, 'ComponentDetector');
       const context = {
-        gitlabInstance: componentSources[0].gitlabInstance || 'gitlab.com',
-        projectPath: componentSources[0].path,
-        serverUrl: `https://${componentSources[0].gitlabInstance || 'gitlab.com'}`
+        gitlabInstance: gitContext.gitlabInstance,
+        projectPath: gitContext.projectPath,
+        serverUrl: `https://${gitContext.gitlabInstance}`,
+        commitSha: gitContext.commitSha || 'main'
       };
       expandedUrl = expandComponentUrl(componentUrl, context);
-      logger.debug(`[ComponentDetector] Expanded URL: ${expandedUrl}`, 'ComponentDetector');
+      logger.debug(`[ComponentDetector] Expanded URL using Git context: ${expandedUrl}`, 'ComponentDetector');
     } else {
-      logger.debug(`[ComponentDetector] No component sources configured, cannot expand variables`, 'ComponentDetector');
-      // Return a fallback component with information about the variables
-      return {
-        name: `Component with variables`,
-        description: `Contains GitLab variables: ${variables.join(', ')}. Configure component sources to resolve these variables.`,
-        parameters: [],
-        source: 'GitLab Variables',
-        url: originalUrl,
-        originalUrl: originalUrl,
-        version: 'unknown',
-        gitlabInstance: 'unknown',
-        sourcePath: 'unknown'
-      };
+      logger.debug(`[ComponentDetector] No Git repository context found, checking for non-GitLab repository`, 'ComponentDetector');
+
+      // Check if we're in a non-GitLab repository - if so, don't fall back to component sources
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (workspaceFolders && workspaceFolders.length > 0) {
+        logger.debug(`[ComponentDetector] Found workspace folder: ${workspaceFolders[0].uri.fsPath}`, 'ComponentDetector');
+        const nonGitlabInfo = await detectNonGitLabRepository(workspaceFolders[0]);
+        logger.debug(`[ComponentDetector] Non-GitLab repository detection result: ${nonGitlabInfo ? JSON.stringify(nonGitlabInfo) : 'null'}`, 'ComponentDetector');
+
+        if (nonGitlabInfo) {
+          logger.debug(`[ComponentDetector] Detected non-GitLab repository (${nonGitlabInfo.hostname}), not using component sources for variable expansion`, 'ComponentDetector');
+          // Return component with unresolved variables info
+          const description = `This repository is hosted on ${nonGitlabInfo.hostname} (${nonGitlabInfo.type}). GitLab variables (${variables.join(', ')}) can only be expanded when working in a GitLab repository.`;
+
+          return {
+            name: `Component with unresolved variables`,
+            description: description,
+            parameters: [],
+            source: 'Non-GitLab Repository',
+            url: originalUrl,
+            originalUrl: originalUrl,
+            version: 'unknown',
+            gitlabInstance: 'unknown',
+            sourcePath: 'unknown'
+          };
+        }
+      }
+
+      logger.debug(`[ComponentDetector] No non-GitLab repository detected, falling back to configured component sources`, 'ComponentDetector');
+
+      // Fallback to configured component sources only if we're not in a detected non-GitLab repository
+      const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+      const componentSources = config.get<Array<{
+        name: string;
+        path: string;
+        gitlabInstance?: string;
+      }>>('componentSources', []);
+
+      if (componentSources.length > 0) {
+        const context = {
+          gitlabInstance: componentSources[0].gitlabInstance || 'gitlab.com',
+          projectPath: componentSources[0].path,
+          serverUrl: `https://${componentSources[0].gitlabInstance || 'gitlab.com'}`
+        };
+        expandedUrl = expandComponentUrl(componentUrl, context);
+        logger.debug(`[ComponentDetector] Expanded URL using configured sources: ${expandedUrl}`, 'ComponentDetector');
+      } else {
+        logger.debug(`[ComponentDetector] No Git context or component sources configured, cannot expand variables`, 'ComponentDetector');
+
+        // Check if we're in a non-GitLab repository to provide better messaging
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        let description = `Contains GitLab variables: ${variables.join(', ')}. `;
+
+        if (workspaceFolders && workspaceFolders.length > 0) {
+          const workspacePath = workspaceFolders[0].uri.fsPath;
+          const rawGitContext = await getRawGitRepositoryContext(workspacePath);
+          if (rawGitContext.gitlabInstance && !rawGitContext.gitlabInstance.includes('gitlab')) {
+            description += `This project is hosted on ${rawGitContext.gitlabInstance}, not GitLab. GitLab Component Helper requires a GitLab repository to resolve CI/CD variables.`;
+          } else {
+            description += `No GitLab repository detected. Configure component sources or ensure this is a GitLab repository to resolve these variables.`;
+          }
+        } else {
+          description += `No workspace folder found. Configure component sources to resolve GitLab variables.`;
+        }
+
+        // Return a fallback component with information about the variables
+        return {
+          name: `Component with variables`,
+          description: description,
+          parameters: [],
+          source: 'GitLab Variables',
+          url: originalUrl,
+          originalUrl: originalUrl,
+          version: 'unknown',
+          gitlabInstance: 'unknown',
+          sourcePath: 'unknown'
+        };
+      }
     }
 
     // Use the expanded URL for further processing
@@ -497,4 +558,391 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
     logger.debug(`[ComponentDetector] Error in dynamic fetch: ${error}`, 'ComponentDetector');
     return null;
   }
+}
+
+/**
+ * Get Git repository context for variable expansion
+ */
+async function getGitRepositoryContext(): Promise<{
+  gitlabInstance?: string;
+  projectPath?: string;
+  commitSha?: string;
+}> {
+  try {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+      return {};
+    }
+
+    const workspacePath = workspaceFolders[0].uri.fsPath;
+
+    // Use VS Code's Git extension API if available
+    const gitExtension = vscode.extensions.getExtension('vscode.git');
+    if (gitExtension) {
+      const git = gitExtension.exports.getAPI(1);
+      if (git && git.repositories.length > 0) {
+        const repo = git.repositories.find((r: any) =>
+          workspacePath.startsWith(r.rootUri.fsPath)
+        ) || git.repositories[0];
+
+        if (repo) {
+          // Get remote URLs
+          const remotes = repo.state.remotes;
+          const origin = remotes.find((r: any) => r.name === 'origin') || remotes[0];
+
+          if (origin && origin.fetchUrl) {
+            const gitlabInfo = parseGitLabRemoteUrl(origin.fetchUrl);
+            if (gitlabInfo) {
+              // Try to get current commit SHA
+              let commitSha = 'main';
+              try {
+                if (repo.state.HEAD && repo.state.HEAD.commit) {
+                  commitSha = repo.state.HEAD.commit;
+                } else if (repo.state.HEAD && repo.state.HEAD.name) {
+                  commitSha = repo.state.HEAD.name;
+                }
+              } catch (error) {
+                logger.debug(`[ComponentDetector] Could not get commit SHA: ${error}`, 'ComponentDetector');
+              }
+
+              return {
+                gitlabInstance: gitlabInfo.gitlabInstance,
+                projectPath: gitlabInfo.projectPath,
+                commitSha: commitSha
+              };
+            }
+          }
+        }
+      }
+    }
+
+    return {};
+  } catch (error) {
+    logger.debug(`[ComponentDetector] Error getting Git repository context: ${error}`, 'ComponentDetector');
+    return {};
+  }
+}
+
+/**
+ * Parse GitLab remote URL to extract instance and project path
+ */
+function parseGitLabRemoteUrl(remoteUrl: string): { gitlabInstance: string; projectPath: string } | null {
+  try {
+    // Handle both HTTPS and SSH URLs
+    // HTTPS: https://gitlab.com/owner/repo.git
+    // SSH: git@gitlab.com:owner/repo.git
+
+    let gitlabInstance: string;
+    let projectPath: string;
+
+    if (remoteUrl.startsWith('https://')) {
+      const url = new URL(remoteUrl);
+      gitlabInstance = url.hostname;
+      projectPath = url.pathname.substring(1).replace(/\.git$/, '');
+    } else if (remoteUrl.startsWith('git@')) {
+      // git@gitlab.com:owner/repo.git
+      const match = remoteUrl.match(/git@([^:]+):(.+?)(?:\.git)?$/);
+      if (match) {
+        gitlabInstance = match[1];
+        projectPath = match[2];
+      } else {
+        return null;
+      }
+    } else {
+      return null;
+    }
+
+    // Only return for GitLab instances - this extension is specifically for GitLab
+    if (gitlabInstance.includes('gitlab')) {
+      return { gitlabInstance, projectPath };
+    }
+
+    // For non-GitLab repositories, log but don't use for GitLab variable expansion
+    logger.debug(`[ComponentDetector] Detected non-GitLab repository: ${gitlabInstance}. GitLab Component Helper requires a GitLab repository.`, 'ComponentDetector');
+    return null;
+  } catch (error) {
+    logger.debug(`[ComponentDetector] Error parsing Git remote URL: ${error}`, 'ComponentDetector');
+    return null;
+  }
+}
+
+/**
+ * Get raw Git repository context (including non-GitLab repositories)
+ */
+async function getRawGitRepositoryContext(workspacePath: string): Promise<{
+  gitlabInstance?: string;
+  projectPath?: string;
+  commitSha?: string;
+}> {
+  try {
+    // Use VS Code's Git extension API if available
+    const gitExtension = vscode.extensions.getExtension('vscode.git');
+    if (gitExtension) {
+      const git = gitExtension.exports.getAPI(1);
+      if (git && git.repositories.length > 0) {
+        const repo = git.repositories.find((r: any) =>
+          workspacePath.startsWith(r.rootUri.fsPath)
+        ) || git.repositories[0];
+
+        if (repo) {
+          // Get remote URLs
+          const remotes = repo.state.remotes;
+          const origin = remotes.find((r: any) => r.name === 'origin') || remotes[0];
+
+          if (origin && origin.fetchUrl) {
+            const repoInfo = parseAnyRemoteUrl(origin.fetchUrl);
+            if (repoInfo) {
+              return {
+                gitlabInstance: repoInfo.gitlabInstance,
+                projectPath: repoInfo.projectPath,
+                commitSha: 'main'
+              };
+            }
+          }
+        }
+      }
+    }
+
+    return {};
+  } catch (error) {
+    logger.debug(`[ComponentDetector] Error getting raw Git repository context: ${error}`, 'ComponentDetector');
+    return {};
+  }
+}
+
+/**
+ * Parse any Git remote URL to extract instance and project path (not just GitLab)
+ */
+function parseAnyRemoteUrl(remoteUrl: string): { gitlabInstance: string; projectPath: string } | null {
+  try {
+    // Handle both HTTPS and SSH URLs
+    // HTTPS: https://github.com/owner/repo.git
+    // SSH: git@github.com:owner/repo.git
+
+    let gitlabInstance: string;
+    let projectPath: string;
+
+    if (remoteUrl.startsWith('https://')) {
+      const url = new URL(remoteUrl);
+      gitlabInstance = url.hostname;
+      projectPath = url.pathname.substring(1).replace(/\.git$/, '');
+    } else if (remoteUrl.startsWith('git@')) {
+      // git@github.com:owner/repo.git
+      const match = remoteUrl.match(/git@([^:]+):(.+?)(?:\.git)?$/);
+      if (match) {
+        gitlabInstance = match[1];
+        projectPath = match[2];
+      } else {
+        return null;
+      }
+    } else {
+      return null;
+    }
+
+    // Return any valid-looking Git repository info
+    if (gitlabInstance && projectPath.includes('/')) {
+      return { gitlabInstance, projectPath };
+    }
+
+    return null;
+  } catch (error) {
+    logger.debug(`[ComponentDetector] Error parsing any remote URL: ${error}`, 'ComponentDetector');
+    return null;
+  }
+}
+
+/**
+ * Detect if we're in a non-GitLab repository (GitHub, Bitbucket, etc.)
+ */
+async function detectNonGitLabRepository(workspaceFolder: vscode.WorkspaceFolder): Promise<{ hostname: string; projectPath: string; type: string } | null> {
+    try {
+        logger.debug(`[ComponentDetector] Detecting non-GitLab repository for workspace: ${workspaceFolder.uri.fsPath}`, 'ComponentDetector');
+
+        // First try VS Code's Git extension API
+        const gitExtension = vscode.extensions.getExtension('vscode.git');
+        if (gitExtension) {
+            const git = gitExtension.exports.getAPI(1);
+            if (git && git.repositories.length > 0) {
+                logger.debug(`[ComponentDetector] Found ${git.repositories.length} Git repositories via VS Code Git API`, 'ComponentDetector');
+
+                // Find a repository that contains or is contained by the workspace folder
+                let repo = git.repositories.find((r: any) =>
+                    workspaceFolder.uri.fsPath.startsWith(r.rootUri.fsPath) ||
+                    r.rootUri.fsPath.startsWith(workspaceFolder.uri.fsPath)
+                );
+
+                if (!repo) {
+                    repo = git.repositories[0];
+                    logger.debug(`[ComponentDetector] No matching repository found, using first available: ${repo.rootUri.fsPath}`, 'ComponentDetector');
+                } else {
+                    logger.debug(`[ComponentDetector] Using Git repository: ${repo.rootUri.fsPath}`, 'ComponentDetector');
+                }
+
+                // Get remote URLs from VS Code Git API
+                const remotes = repo.state.remotes;
+                const origin = remotes.find((r: any) => r.name === 'origin') || remotes[0];
+
+                if (origin && origin.fetchUrl) {
+                    logger.debug(`[ComponentDetector] Found origin remote via VS Code Git API: ${origin.fetchUrl}`, 'ComponentDetector');
+                    return await parseAndClassifyRepository(origin.fetchUrl);
+                }
+            }
+        }
+
+        // Fallback to direct Git commands if VS Code Git API doesn't work
+        logger.debug(`[ComponentDetector] VS Code Git API not available or no repositories found, trying direct Git commands`, 'ComponentDetector');
+        return await detectRepositoryViaGitCommands(workspaceFolder.uri.fsPath);
+
+    } catch (error) {
+        logger.debug(`[ComponentDetector] Error detecting non-GitLab repository: ${error}`, 'ComponentDetector');
+        return null;
+    }
+}
+
+/**
+ * Use direct Git commands to detect repository information
+ */
+async function detectRepositoryViaGitCommands(workspacePath: string): Promise<{ hostname: string; projectPath: string; type: string } | null> {
+    try {
+        const { spawn } = require('child_process');
+
+        // First, check if we're in a Git repository
+        const isGitRepo = await new Promise<boolean>((resolve) => {
+            const gitCheck = spawn('git', ['rev-parse', '--is-inside-work-tree'], {
+                cwd: workspacePath,
+                stdio: 'pipe'
+            });
+
+            gitCheck.on('exit', (code: number | null) => {
+                resolve(code === 0);
+            });
+
+            gitCheck.on('error', () => {
+                resolve(false);
+            });
+        });
+
+        if (!isGitRepo) {
+            logger.debug(`[ComponentDetector] Not inside a Git repository`, 'ComponentDetector');
+            return null;
+        }
+
+        logger.debug(`[ComponentDetector] Confirmed we're in a Git repository`, 'ComponentDetector');
+
+        // Get the remote origin URL
+        const remoteUrl = await new Promise<string | null>((resolve) => {
+            const gitRemote = spawn('git', ['remote', 'get-url', 'origin'], {
+                cwd: workspacePath,
+                stdio: 'pipe'
+            });
+
+            let output = '';
+            gitRemote.stdout.on('data', (data: Buffer) => {
+                output += data.toString();
+            });
+
+            gitRemote.on('exit', (code: number | null) => {
+                if (code === 0 && output.trim()) {
+                    resolve(output.trim());
+                } else {
+                    resolve(null);
+                }
+            });
+
+            gitRemote.on('error', () => {
+                resolve(null);
+            });
+        });
+
+        if (!remoteUrl) {
+            logger.debug(`[ComponentDetector] No origin remote found`, 'ComponentDetector');
+            return null;
+        }
+
+        logger.debug(`[ComponentDetector] Found origin remote via Git command: ${remoteUrl}`, 'ComponentDetector');
+        return await parseAndClassifyRepository(remoteUrl);
+
+    } catch (error) {
+        logger.debug(`[ComponentDetector] Error using Git commands: ${error}`, 'ComponentDetector');
+        return null;
+    }
+}
+
+/**
+ * Parse and classify a Git remote URL
+ */
+async function parseAndClassifyRepository(remoteUrl: string): Promise<{ hostname: string; projectPath: string; type: string } | null> {
+    try {
+        const repoInfo = parseNonGitLabRemoteUrl(remoteUrl);
+        if (!repoInfo) {
+            logger.debug(`[ComponentDetector] Failed to parse remote URL: ${remoteUrl}`, 'ComponentDetector');
+            return null;
+        }
+
+        logger.debug(`[ComponentDetector] Parsed repository info: hostname=${repoInfo.hostname}, projectPath=${repoInfo.projectPath}`, 'ComponentDetector');
+
+        // Check if this is NOT a GitLab repository
+        const isGitLab = repoInfo.hostname.toLowerCase().includes('gitlab');
+        logger.debug(`[ComponentDetector] Is GitLab repository: ${isGitLab}`, 'ComponentDetector');
+
+        if (!isGitLab) {
+            let type = 'Git Repository';
+            if (repoInfo.hostname.includes('github')) {
+                type = 'GitHub';
+            } else if (repoInfo.hostname.includes('bitbucket')) {
+                type = 'Bitbucket';
+            }
+
+            logger.debug(`[ComponentDetector] Detected non-GitLab repository: ${repoInfo.hostname} (${type})`, 'ComponentDetector');
+            return {
+                hostname: repoInfo.hostname,
+                projectPath: repoInfo.projectPath,
+                type: type
+            };
+        }
+
+        logger.debug(`[ComponentDetector] This is a GitLab repository, not returning non-GitLab info`, 'ComponentDetector');
+        return null;
+    } catch (error) {
+        logger.debug(`[ComponentDetector] Error parsing and classifying repository: ${error}`, 'ComponentDetector');
+        return null;
+    }
+}
+
+/**
+ * Parse any Git remote URL to extract hostname and project path (for detection purposes)
+ */
+function parseNonGitLabRemoteUrl(remoteUrl: string): { hostname: string; projectPath: string } | null {
+    try {
+        // Handle both HTTPS and SSH URLs
+        let hostname: string;
+        let projectPath: string;
+
+        if (remoteUrl.startsWith('https://')) {
+            const url = new URL(remoteUrl);
+            hostname = url.hostname;
+            projectPath = url.pathname.substring(1).replace(/\.git$/, '');
+        } else if (remoteUrl.startsWith('git@')) {
+            // git@github.com:owner/repo.git
+            const match = remoteUrl.match(/git@([^:]+):(.+?)(?:\.git)?$/);
+            if (match) {
+                hostname = match[1];
+                projectPath = match[2];
+            } else {
+                return null;
+            }
+        } else {
+            return null;
+        }
+
+        // Return any valid-looking Git repository info
+        if (hostname && projectPath.includes('/')) {
+            return { hostname, projectPath };
+        }
+
+        return null;
+    } catch (error) {
+        logger.debug(`[ComponentDetector] Error parsing remote URL for detection: ${error}`, 'ComponentDetector');
+        return null;
+    }
 }

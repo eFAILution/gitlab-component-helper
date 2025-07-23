@@ -33,11 +33,11 @@ export class Logger {
   private updateLogLevel(): void {
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
     const levelString = config.get<string>('logLevel', 'INFO');
-    
+
     // Make log level case-insensitive with explicit mapping
     const normalizedLevel = levelString.toUpperCase();
     let newLevel: LogLevel;
-    
+
     switch (normalizedLevel) {
       case 'DEBUG':
         newLevel = LogLevel.DEBUG;
@@ -55,9 +55,9 @@ export class Logger {
         newLevel = LogLevel.INFO;
         break;
     }
-    
+
     this.currentLevel = newLevel;
-    
+
     outputChannel.show(true); // Always show output when log level changes
     const levelName = LogLevel[this.currentLevel];
     const msg = `[Logger] Log level updated to: ${levelString} (normalized: ${normalizedLevel}, actual: ${levelName}, numeric: ${this.currentLevel})`;
