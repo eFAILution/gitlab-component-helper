@@ -140,37 +140,40 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                         // Check if we're in a non-GitLab repository
                         const workspaceFolders = vscode.workspace.workspaceFolders;
                         const nonGitlabInfo = workspaceFolders ? await this.detectNonGitLabRepository(workspaceFolders[0].uri.fsPath) : null;
-                        let diagnosticMessage = `Component URL contains unresolved GitLab variables: '${componentUrl}'. `;
+                        this.logger.debug(`[ValidationProvider] Non-GitLab repository detection result: ${nonGitlabInfo ? JSON.stringify(nonGitlabInfo) : 'null'}`, 'ValidationProvider');
 
                         if (nonGitlabInfo) {
+                            // We're in a non-GitLab repository, create unresolved variables diagnostic
+                            let diagnosticMessage = `Component URL contains unresolved GitLab variables: '${componentUrl}'. `;
                             diagnosticMessage += `This project is hosted on ${nonGitlabInfo.hostname}, not GitLab. GitLab Component Helper requires a GitLab repository to resolve CI/CD variables like $CI_SERVER_FQDN and $CI_PROJECT_PATH.`;
-                        } else {
-                            diagnosticMessage += `Configure component sources in settings to resolve these variables for development, or ensure this is a GitLab repository.`;
+
+                            const line = this.findLineForComponent(document, include);
+                            const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
+
+                            const diagnostic = new vscode.Diagnostic(
+                                range,
+                                diagnosticMessage,
+                                vscode.DiagnosticSeverity.Information
+                            );
+
+                            diagnostic.code = 'unresolved-variables';
+                            diagnostic.source = 'gitlab-component-helper';
+                            (diagnostic as any).metadata = {
+                                componentUrl: componentUrl,
+                                expandedUrl: expandedUrl,
+                                includeInputs: include.inputs || {},
+                                isNonGitlabRepo: true
+                            };
+
+                            this.logger.debug(`[ValidationProvider] Created unresolved variables diagnostic for non-GitLab repo: ${componentUrl}`, 'ValidationProvider');
+                            diagnostics.push(diagnostic);
+
+                            // Skip input validation for URLs with unresolved variables in non-GitLab repos
+                            continue;
                         }
 
-                        const line = this.findLineForComponent(document, include);
-                        const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
-
-                        const diagnostic = new vscode.Diagnostic(
-                            range,
-                            diagnosticMessage,
-                            vscode.DiagnosticSeverity.Information
-                        );
-
-                        diagnostic.code = 'unresolved-variables';
-                        diagnostic.source = 'gitlab-component-helper';
-                        (diagnostic as any).metadata = {
-                            componentUrl: componentUrl,
-                            expandedUrl: expandedUrl,
-                            includeInputs: include.inputs || {},
-                            isNonGitlabRepo: nonGitlabInfo !== null
-                        };
-
-                        this.logger.debug(`[ValidationProvider] Created unresolved variables diagnostic for ${componentUrl}`, 'ValidationProvider');
-                        diagnostics.push(diagnostic);
-
-                        // Skip input validation for URLs with unresolved variables
-                        continue;
+                        // If no non-GitLab repo detected, check for configured component sources
+                        this.logger.debug(`[ValidationProvider] No non-GitLab repository detected, checking for configured component sources`, 'ValidationProvider');
                     }
 
                     // If expansion didn't help (still contains variables), treat as unresolved
@@ -279,6 +282,15 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                 }
 
                 if (component && component.parameters) {
+                    // Skip input validation for components that represent unresolved variables
+                    if (component.source === 'Non-GitLab Repository' ||
+                        component.source === 'GitLab Variables' ||
+                        component.name?.includes('unresolved variables') ||
+                        component.name?.includes('Component with variables')) {
+                        this.logger.debug(`[ValidationProvider] Skipping input validation for component with unresolved variables: ${component.name}`, 'ValidationProvider');
+                        continue;
+                    }
+
                     this.logger.debug(`[ValidationProvider] Component has ${component.parameters.length} parameters`, 'ValidationProvider');
                     const providedInputs = include.inputs || {};
                     const componentInputs = component.parameters;
