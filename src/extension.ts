@@ -131,6 +131,70 @@ export function activate(context: vscode.ExtensionContext) {
       })
     );
 
+    // Register command to update cache (forces refresh of all data)
+    logger.debug('[Extension] Registering updateCache command...', 'Extension');
+    context.subscriptions.push(
+      vscode.commands.registerCommand('gitlab-component-helper.updateCache', async () => {
+        logger.info(`[Extension] Update cache requested`, 'Extension');
+
+        // Show progress indicator
+        await vscode.window.withProgress({
+          location: vscode.ProgressLocation.Notification,
+          title: "Updating GitLab Component Cache",
+          cancellable: false
+        }, async (progress) => {
+          progress.report({ increment: 0, message: "Clearing cache and fetching fresh data..." });
+
+          try {
+            await cacheManager.updateCache();
+            progress.report({ increment: 100, message: "Cache updated successfully!" });
+            vscode.window.showInformationMessage('✅ GitLab component cache updated successfully!');
+          } catch (error) {
+            logger.error(`[Extension] Cache update failed: ${error}`, 'Extension');
+            vscode.window.showErrorMessage(`❌ Failed to update cache: ${error}`);
+          }
+        });
+      })
+    );
+
+    // Register command to reset cache (completely clears all cached data)
+    logger.debug('[Extension] Registering resetCache command...', 'Extension');
+    context.subscriptions.push(
+      vscode.commands.registerCommand('gitlab-component-helper.resetCache', async () => {
+        logger.info(`[Extension] Reset cache requested`, 'Extension');
+
+        // Ask for confirmation before resetting
+        const confirmation = await vscode.window.showWarningMessage(
+          'Are you sure you want to reset the cache? This will clear all cached components and force them to be re-downloaded.',
+          { modal: true },
+          'Reset Cache',
+          'Cancel'
+        );
+
+        if (confirmation === 'Reset Cache') {
+          // Show progress indicator
+          await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: "Resetting GitLab Component Cache",
+            cancellable: false
+          }, async (progress) => {
+            progress.report({ increment: 0, message: "Clearing all cached data..." });
+
+            try {
+              await cacheManager.resetCache();
+              progress.report({ increment: 100, message: "Cache reset successfully!" });
+              vscode.window.showInformationMessage('🗑️ GitLab component cache reset successfully! Cache will be rebuilt on next use.');
+            } catch (error) {
+              logger.error(`[Extension] Cache reset failed: ${error}`, 'Extension');
+              vscode.window.showErrorMessage(`❌ Failed to reset cache: ${error}`);
+            }
+          });
+        } else {
+          logger.debug('[Extension] Cache reset cancelled by user', 'Extension');
+        }
+      })
+    );
+
     // Register command to show cache status
     logger.debug('[Extension] Registering showCacheStatus command...', 'Extension');
     context.subscriptions.push(

@@ -2,7 +2,7 @@
   "name": "gitlab-component-helper",
   "displayName": "GitLab Component Helper",
   "description": "Provides intellisense for GitLab CI components",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "icon": "images/icon.png",
   "engines": {
     "node": ">=22.0.0",
@@ -167,6 +167,14 @@
       {
         "command": "gitlab-component-helper.refreshComponents",
         "title": "GitLab CI: Refresh Components Cache"
+      },
+      {
+        "command": "gitlab-component-helper.updateCache",
+        "title": "GitLab CI: Update Cache"
+      },
+      {
+        "command": "gitlab-component-helper.resetCache",
+        "title": "GitLab CI: Reset Cache"
       },
       {
         "command": "gitlab-component-helper.showCacheStatus",

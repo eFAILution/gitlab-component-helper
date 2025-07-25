@@ -65,6 +65,12 @@ export class ComponentBrowserProvider {
           case 'refreshComponents':
             await this.loadComponents(true);
             return;
+          case 'updateCache':
+            await this.updateCache();
+            return;
+          case 'resetCache':
+            await this.resetCache();
+            return;
           case 'viewComponentDetails':
             await this.showComponentDetails(message.component);
             return;
@@ -684,13 +690,38 @@ export class ComponentBrowserProvider {
             color: var(--vscode-input-foreground);
             border-radius: 2px;
           }
-          .refresh-btn {
+          .cache-controls {
+            display: flex;
+            gap: 8px;
+          }
+          .refresh-btn, .update-cache-btn, .reset-cache-btn {
             background-color: var(--vscode-button-background);
             color: var(--vscode-button-foreground);
             border: none;
-            padding: 8px 16px;
+            padding: 8px 12px;
             border-radius: 2px;
             cursor: pointer;
+            font-size: 12px;
+            transition: background-color 0.2s;
+          }
+          .refresh-btn:hover, .update-cache-btn:hover, .reset-cache-btn:hover {
+            background-color: var(--vscode-button-hoverBackground);
+          }
+          .update-cache-btn {
+            background-color: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+          }
+          .update-cache-btn:hover {
+            background-color: var(--vscode-button-secondaryHoverBackground);
+          }
+          .reset-cache-btn {
+            background-color: var(--vscode-editorError-background);
+            color: var(--vscode-errorForeground);
+            border: 1px solid var(--vscode-editorError-border);
+          }
+          .reset-cache-btn:hover {
+            background-color: var(--vscode-editorError-foreground);
+            color: var(--vscode-editorError-background);
           }
           .error-section {
             background-color: var(--vscode-editorError-background);
@@ -908,7 +939,11 @@ export class ComponentBrowserProvider {
           <div class="search-container">
             <input type="text" id="search" placeholder="Search components..." oninput="filterComponents()">
           </div>
-          <button class="refresh-btn" onclick="refreshComponents()">Refresh</button>
+          <div class="cache-controls">
+            <button class="refresh-btn" onclick="refreshComponents()" title="Refresh components (reload current data)">🔄 Refresh</button>
+            <button class="update-cache-btn" onclick="updateCache()" title="Update cache (force fetch fresh data from all sources)">📥 Update Cache</button>
+            <button class="reset-cache-btn" onclick="resetCache()" title="Reset cache (clear all cached data)">🗑️ Reset Cache</button>
+          </div>
         </div>
 
         ${errorSectionHtml}
@@ -1028,6 +1063,14 @@ export class ComponentBrowserProvider {
 
           function refreshComponents() {
             vscode.postMessage({ command: 'refreshComponents' });
+          }
+
+          function updateCache() {
+            vscode.postMessage({ command: 'updateCache' });
+          }
+
+          function resetCache() {
+            vscode.postMessage({ command: 'resetCache' });
           }
 
           function insertComponent(component) {
@@ -1835,6 +1878,93 @@ export class ComponentBrowserProvider {
 ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map(([source, error]) => `- ${source}: ${error}`).join('\n') : ''}`;
 
     vscode.window.showInformationMessage(status, { modal: true });
+  }
+
+  private async updateCache() {
+    this.logger.info('[ComponentBrowser] Update cache requested from browser', 'ComponentBrowser');
+
+    try {
+      // Show loading state in the webview
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: 'showLoading',
+          message: 'Updating cache and fetching fresh data...'
+        });
+      }
+
+      // Update the cache
+      await this.cacheManager.updateCache();
+
+      // Reload components in the browser
+      await this.loadComponents(true);
+
+      // Show success message
+      vscode.window.showInformationMessage('✅ GitLab component cache updated successfully!');
+
+    } catch (error) {
+      this.logger.error(`[ComponentBrowser] Cache update failed: ${error}`, 'ComponentBrowser');
+      vscode.window.showErrorMessage(`❌ Failed to update cache: ${error}`);
+
+      // Show error state in the webview
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: 'showError',
+          message: `Failed to update cache: ${error}`
+        });
+      }
+    }
+  }
+
+  private async resetCache() {
+    this.logger.info('[ComponentBrowser] Reset cache requested from browser', 'ComponentBrowser');
+
+    // Ask for confirmation before resetting
+    const confirmation = await vscode.window.showWarningMessage(
+      'Are you sure you want to reset the cache? This will clear all cached components and force them to be re-downloaded.',
+      { modal: true },
+      'Reset Cache',
+      'Cancel'
+    );
+
+    if (confirmation === 'Reset Cache') {
+      try {
+        // Show loading state in the webview
+        if (this.panel) {
+          this.panel.webview.postMessage({
+            command: 'showLoading',
+            message: 'Resetting cache and clearing all data...'
+          });
+        }
+
+        // Reset the cache
+        await this.cacheManager.resetCache();
+
+        // Clear the browser and show empty state
+        if (this.panel) {
+          this.panel.webview.html = this.getLoadingHtml();
+        }
+
+        // Reload components in the browser (this will fetch fresh data)
+        await this.loadComponents(true);
+
+        // Show success message
+        vscode.window.showInformationMessage('🗑️ GitLab component cache reset successfully! Fresh data loaded.');
+
+      } catch (error) {
+        this.logger.error(`[ComponentBrowser] Cache reset failed: ${error}`, 'ComponentBrowser');
+        vscode.window.showErrorMessage(`❌ Failed to reset cache: ${error}`);
+
+        // Show error state in the webview
+        if (this.panel) {
+          this.panel.webview.postMessage({
+            command: 'showError',
+            message: `Failed to reset cache: ${error}`
+          });
+        }
+      }
+    } else {
+      this.logger.debug('[ComponentBrowser] Cache reset cancelled by user', 'ComponentBrowser');
+    }
   }
 
   private transformCachedComponentsToGroups(cachedComponents: any[]): any[] {

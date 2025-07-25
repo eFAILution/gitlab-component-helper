@@ -736,23 +736,35 @@ export class ComponentService implements ComponentSource {
       let extractedDescription = '';
       let extractedVariables: ComponentVariable[] = [];
 
+      // Split content by the GitLab component spec separator '---'
+      // Everything before '---' is the spec section, everything after is the CI/CD job definitions
+      const parts = content.split(/^---\s*$/m);
+      const specSection = parts[0] || '';
+
+      this.logger.debug(`[ComponentService] Template ${fileName}: Found ${parts.length} sections (spec + jobs)`);
+      this.logger.debug(`[ComponentService] Template ${fileName}: Spec section length: ${specSection.length} chars`);
+
       // Extract description from component spec
-      const specDescMatch = content.match(/spec:\s*\n(?:\s*inputs:[\s\S]*?)?\n\s*description:\s*["']?(.*?)["']?\s*$/m);
+      const specDescMatch = specSection.match(/spec:\s*\n(?:\s*inputs:[\s\S]*?)?\n\s*description:\s*["']?(.*?)["']?\s*$/m);
       if (specDescMatch) {
         extractedDescription = specDescMatch[1].trim();
+        this.logger.debug(`[ComponentService] Template ${fileName}: Found spec description: ${extractedDescription}`);
       }
 
       // If no spec description, try comment at top of file
       if (!extractedDescription) {
-        const commentMatch = content.match(/^#\s*(.+?)$/m);
+        const commentMatch = specSection.match(/^#\s*(.+?)$/m);
         if (commentMatch && !commentMatch[1].toLowerCase().includes('gitlab') && !commentMatch[1].toLowerCase().includes('ci')) {
           extractedDescription = commentMatch[1].trim();
+          this.logger.debug(`[ComponentService] Template ${fileName}: Found comment description: ${extractedDescription}`);
         }
       }
 
-      // Extract variables from GitLab CI/CD component spec format
-      const specMatches = content.match(/spec:\s*\n\s*inputs:([\s\S]*?)(?=\n\w+:|$)/);
+      // Extract variables from GitLab CI/CD component spec format - ONLY from spec section
+      const specMatches = specSection.match(/spec:\s*\n\s*inputs:([\s\S]*?)(?=\n---|\ndescription:|\nvariables:|\n[a-zA-Z][a-zA-Z0-9_-]*:|$)/);
       if (specMatches) {
+        this.logger.debug(`[ComponentService] Template ${fileName}: Found spec inputs section`);
+
         // Parse component spec format
         const inputsSection = specMatches[1];
         const inputLines = inputsSection.split('\n')
@@ -764,7 +776,13 @@ export class ComponentService implements ComponentSource {
           const trimmedLine = line.trim();
           if (!trimmedLine) continue;
 
-          // New input parameter
+          // Stop if we hit a top-level key (indicating we've left the inputs section)
+          if (line.match(/^[a-zA-Z][a-zA-Z0-9_-]*:/)) {
+            this.logger.debug(`[ComponentService] Template ${fileName}: Stopping at top-level key: ${trimmedLine}`);
+            break;
+          }
+
+          // New input parameter (indented under inputs)
           if (line.match(/^\s{4}[a-zA-Z_][a-zA-Z0-9_]*:/) || line.match(/^\s{2}[a-zA-Z_][a-zA-Z0-9_]*:/)) {
             if (currentInput) {
               extractedVariables.push(currentInput);
@@ -777,8 +795,9 @@ export class ComponentService implements ComponentSource {
               type: 'string',
               default: undefined
             };
+            this.logger.debug(`[ComponentService] Template ${fileName}: Found input parameter: ${inputName}`);
           }
-          // Property of current input
+          // Property of current input (more deeply indented)
           else if (currentInput && line.match(/^\s{6,}/)) {
             if (trimmedLine.startsWith('description:')) {
               currentInput.description = trimmedLine.substring(12).replace(/['"]/g, '').trim();
@@ -794,15 +813,28 @@ export class ComponentService implements ComponentSource {
         if (currentInput) {
           extractedVariables.push(currentInput);
         }
+
+        this.logger.debug(`[ComponentService] Template ${fileName}: Extracted ${extractedVariables.length} input parameters from spec`);
       } else {
-        // Fallback to old format for backward compatibility
-        const variableMatches = content.match(/variables:[\s\S]*?(?=\n\w+:|$)/);
+        this.logger.debug(`[ComponentService] Template ${fileName}: No spec inputs found, trying fallback parsing`);
+
+        // Fallback to old format for backward compatibility - also only in spec section
+        // Look for variables section that's ONLY within the spec section
+        const variableMatches = specSection.match(/spec:\s*[\s\S]*?variables:([\s\S]*?)(?=\n[a-zA-Z][a-zA-Z0-9_-]*:|$)/);
         if (variableMatches) {
-          const variableSection = variableMatches[0];
-          const varLines = variableSection.split('\n').slice(1);
+          const variableSection = variableMatches[1];
+          const varLines = variableSection.split('\n').slice(0); // Don't skip first line since we captured just the content
 
           extractedVariables = varLines
-            .filter(line => line.trim() && line.includes(':') && !line.trim().startsWith('#'))
+            .filter(line => {
+              const trimmed = line.trim();
+              // Only include properly indented variable definitions
+              return trimmed &&
+                     line.match(/^\s{2,}/) && // Must be indented
+                     trimmed.includes(':') &&
+                     !trimmed.startsWith('#') &&
+                     !line.match(/^[a-zA-Z][a-zA-Z0-9_-]*:/); // Not a top-level key
+            })
             .map(line => {
               const parts = line.trim().split(':');
               const varName = parts[0].trim();
@@ -816,6 +848,10 @@ export class ComponentService implements ComponentSource {
                 default: defaultValue || undefined
               };
             });
+
+          this.logger.debug(`[ComponentService] Template ${fileName}: Extracted ${extractedVariables.length} variables from fallback parsing`);
+        } else {
+          this.logger.debug(`[ComponentService] Template ${fileName}: No variables found in fallback parsing`);
         }
       }
 
@@ -1002,6 +1038,53 @@ export class ComponentService implements ComponentSource {
       console.error(`Error parsing component URL: ${e}`);
       return null;
     }
+  }
+
+  /**
+   * Update cache - Forces refresh of all cached data by bypassing cache checks
+   */
+  public updateCache(): void {
+    this.logger.info('[ComponentService] Updating cache - forcing refresh of all data');
+    // Clear catalog cache to force fresh fetch on next request
+    this.catalogCache.clear();
+    // Clear component cache to force fresh fetch
+    this.componentCache.clear();
+    // Clear the sourceCache as well
+    sourceCache.clear();
+    this.logger.info('[ComponentService] Cache update completed - all cached data will be refreshed on next request');
+  }
+
+  /**
+   * Reset cache - Completely clears all cached data
+   */
+  public resetCache(): void {
+    this.logger.info('[ComponentService] Resetting cache - clearing all cached data');
+    // Clear all caches
+    this.catalogCache.clear();
+    this.componentCache.clear();
+    sourceCache.clear();
+    this.logger.info('[ComponentService] Cache reset completed - all cached data cleared');
+  }
+
+  /**
+   * Get cache statistics
+   */
+  public getCacheStats(): {
+    catalogCacheSize: number;
+    componentCacheSize: number;
+    sourceCacheSize: number;
+    catalogKeys: string[];
+    componentKeys: string[];
+    sourceKeys: string[];
+  } {
+    return {
+      catalogCacheSize: this.catalogCache.size,
+      componentCacheSize: this.componentCache.size,
+      sourceCacheSize: sourceCache.size,
+      catalogKeys: Array.from(this.catalogCache.keys()),
+      componentKeys: Array.from(this.componentCache.keys()),
+      sourceKeys: Array.from(sourceCache.keys())
+    };
   }
 }
 
