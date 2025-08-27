@@ -386,19 +386,42 @@ export class ComponentService implements ComponentSource {
         readmeContent = readmeResult.value;
       }
 
+      // Construct a cleaner description
+      let cleanDescription = project.description || `${componentName} component`;
+
+      // If we have template content and extracted a better description from it, use that instead
+      if (templateContent && templateResult.status === 'fulfilled' && templateResult.value) {
+        const templateData = templateResult.value;
+
+        // Check if we extracted a description from the template spec
+        const specDescMatch = templateContent.match(/spec:\s*\n(?:\s*inputs:[\s\S]*?)?\n\s*description:\s*["']?(.*?)["']?\s*$/m);
+        if (specDescMatch && specDescMatch[1].trim()) {
+          cleanDescription = specDescMatch[1].trim();
+        } else {
+          // Try to extract a better description from README first few lines
+          if (readmeContent) {
+            const readmeLines = readmeContent.split('\n').filter(line => line.trim());
+            for (const line of readmeLines.slice(0, 5)) { // Check first 5 non-empty lines
+              const trimmed = line.trim();
+              // Skip headers, links, and very short lines
+              if (trimmed && !trimmed.startsWith('#') && !trimmed.startsWith('[') &&
+                  !trimmed.startsWith('**') && trimmed.length > 20 && trimmed.length < 200) {
+                cleanDescription = trimmed;
+                break;
+              }
+            }
+          }
+        }
+      }
+
       // Construct the component
       const component: Component = {
         name: componentName,
-        description:
-          `# ${componentName}\n\n` +
-          `${project.description || 'GitLab Component'}\n\n` +
-          `**Project:** [${projectPath}](${project.web_url})\n` +
-          `**Version:** ${version}\n\n` +
-          (readmeContent ? `## Documentation\n${readmeContent.substring(0, 800)}...\n\n` : '') +
-          (templateContent ? `## Template Preview\n\`\`\`yaml\n${templateContent.substring(0, 300)}...\n\`\`\`` : ''),
+        description: cleanDescription,
         parameters,
         version,
-        source: `${gitlabInstance}/${projectPath}`
+        source: `${gitlabInstance}/${projectPath}`,
+        readme: readmeContent // Store full README separately for detailed view
       };
 
       this.logger.logPerformance('fetchComponentMetadata (full)', Date.now() - startTime, {
@@ -432,31 +455,118 @@ export class ComponentService implements ComponentSource {
 
       const templateContent = await this.httpClient.fetchText(templateUrl, fetchOptions);
 
-      // Extract variables/parameters from the template
-      let parameters: any[] = [];
-      const variableMatches = templateContent.match(/variables:[\s\S]*?(?=\n\w+:|$)/g);
-      if (variableMatches && variableMatches.length > 0) {
-        const variableSection = variableMatches[0];
-        const varLines = variableSection.split('\n').slice(1);
+      // Use the same sophisticated parameter extraction logic as fetchTemplateContent
+      let extractedDescription = '';
+      let extractedVariables: ComponentVariable[] = [];
 
-        parameters = varLines
-          .filter(line => line.trim() && line.includes(':'))
-          .map(line => {
-            const parts = line.trim().split(':');
-            const name = parts[0].trim();
-            const defaultValue = parts.slice(1).join(':').trim();
+      // Split content by the GitLab component spec separator '---'
+      const parts = templateContent.split(/^---\s*$/m);
+      const specSection = parts[0] || '';
 
-            return {
-              name,
-              description: `Parameter: ${name}`,
-              required: false,
-              type: 'string',
-              default: defaultValue
-            };
-          });
+      this.logger.debug(`[ComponentService] Template ${componentName}: Found ${parts.length} sections (spec + jobs)`);
+      this.logger.debug(`[ComponentService] Template ${componentName}: Spec section length: ${specSection.length} chars`);
+
+      // Extract description from component spec
+      const specDescMatch = specSection.match(/spec:\s*\n(?:\s*inputs:[\s\S]*?)?\n\s*description:\s*["']?(.*?)["']?\s*$/m);
+      if (specDescMatch) {
+        extractedDescription = specDescMatch[1].trim();
+        this.logger.debug(`[ComponentService] Template ${componentName}: Found spec description: ${extractedDescription}`);
       }
 
-      return { content: templateContent, parameters };
+      // Extract variables from GitLab CI/CD component spec format - ONLY from spec section
+      const specMatches = specSection.match(SPEC_INPUTS_SECTION_REGEX);
+      if (specMatches) {
+        this.logger.debug(`[ComponentService] Template ${componentName}: Found spec inputs section`);
+
+        // Parse component spec format
+        const inputsSection = specMatches[1];
+        const inputLines = inputsSection.split('\n')
+          .filter(line => line.trim() && !line.trim().startsWith('#'));
+
+        let currentInput: any = null;
+
+        for (const line of inputLines) {
+          const trimmedLine = line.trim();
+          if (!trimmedLine) continue;
+
+          // Stop if we hit a top-level key (indicating we've left the inputs section)
+          if (line.match(/^[a-zA-Z][a-zA-Z0-9_-]*:/)) {
+            this.logger.debug(`[ComponentService] Template ${componentName}: Stopping at top-level key: ${trimmedLine}`);
+            break;
+          }
+
+          // New input parameter (indented under inputs)
+          if (line.match(/^\s{4}[a-zA-Z_][a-zA-Z0-9_]*:/) || line.match(/^\s{2}[a-zA-Z_][a-zA-Z0-9_]*:/)) {
+            if (currentInput) {
+              extractedVariables.push(currentInput);
+            }
+            const inputName = trimmedLine.split(':')[0];
+            currentInput = {
+              name: inputName,
+              description: `Parameter: ${inputName}`,
+              required: false,
+              type: 'string',
+              default: undefined
+            };
+            this.logger.debug(`[ComponentService] Template ${componentName}: Found input parameter: ${inputName}`);
+          }
+          // Property of current input (more deeply indented)
+          else if (currentInput && line.match(/^\s{6,}/)) {
+            if (trimmedLine.startsWith('description:')) {
+              currentInput.description = trimmedLine.substring(12).replace(/['"]/g, '').trim();
+            } else if (trimmedLine.startsWith('default:')) {
+              currentInput.default = trimmedLine.substring(8).replace(/['"]/g, '').trim();
+            } else if (trimmedLine.startsWith('type:')) {
+              currentInput.type = trimmedLine.substring(5).replace(/['"]/g, '').trim();
+            }
+          }
+        }
+
+        // Add the last input
+        if (currentInput) {
+          extractedVariables.push(currentInput);
+        }
+
+        this.logger.debug(`[ComponentService] Template ${componentName}: Extracted ${extractedVariables.length} input parameters from spec`);
+      } else {
+        this.logger.debug(`[ComponentService] Template ${componentName}: No spec inputs found, trying fallback parsing`);
+
+        // Fallback to old format for backward compatibility - also only in spec section
+        const variableMatches = specSection.match(/spec:\s*[\s\S]*?variables:([\s\S]*?)(?=\n[a-zA-Z][a-zA-Z0-9_-]*:|$)/);
+        if (variableMatches) {
+          const variableSection = variableMatches[1];
+          const varLines = variableSection.split('\n').slice(0);
+
+          extractedVariables = varLines
+            .filter(line => {
+              const trimmed = line.trim();
+              return trimmed &&
+                     line.match(/^\s{2,}/) &&
+                     trimmed.includes(':') &&
+                     !trimmed.startsWith('#') &&
+                     !line.match(/^[a-zA-Z][a-zA-Z0-9_-]*:/);
+            })
+            .map(line => {
+              const parts = line.trim().split(':');
+              const varName = parts[0].trim();
+              const defaultValue = parts.slice(1).join(':').trim();
+
+              return {
+                name: varName,
+                description: `Parameter: ${varName}`,
+                required: false,
+                type: 'string',
+                default: defaultValue || undefined
+              };
+            });
+
+          this.logger.debug(`[ComponentService] Template ${componentName}: Extracted ${extractedVariables.length} variables from fallback parsing`);
+        } else {
+          this.logger.debug(`[ComponentService] Template ${componentName}: No variables found in fallback parsing`);
+        }
+      }
+
+      return { content: templateContent, parameters: extractedVariables };
     } catch (error) {
       this.logger.debug(`Could not fetch component template: ${error}`);
       return null;
