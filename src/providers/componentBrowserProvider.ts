@@ -6,6 +6,9 @@ import { Component, ComponentParameter } from './componentDetector';
 import { containsGitLabVariables, expandGitLabVariables } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 
+// Constants for timing delays
+const EDITOR_ACTIVATION_DELAY_MS = 50;
+
 export class ComponentBrowserProvider {
   private panel: vscode.WebviewPanel | undefined;
   private originalEditor: vscode.TextEditor | undefined;
@@ -64,6 +67,12 @@ export class ComponentBrowserProvider {
             return;
           case 'refreshComponents':
             await this.loadComponents(true);
+            return;
+          case 'updateCache':
+            await this.updateCache();
+            return;
+          case 'resetCache':
+            await this.resetCache();
             return;
           case 'viewComponentDetails':
             await this.showComponentDetails(message.component);
@@ -287,7 +296,7 @@ export class ComponentBrowserProvider {
     }
   }
 
-  private async insertComponent(component: any, includeInputs: boolean = false) {
+  private async insertComponent(component: any, includeInputs: boolean = false, selectedInputs?: string[]) {
     // Get the active text editor
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -296,7 +305,13 @@ export class ComponentBrowserProvider {
     }
 
     // Make sure the editor is visible and has focus
-    await vscode.window.showTextDocument(editor.document, editor.viewColumn);
+    await vscode.window.showTextDocument(editor.document, {
+      viewColumn: editor.viewColumn,
+      preserveFocus: false
+    });
+
+    // Brief wait to ensure editor is fully activated
+    await new Promise(resolve => setTimeout(resolve, EDITOR_ACTIVATION_DELAY_MS));
 
     // Use the GitLab instance from the component or default to gitlab.com
     const gitlabInstance = component.gitlabInstance || 'gitlab.com';
@@ -325,7 +340,14 @@ export class ComponentBrowserProvider {
     if (includeInputs && component.parameters && component.parameters.length > 0) {
       insertion += '\n    inputs:';
 
-      for (const param of component.parameters) {
+      // Determine which parameters to include
+      let parametersToInclude = component.parameters;
+      if (selectedInputs && selectedInputs.length > 0) {
+        // Only include specifically selected inputs
+        parametersToInclude = component.parameters.filter((param: any) => selectedInputs.includes(param.name));
+      }
+
+      for (const param of parametersToInclude) {
         let defaultValue = param.default;
 
         // Format default value based on type
@@ -381,11 +403,22 @@ export class ComponentBrowserProvider {
       editBuilder.insert(editor.selection.active, insertion);
     });
 
-    const message = includeInputs && component.parameters?.length > 0
-      ? `Inserted component: ${component.name} with ${component.parameters.length} input parameters`
-      : `Inserted component: ${component.name}`;
+    // Create appropriate success message
+    let message = `Inserted component: ${component.name}`;
+    if (includeInputs && component.parameters && component.parameters.length > 0) {
+      if (selectedInputs && selectedInputs.length > 0) {
+        message += ` with ${selectedInputs.length} selected input parameter${selectedInputs.length === 1 ? '' : 's'}`;
+      } else {
+        message += ` with ${component.parameters.length} input parameter${component.parameters.length === 1 ? '' : 's'}`;
+      }
+    }
 
     vscode.window.showInformationMessage(message);
+  }
+
+  // Public method to insert component from detached view (called from extension.ts)
+  public async insertComponentFromDetached(component: any, includeInputs: boolean = false, selectedInputs?: string[]) {
+    return this.insertComponent(component, includeInputs, selectedInputs);
   }
 
   private async showComponentDetails(component: any) {
@@ -407,7 +440,7 @@ export class ComponentBrowserProvider {
       async message => {
         if (message.command === 'insertComponent') {
           // Handle different insertion options
-          const { version, includeInputs } = message;
+          const { version, includeInputs, selectedInputs } = message;
 
           // Update component version if specified
           if (version && version !== component.version) {
@@ -418,12 +451,12 @@ export class ComponentBrowserProvider {
               version
             );
             if (updatedComponent) {
-              await this.insertComponent(updatedComponent, includeInputs);
+              await this.insertComponent(updatedComponent, includeInputs, selectedInputs);
             } else {
               vscode.window.showErrorMessage(`Failed to fetch version ${version} of component ${component.name}`);
             }
           } else {
-            await this.insertComponent(component, includeInputs);
+            await this.insertComponent(component, includeInputs, selectedInputs);
           }
         } else if (message.command === 'fetchVersions') {
           // Fetch available versions for the component
@@ -660,13 +693,38 @@ export class ComponentBrowserProvider {
             color: var(--vscode-input-foreground);
             border-radius: 2px;
           }
-          .refresh-btn {
+          .cache-controls {
+            display: flex;
+            gap: 8px;
+          }
+          .refresh-btn, .update-cache-btn, .reset-cache-btn {
             background-color: var(--vscode-button-background);
             color: var(--vscode-button-foreground);
             border: none;
-            padding: 8px 16px;
+            padding: 8px 12px;
             border-radius: 2px;
             cursor: pointer;
+            font-size: 12px;
+            transition: background-color 0.2s;
+          }
+          .refresh-btn:hover, .update-cache-btn:hover, .reset-cache-btn:hover {
+            background-color: var(--vscode-button-hoverBackground);
+          }
+          .update-cache-btn {
+            background-color: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+          }
+          .update-cache-btn:hover {
+            background-color: var(--vscode-button-secondaryHoverBackground);
+          }
+          .reset-cache-btn {
+            background-color: var(--vscode-editorError-background);
+            color: var(--vscode-errorForeground);
+            border: 1px solid var(--vscode-editorError-border);
+          }
+          .reset-cache-btn:hover {
+            background-color: var(--vscode-editorError-foreground);
+            color: var(--vscode-editorError-background);
           }
           .error-section {
             background-color: var(--vscode-editorError-background);
@@ -884,7 +942,11 @@ export class ComponentBrowserProvider {
           <div class="search-container">
             <input type="text" id="search" placeholder="Search components..." oninput="filterComponents()">
           </div>
-          <button class="refresh-btn" onclick="refreshComponents()">Refresh</button>
+          <div class="cache-controls">
+            <button class="refresh-btn" onclick="refreshComponents()" title="Refresh components (reload current data)">🔄 Refresh</button>
+            <button class="update-cache-btn" onclick="updateCache()" title="Update cache (force fetch fresh data from all sources)">📥 Update Cache</button>
+            <button class="reset-cache-btn" onclick="resetCache()" title="Reset cache (clear all cached data)">🗑️ Reset Cache</button>
+          </div>
         </div>
 
         ${errorSectionHtml}
@@ -1004,6 +1066,14 @@ export class ComponentBrowserProvider {
 
           function refreshComponents() {
             vscode.postMessage({ command: 'refreshComponents' });
+          }
+
+          function updateCache() {
+            vscode.postMessage({ command: 'updateCache' });
+          }
+
+          function resetCache() {
+            vscode.postMessage({ command: 'resetCache' });
           }
 
           function insertComponent(component) {
@@ -1262,9 +1332,22 @@ export class ComponentBrowserProvider {
           .parameter {
             padding: 10px;
             border-bottom: 1px solid var(--vscode-panel-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
           }
           .parameter:last-child {
             border-bottom: none;
+          }
+          .parameter-content {
+            flex: 1;
+            margin-right: 15px;
+          }
+          .parameter-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-top: 5px;
           }
           .parameter-name {
             font-weight: bold;
@@ -1282,6 +1365,18 @@ export class ComponentBrowserProvider {
             background-color: var(--vscode-textCodeBlock-background);
             padding: 2px 4px;
             border-radius: 3px;
+          }
+          .parameters-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+          }
+          .select-all-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.9em;
           }
           .insert-options {
             margin-top: 20px;
@@ -1304,10 +1399,6 @@ export class ComponentBrowserProvider {
           }
           .checkbox-group input[type="checkbox"] {
             margin: 0;
-          }
-          .button-group {
-            display: flex;
-            gap: 10px;
           }
           button {
             background-color: var(--vscode-button-background);
@@ -1352,23 +1443,37 @@ export class ComponentBrowserProvider {
             `<div><strong>Documentation:</strong> <a href="${component.documentationUrl}" target="_blank" id="componentDocUrl">${component.documentationUrl}</a></div>` : ''}
         </div>
 
-        <h2>Parameters</h2>
+        <div class="parameters-header">
+          <h2>Parameters</h2>
+          ${parameters.length > 0 ? `
+            <div class="select-all-group">
+              <input type="checkbox" id="selectAllInputs" onchange="toggleAllInputs()">
+              <label for="selectAllInputs">Select All</label>
+            </div>
+          ` : ''}
+        </div>
         <div id="parametersContainer">
           ${parameters.length === 0 ?
             '<p>No parameters documented for this component.</p>' :
             `<div class="parameters">
               ${parameters.map((param: ComponentParameter) => `
                 <div class="parameter">
-                  <div>
-                    <span class="parameter-name">${param.name}</span>
-                    <span class="${param.required ? 'parameter-required' : 'parameter-optional'}">
-                      (${param.required ? 'required' : 'optional'})
-                    </span>
+                  <div class="parameter-content">
+                    <div>
+                      <span class="parameter-name">${param.name}</span>
+                      <span class="${param.required ? 'parameter-required' : 'parameter-optional'}">
+                        (${param.required ? 'required' : 'optional'})
+                      </span>
+                    </div>
+                    <div>${param.description || `Parameter: ${param.name}`}</div>
+                    <div><strong>Type:</strong> ${param.type || 'string'}</div>
+                    ${param.default !== undefined ?
+                      `<div><strong>Default:</strong> <span class="parameter-default">${param.default}</span></div>` : ''}
                   </div>
-                  <div>${param.description || `Parameter: ${param.name}`}</div>
-                  <div><strong>Type:</strong> ${param.type || 'string'}</div>
-                  ${param.default !== undefined ?
-                    `<div><strong>Default:</strong> <span class="parameter-default">${param.default}</span></div>` : ''}
+                  <div class="parameter-checkbox">
+                    <input type="checkbox" id="input-${param.name}" class="input-checkbox" onchange="updateInputSelection()" data-param-name="${param.name}">
+                    <label for="input-${param.name}">Insert</label>
+                  </div>
                 </div>
               `).join('')}
             </div>`
@@ -1377,14 +1482,12 @@ export class ComponentBrowserProvider {
 
         <div class="insert-options">
           <h3>Insert Options</h3>
-          ${parameters.length > 0 ? `
-            <div class="checkbox-group">
-              <label>
-                <input type="checkbox" id="includeInputs">
-                Include input parameters with default values
-              </label>
-            </div>
-          ` : ''}
+          <div class="checkbox-group">
+            <label>
+              <input type="checkbox" id="includeInputs">
+              Include input parameters with default values
+            </label>
+          </div>
           <div class="button-group">
             <button onclick="insertComponent()">Insert Component</button>
             <button class="secondary" onclick="refreshVersions()">Refresh Versions</button>
@@ -1400,11 +1503,54 @@ export class ComponentBrowserProvider {
             const selectedVersion = document.getElementById('versionSelect').value;
             const includeInputs = document.getElementById('includeInputs')?.checked || false;
 
+            // Get selected individual inputs
+            const selectedInputs = [];
+            const inputCheckboxes = document.querySelectorAll('.input-checkbox:checked');
+            inputCheckboxes.forEach(checkbox => {
+              selectedInputs.push(checkbox.getAttribute('data-param-name'));
+            });
+
             vscode.postMessage({
               command: 'insertComponent',
               version: selectedVersion,
-              includeInputs: includeInputs
+              includeInputs: includeInputs,
+              selectedInputs: selectedInputs
             });
+          }
+
+          function toggleAllInputs() {
+            const selectAllCheckbox = document.getElementById('selectAllInputs');
+            const inputCheckboxes = document.querySelectorAll('.input-checkbox');
+
+            inputCheckboxes.forEach(checkbox => {
+              checkbox.checked = selectAllCheckbox.checked;
+            });
+
+            updateInputSelection();
+          }
+
+          function updateInputSelection() {
+            const inputCheckboxes = document.querySelectorAll('.input-checkbox');
+            const checkedInputs = document.querySelectorAll('.input-checkbox:checked');
+            const selectAllCheckbox = document.getElementById('selectAllInputs');
+            const includeInputsCheckbox = document.getElementById('includeInputs');
+
+            // Update select all checkbox state
+            if (checkedInputs.length === 0) {
+              selectAllCheckbox.checked = false;
+              selectAllCheckbox.indeterminate = false;
+            } else if (checkedInputs.length === inputCheckboxes.length) {
+              selectAllCheckbox.checked = true;
+              selectAllCheckbox.indeterminate = false;
+            } else {
+              selectAllCheckbox.checked = false;
+              selectAllCheckbox.indeterminate = true;
+            }
+
+            // Auto-check "Include input parameters" if any individual inputs are selected
+            if (checkedInputs.length > 0) {
+              includeInputsCheckbox.checked = true;
+            }
           }
 
           function onVersionChange() {
@@ -1469,6 +1615,7 @@ export class ComponentBrowserProvider {
               let parametersHtml = '<div class="parameters">';
               parameters.forEach(param => {
                 parametersHtml += '<div class="parameter">';
+                parametersHtml += '<div class="parameter-content">';
                 parametersHtml += '<div>';
                 parametersHtml += '<span class="parameter-name">' + param.name + '</span>';
                 parametersHtml += '<span class="' + (param.required ? 'parameter-required' : 'parameter-optional') + '">';
@@ -1481,9 +1628,26 @@ export class ComponentBrowserProvider {
                   parametersHtml += '<div><strong>Default:</strong> <span class="parameter-default">' + param.default + '</span></div>';
                 }
                 parametersHtml += '</div>';
+                parametersHtml += '<div class="parameter-checkbox">';
+                parametersHtml += '<input type="checkbox" id="input-' + param.name + '" class="input-checkbox" onchange="updateInputSelection()" data-param-name="' + param.name + '">';
+                parametersHtml += '<label for="input-' + param.name + '">Insert</label>';
+                parametersHtml += '</div>';
+                parametersHtml += '</div>';
               });
               parametersHtml += '</div>';
               parametersContainer.innerHTML = parametersHtml;
+            }
+
+            // Update select all checkbox visibility and reset state
+            const selectAllGroup = document.querySelector('.select-all-group');
+            if (selectAllGroup) {
+              selectAllGroup.style.display = parameters.length > 0 ? 'flex' : 'none';
+              // Reset select all checkbox state
+              const selectAllCheckbox = document.getElementById('selectAllInputs');
+              if (selectAllCheckbox) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = false;
+              }
             }
 
             // Update checkbox visibility based on parameters
@@ -1717,6 +1881,93 @@ export class ComponentBrowserProvider {
 ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map(([source, error]) => `- ${source}: ${error}`).join('\n') : ''}`;
 
     vscode.window.showInformationMessage(status, { modal: true });
+  }
+
+  private async updateCache() {
+    this.logger.info('[ComponentBrowser] Update cache requested from browser', 'ComponentBrowser');
+
+    try {
+      // Show loading state in the webview
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: 'showLoading',
+          message: 'Updating cache and fetching fresh data...'
+        });
+      }
+
+      // Update the cache
+      await this.cacheManager.updateCache();
+
+      // Reload components in the browser
+      await this.loadComponents(true);
+
+      // Show success message
+      vscode.window.showInformationMessage('✅ GitLab component cache updated successfully!');
+
+    } catch (error) {
+      this.logger.error(`[ComponentBrowser] Cache update failed: ${error}`, 'ComponentBrowser');
+      vscode.window.showErrorMessage(`❌ Failed to update cache: ${error}`);
+
+      // Show error state in the webview
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: 'showError',
+          message: `Failed to update cache: ${error}`
+        });
+      }
+    }
+  }
+
+  private async resetCache() {
+    this.logger.info('[ComponentBrowser] Reset cache requested from browser', 'ComponentBrowser');
+
+    // Ask for confirmation before resetting
+    const confirmation = await vscode.window.showWarningMessage(
+      'Are you sure you want to reset the cache? This will clear all cached components and force them to be re-downloaded.',
+      { modal: true },
+      'Reset Cache',
+      'Cancel'
+    );
+
+    if (confirmation === 'Reset Cache') {
+      try {
+        // Show loading state in the webview
+        if (this.panel) {
+          this.panel.webview.postMessage({
+            command: 'showLoading',
+            message: 'Resetting cache and clearing all data...'
+          });
+        }
+
+        // Reset the cache
+        await this.cacheManager.resetCache();
+
+        // Clear the browser and show empty state
+        if (this.panel) {
+          this.panel.webview.html = this.getLoadingHtml();
+        }
+
+        // Reload components in the browser (this will fetch fresh data)
+        await this.loadComponents(true);
+
+        // Show success message
+        vscode.window.showInformationMessage('🗑️ GitLab component cache reset successfully! Fresh data loaded.');
+
+      } catch (error) {
+        this.logger.error(`[ComponentBrowser] Cache reset failed: ${error}`, 'ComponentBrowser');
+        vscode.window.showErrorMessage(`❌ Failed to reset cache: ${error}`);
+
+        // Show error state in the webview
+        if (this.panel) {
+          this.panel.webview.postMessage({
+            command: 'showError',
+            message: `Failed to reset cache: ${error}`
+          });
+        }
+      }
+    } else {
+      this.logger.debug('[ComponentBrowser] Cache reset cancelled by user', 'ComponentBrowser');
+    }
   }
 
   private transformCachedComponentsToGroups(cachedComponents: any[]): any[] {
@@ -2066,4 +2317,342 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
       return null;
     }
   }
+
+  // Public method to edit an existing component from detached view (called from extension.ts)
+  public async editExistingComponentFromDetached(
+    component: any,
+    documentUri: string,
+    position: { line: number; character: number },
+    includeInputs: boolean = false,
+    selectedInputs?: string[]
+  ) {
+    // Open the document that contains the component
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(documentUri));
+    const editor = await vscode.window.showTextDocument(document, { preserveFocus: false });
+
+    // Ensure the editor is fully activated and focused
+    await new Promise(resolve => setTimeout(resolve, EDITOR_ACTIVATION_DELAY_MS));
+
+    // Verify the editor is properly active
+    if (vscode.window.activeTextEditor !== editor) {
+      await vscode.window.showTextDocument(document, editor.viewColumn);
+    }
+
+    // Find the component block starting from the hover position
+    const componentPosition = new vscode.Position(position.line, position.character);
+    const componentRange = await this.findComponentRange(document, componentPosition, component.name);
+
+    if (!componentRange) {
+      vscode.window.showErrorMessage(`Could not locate component ${component.name} in the document`);
+      return;
+    }
+
+    // Parse the existing component to see what inputs it already has
+    const existingComponent = await this.parseExistingComponent(document, componentRange);
+
+    // Generate the new component text with updated inputs
+    const newComponentText = this.generateComponentText(
+      component,
+      includeInputs,
+      selectedInputs,
+      existingComponent
+    );
+
+    // Replace the existing component with the updated version
+    await editor.edit(editBuilder => {
+      editBuilder.replace(componentRange, newComponentText);
+    });
+
+    // Show success message
+    let message = `Updated component: ${component.name}`;
+    if (selectedInputs && selectedInputs.length > 0) {
+      message += ` with ${selectedInputs.length} selected input parameter${selectedInputs.length === 1 ? '' : 's'}`;
+    }
+    vscode.window.showInformationMessage(message);
+  }
+
+  // Helper method to find the range of a component block in the document
+  private async findComponentRange(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    componentName: string
+  ): Promise<vscode.Range | null> {
+    const text = document.getText();
+    const lines = text.split('\n');
+
+    // Find the line with the component declaration
+    let componentLineIndex = -1;
+    for (let i = position.line; i >= Math.max(0, position.line - 10); i--) {
+      if (lines[i] && lines[i].includes('component:') && lines[i].includes(componentName)) {
+        componentLineIndex = i;
+        break;
+      }
+    }
+
+    // Also search forward a few lines
+    if (componentLineIndex === -1) {
+      for (let i = position.line; i < Math.min(lines.length, position.line + 10); i++) {
+        if (lines[i] && lines[i].includes('component:') && lines[i].includes(componentName)) {
+          componentLineIndex = i;
+          break;
+        }
+      }
+    }
+
+    if (componentLineIndex === -1) {
+      this.logger.warn(`[ComponentBrowser] Could not find component line for ${componentName}`, 'ComponentBrowser');
+      return null;
+    }
+
+    // Find the start of the component block (look for the '- component:' line)
+    let startLine = componentLineIndex;
+    const componentLine = lines[componentLineIndex];
+    const indentMatch = componentLine.match(/^(\s*)/);
+    const componentIndent = indentMatch ? indentMatch[1].length : 0;
+
+    // Look backwards to find the start of this list item
+    for (let i = componentLineIndex; i >= 0; i--) {
+      const line = lines[i];
+      const lineIndentMatch = line.match(/^(\s*)/);
+      const lineIndent = lineIndentMatch ? lineIndentMatch[1].length : 0;
+
+      // If we find a line that starts with '- ' at the same or lesser indent, that's our start
+      if (line.trim().startsWith('- ') && lineIndent <= componentIndent) {
+        startLine = i;
+        break;
+      }
+    }
+
+    // Find the end of the component block
+    let endLine = componentLineIndex;
+    for (let i = componentLineIndex + 1; i < lines.length; i++) {
+      const line = lines[i];
+      const lineIndentMatch = line.match(/^(\s*)/);
+      const lineIndent = lineIndentMatch ? lineIndentMatch[1].length : 0;
+
+      // If we find a line at the same or lesser indent that's not just whitespace, that's where we stop
+      if (line.trim() && lineIndent <= componentIndent && line.trim().startsWith('-')) {
+        endLine = i - 1;
+        break;
+      }
+
+      // If we find any content at lesser indent, stop there
+      if (line.trim() && lineIndent < componentIndent) {
+        endLine = i - 1;
+        break;
+      }
+
+      endLine = i;
+    }
+
+    // Make sure we don't include trailing empty lines
+    while (endLine > componentLineIndex && !lines[endLine].trim()) {
+      endLine--;
+    }
+
+    const startPos = new vscode.Position(startLine, 0);
+    const endPos = new vscode.Position(endLine, lines[endLine].length);
+
+    this.logger.debug(`[ComponentBrowser] Found component range: ${startLine}:0 to ${endLine}:${lines[endLine].length}`, 'ComponentBrowser');
+
+    return new vscode.Range(startPos, endPos);
+  }
+
+  // Helper method to parse an existing component to extract its current inputs
+  private async parseExistingComponent(document: vscode.TextDocument, range: vscode.Range): Promise<any> {
+    const componentText = document.getText(range);
+
+    try {
+      // Use the YAML parser to parse just this component block
+      const { parseYaml } = await import('../utils/yamlParser');
+
+      // Wrap the component in a temporary YAML structure for parsing
+      const wrappedYaml = `include:\n${componentText}`;
+      const parsed = parseYaml(wrappedYaml);
+
+      if (parsed && parsed.include && Array.isArray(parsed.include) && parsed.include[0]) {
+        return parsed.include[0];
+      } else if (parsed && parsed.include) {
+        return parsed.include;
+      }
+    } catch (error) {
+      this.logger.warn(`[ComponentBrowser] Could not parse existing component: ${error}`, 'ComponentBrowser');
+    }
+
+    return null;
+  }
+
+  // Helper method to generate the component text with updated inputs
+  private generateComponentText(
+    component: any,
+    includeInputs: boolean,
+    selectedInputs: string[] = [],
+    existingComponent: any = null
+  ): string {
+    const gitlabInstance = component.gitlabInstance || 'gitlab.com';
+
+    // Create the component reference
+    let componentUrl: string;
+
+    // If the component has a preserved URL with variables, use that
+    if (component.originalUrl && containsGitLabVariables(component.originalUrl)) {
+      componentUrl = component.originalUrl;
+      // Update version if different
+      if (component.version && !component.originalUrl.includes('@')) {
+        componentUrl += `@${component.version}`;
+      } else if (component.version && component.originalUrl.includes('@')) {
+        componentUrl = component.originalUrl.replace(/@[^@]*$/, `@${component.version}`);
+      }
+    } else {
+      // Create standard URL
+      componentUrl = `https://${gitlabInstance}/${component.sourcePath}/${component.name}@${component.version}`;
+    }
+
+    let insertion = `  - component: ${componentUrl}`;
+
+    // Handle inputs
+    if (includeInputs || (selectedInputs && selectedInputs.length > 0)) {
+      insertion += '\n    inputs:';
+
+      // Start with existing inputs if we're editing
+      const finalInputs = new Map<string, any>();
+
+      // Add existing inputs first
+      if (existingComponent && existingComponent.inputs) {
+        for (const [key, value] of Object.entries(existingComponent.inputs)) {
+          finalInputs.set(key, value);
+        }
+      }
+
+      // If selectedInputs is specified, only include those (removing unselected ones)
+      if (selectedInputs && selectedInputs.length > 0) {
+        // Keep only the selected inputs from existing ones
+        const filteredInputs = new Map<string, any>();
+        for (const inputName of selectedInputs) {
+          if (finalInputs.has(inputName)) {
+            filteredInputs.set(inputName, finalInputs.get(inputName));
+          }
+        }
+        finalInputs.clear();
+        for (const [key, value] of filteredInputs) {
+          finalInputs.set(key, value);
+        }
+
+        // Add new selected inputs with default values
+        if (component.parameters) {
+          for (const param of component.parameters) {
+            if (selectedInputs.includes(param.name) && !finalInputs.has(param.name)) {
+              let defaultValue = param.default;
+
+              // Format default value based on type
+              if (defaultValue !== undefined) {
+                if (typeof defaultValue === 'string') {
+                  // Check if it contains GitLab variables and preserve them
+                  if (containsGitLabVariables(defaultValue)) {
+                    defaultValue = `"${defaultValue}"`; // Keep variables as-is in quotes
+                  } else {
+                    defaultValue = `"${defaultValue}"`;
+                  }
+                } else if (typeof defaultValue === 'boolean') {
+                  defaultValue = defaultValue.toString();
+                } else if (typeof defaultValue === 'number') {
+                  defaultValue = defaultValue.toString();
+                } else {
+                  defaultValue = JSON.stringify(defaultValue);
+                }
+              } else {
+                // Provide placeholder based on type and required status
+                if (param.required) {
+                  switch (param.type) {
+                    case 'boolean':
+                      defaultValue = 'true';
+                      break;
+                    case 'number':
+                      defaultValue = '0';
+                      break;
+                    default:
+                      defaultValue = '"TODO: set value"';
+                  }
+                } else {
+                  switch (param.type) {
+                    case 'boolean':
+                      defaultValue = 'false';
+                      break;
+                    case 'number':
+                      defaultValue = '0';
+                      break;
+                    default:
+                      defaultValue = '""';
+                  }
+                }
+              }
+
+              finalInputs.set(param.name, defaultValue);
+            }
+          }
+        }
+      } else if (includeInputs && component.parameters) {
+        // Add all parameters if includeInputs is true and no specific selection
+        for (const param of component.parameters) {
+          if (!finalInputs.has(param.name)) {
+            let defaultValue = param.default;
+
+            // Format default value (same logic as above)
+            if (defaultValue !== undefined) {
+              if (typeof defaultValue === 'string') {
+                if (containsGitLabVariables(defaultValue)) {
+                  defaultValue = `"${defaultValue}"`;
+                } else {
+                  defaultValue = `"${defaultValue}"`;
+                }
+              } else if (typeof defaultValue === 'boolean') {
+                defaultValue = defaultValue.toString();
+              } else if (typeof defaultValue === 'number') {
+                defaultValue = defaultValue.toString();
+              } else {
+                defaultValue = JSON.stringify(defaultValue);
+              }
+            } else {
+              if (param.required) {
+                switch (param.type) {
+                  case 'boolean':
+                    defaultValue = 'true';
+                    break;
+                  case 'number':
+                    defaultValue = '0';
+                    break;
+                  default:
+                    defaultValue = '"TODO: set value"';
+                }
+              } else {
+                switch (param.type) {
+                  case 'boolean':
+                    defaultValue = 'false';
+                    break;
+                  case 'number':
+                    defaultValue = '0';
+                    break;
+                  default:
+                    defaultValue = '""';
+                }
+              }
+            }
+
+            finalInputs.set(param.name, defaultValue);
+          }
+        }
+      }
+
+      // Generate the inputs section
+      for (const [inputName, inputValue] of finalInputs) {
+        const param = component.parameters?.find((p: any) => p.name === inputName);
+        const comment = param?.required ? ' # required' : ' # optional';
+        insertion += `\n      ${inputName}: ${inputValue}${comment}`;
+      }
+    }
+
+    return insertion;
+  }
+
+  // ...existing code...
 }

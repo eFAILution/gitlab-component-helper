@@ -764,6 +764,92 @@ export class ComponentCacheManager {
       hasContext: !!this.context
     };
   }
+
+  /**
+   * Update cache - Forces refresh of all cached data
+   */
+  public async updateCache(): Promise<void> {
+    this.logger.info('[ComponentCache] Updating cache - forcing refresh of all data');
+
+    // Force refresh of components from all sources
+    await this.forceRefresh();
+
+    // Also trigger update on the ComponentService singleton
+    const componentService = getComponentService();
+    componentService.updateCache();
+
+    this.logger.info('[ComponentCache] Cache update completed successfully');
+  }
+
+  /**
+   * Reset cache - Completely clears all cached data
+   */
+  public async resetCache(): Promise<void> {
+    this.logger.info('[ComponentCache] Resetting cache - clearing all cached data');
+
+    // Clear in-memory caches
+    this.components = [];
+    this.projectVersionsCache.clear();
+    this.sourceErrors.clear();
+    this.lastRefreshTime = 0;
+
+    // Clear persistent storage if available
+    if (this.context) {
+      try {
+        await this.context.globalState.update('gitlabComponentHelper.cachedComponents', undefined);
+        await this.context.globalState.update('gitlabComponentHelper.cacheTimestamp', undefined);
+        this.logger.debug('[ComponentCache] Cleared persistent cache storage', 'ComponentCache');
+      } catch (error) {
+        this.logger.warn(`[ComponentCache] Failed to clear persistent storage: ${error}`, 'ComponentCache');
+      }
+    }
+
+    // Also trigger reset on the ComponentService singleton
+    const componentService = getComponentService();
+    componentService.resetCache();
+
+    this.logger.info('[ComponentCache] Cache reset completed successfully');
+  }
+
+  /**
+   * Get detailed cache statistics
+   */
+  public getCacheStats(): {
+    componentsCount: number;
+    projectVersionsCacheCount: number;
+    sourceErrorsCount: number;
+    lastRefreshTime: number;
+    memoryUsage: {
+      components: string[];
+      projectVersions: string[];
+      sourceErrors: string[];
+    };
+    componentService: {
+      catalogCacheSize: number;
+      componentCacheSize: number;
+      sourceCacheSize: number;
+    };
+  } {
+    const componentService = getComponentService();
+    const serviceStats = componentService.getCacheStats();
+
+    return {
+      componentsCount: this.components.length,
+      projectVersionsCacheCount: this.projectVersionsCache.size,
+      sourceErrorsCount: this.sourceErrors.size,
+      lastRefreshTime: this.lastRefreshTime,
+      memoryUsage: {
+        components: this.components.map(c => `${c.name} (${c.source})`),
+        projectVersions: Array.from(this.projectVersionsCache.keys()),
+        sourceErrors: Array.from(this.sourceErrors.keys())
+      },
+      componentService: {
+        catalogCacheSize: serviceStats.catalogCacheSize,
+        componentCacheSize: serviceStats.componentCacheSize,
+        sourceCacheSize: serviceStats.sourceCacheSize
+      }
+    };
+  }
 }
 
 // Singleton instance

@@ -230,6 +230,7 @@ export function expandComponentUrl(componentUrl: string, context?: {
   gitlabInstance?: string;
   projectPath?: string;
   serverUrl?: string;
+  commitSha?: string; // Optionally provide a commit SHA for expansion
 }): string {
   let expanded = componentUrl;
 
@@ -260,6 +261,13 @@ export function expandComponentUrl(componentUrl: string, context?: {
         expanded = expanded.replace(/\$CI_PROJECT_NAME/g, projectName);
         expanded = expanded.replace(/\$CI_PROJECT_ROOT_NAMESPACE/g, parts[0]);
       }
+    }
+
+    // Support $CI_COMMIT_SHA expansion
+    if (expanded.includes('$CI_COMMIT_SHA')) {
+      // Use context.commitSha if provided, otherwise fallback to a placeholder or branch name
+      const shaValue = context.commitSha || '[current-branch-or-sha]';
+      expanded = expanded.replace(/\$CI_COMMIT_SHA/g, shaValue);
     }
   }
 
