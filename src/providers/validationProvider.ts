@@ -5,6 +5,7 @@ import { parseYaml } from '../utils/yamlParser';
 import { Component } from '../types/git-component';
 import { Logger } from '../utils/logger';
 import { expandComponentUrl, containsGitLabVariables } from '../utils/gitlabVariables';
+import { spawn } from 'child_process';
 
 export class ValidationProvider implements vscode.CodeActionProvider {
     private diagnosticCollection: vscode.DiagnosticCollection;
@@ -1439,8 +1440,6 @@ export class ValidationProvider implements vscode.CodeActionProvider {
      */
     private async detectRepositoryViaGitCommands(workspacePath: string): Promise<{ hostname: string; projectPath: string } | null> {
         try {
-            const { spawn } = require('child_process');
-
             // First, check if we're in a Git repository
             const isGitRepo = await new Promise<boolean>((resolve) => {
                 const gitCheck = spawn('git', ['rev-parse', '--is-inside-work-tree'], {

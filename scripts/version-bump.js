@@ -6,6 +6,15 @@ const { execSync } = require('child_process');
 
 console.log('📝 Local Version Bump - Updates version and changelog only\n');
 
+// Helper function to handle errors and exit
+function handleErrorAndExit(message, error = null) {
+  console.error(`❌ ${message}`);
+  if (error) {
+    console.error('Error details:', error.message || error);
+  }
+  process.exit(1); // eslint-disable-line no-process-exit
+}
+
 // Helper function to run commands
 function runCommand(command, description) {
   console.log(`📋 ${description}...`);
@@ -14,8 +23,7 @@ function runCommand(command, description) {
     console.log(`✅ ${description} completed\n`);
     return output;
   } catch (error) {
-    console.error(`❌ ${description} failed:`, error.message);
-    process.exit(1); // eslint-disable-line no-process-exit
+    handleErrorAndExit(`${description} failed`, error);
   }
 }
 
@@ -24,14 +32,10 @@ function checkGitStatus() {
   try {
     const status = execSync('git status --porcelain', { encoding: 'utf8' });
     if (status.trim()) {
-      console.log('❌ Working directory is not clean. Please commit your changes first.');
-      console.log('Uncommitted changes:');
-      console.log(status);
-      process.exit(1); // eslint-disable-line no-process-exit
+      handleErrorAndExit('Working directory is not clean. Please commit your changes first.\nUncommitted changes:\n' + status);
     }
   } catch (error) {
-    console.error('❌ Failed to check git status:', error.message);
-    process.exit(1); // eslint-disable-line no-process-exit
+    handleErrorAndExit('Failed to check git status', error);
   }
 }
 

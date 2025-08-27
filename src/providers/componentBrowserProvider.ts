@@ -6,6 +6,9 @@ import { Component, ComponentParameter } from './componentDetector';
 import { containsGitLabVariables, expandGitLabVariables } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 
+// Constants for timing delays
+const EDITOR_ACTIVATION_DELAY_MS = 50;
+
 export class ComponentBrowserProvider {
   private panel: vscode.WebviewPanel | undefined;
   private originalEditor: vscode.TextEditor | undefined;
@@ -308,7 +311,7 @@ export class ComponentBrowserProvider {
     });
 
     // Brief wait to ensure editor is fully activated
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise(resolve => setTimeout(resolve, EDITOR_ACTIVATION_DELAY_MS));
 
     // Use the GitLab instance from the component or default to gitlab.com
     const gitlabInstance = component.gitlabInstance || 'gitlab.com';
@@ -2328,7 +2331,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     const editor = await vscode.window.showTextDocument(document, { preserveFocus: false });
 
     // Ensure the editor is fully activated and focused
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise(resolve => setTimeout(resolve, EDITOR_ACTIVATION_DELAY_MS));
 
     // Verify the editor is properly active
     if (vscode.window.activeTextEditor !== editor) {

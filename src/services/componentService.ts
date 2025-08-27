@@ -4,6 +4,9 @@ import { GitLabCatalogComponent, GitLabCatalogVariable, GitLabCatalogData } from
 import { HttpClient } from '../utils/httpClient';
 import { Logger } from '../utils/logger';
 
+// Regex patterns for parsing GitLab CI/CD component specs
+const SPEC_INPUTS_SECTION_REGEX = /spec:\s*\n\s*inputs:([\s\S]*?)(?=\n---|\ndescription:|\nvariables:|\n[a-zA-Z][a-zA-Z0-9_-]*:|$)/;
+
 // Helper: Prompt for token if needed and store it
 async function promptForTokenIfNeeded(
   context: vscode.ExtensionContext | undefined,
@@ -761,7 +764,7 @@ export class ComponentService implements ComponentSource {
       }
 
       // Extract variables from GitLab CI/CD component spec format - ONLY from spec section
-      const specMatches = specSection.match(/spec:\s*\n\s*inputs:([\s\S]*?)(?=\n---|\ndescription:|\nvariables:|\n[a-zA-Z][a-zA-Z0-9_-]*:|$)/);
+      const specMatches = specSection.match(SPEC_INPUTS_SECTION_REGEX);
       if (specMatches) {
         this.logger.debug(`[ComponentService] Template ${fileName}: Found spec inputs section`);
 

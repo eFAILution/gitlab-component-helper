@@ -9,6 +9,9 @@ import { Logger } from './utils/logger';
 import { ValidationProvider } from './providers/validationProvider';
 import { parseYaml } from './utils/yamlParser';
 
+// Constants for timing delays
+const PANEL_FOCUS_DELAY_MS = 100;
+
 export function activate(context: vscode.ExtensionContext) {
   const logger = Logger.getInstance();
   logger.info('GitLab Component Helper is now active!', 'Extension');
@@ -301,7 +304,7 @@ export function activate(context: vscode.ExtensionContext) {
             viewColumn: originalEditor.viewColumn,
             preserveFocus: false
           });
-        }, 100);
+        }, PANEL_FOCUS_DELAY_MS);
 
         // Handle messages from the detached webview
         panel.webview.onDidReceiveMessage(async (message) => {
@@ -312,7 +315,7 @@ export function activate(context: vscode.ExtensionContext) {
                 await vscode.window.showTextDocument(originalEditor.document, originalEditor.viewColumn);
 
                 // Wait a brief moment for the editor to fully activate
-                await new Promise(resolve => setTimeout(resolve, 100));
+                await new Promise(resolve => setTimeout(resolve, PANEL_FOCUS_DELAY_MS));
 
                 // Verify we have the correct active editor
                 const currentEditor = vscode.window.activeTextEditor;

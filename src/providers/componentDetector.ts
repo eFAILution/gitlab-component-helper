@@ -4,6 +4,7 @@ import { getComponentCacheManager } from '../services/componentCacheManager';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
 import { expandGitLabVariables, containsGitLabVariables, detectGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
+import { spawn } from 'child_process';
 
 const logger = Logger.getInstance();
 
@@ -804,8 +805,6 @@ async function detectNonGitLabRepository(workspaceFolder: vscode.WorkspaceFolder
  */
 async function detectRepositoryViaGitCommands(workspacePath: string): Promise<{ hostname: string; projectPath: string; type: string } | null> {
     try {
-        const { spawn } = require('child_process');
-
         // First, check if we're in a Git repository
         const isGitRepo = await new Promise<boolean>((resolve) => {
             const gitCheck = spawn('git', ['rev-parse', '--is-inside-work-tree'], {

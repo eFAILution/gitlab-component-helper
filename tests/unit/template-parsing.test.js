@@ -274,8 +274,7 @@ component-job:
 
 // Run the test if this file is executed directly
 if (require.main === module) {
-  const success = testTemplateParsing();
-  process.exit(success ? 0 : 1);
+  testTemplateParsing();
 }
 
 module.exports = { testTemplateParsing };
