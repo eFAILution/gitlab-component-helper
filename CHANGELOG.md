@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2025-08-27
+
+### ✨ Features
+
+- feat: implement input parameter hover functionality with detailed information
+- feat: add cache update and reset commands; fix detailed view inputs
+- feat(gitlabVariables): add support for using CI_COMMIT_SHA ref
+- feat: add autocomplete for inputs
+- feat: add editing capability for existing components in detached view
+- feat: enhance input with selection in detailed view
+- feat: include full input details in suggestions
+- feat: add component input validation
+- feat: add semantic release scripts and configuration
+
+### 🐛 Bug Fixes
+
+- fix: details for version refs showing full readme and template
+- fix: inputs being validated when component has unresolved vars
+- fix: gitlab pre-defined vars wrongly evaluated using user config
+- fix(logger.ts): only info logs are present
+- fix(insert): detailed viewer loses editor context
+
+### 🔧 Other Changes
+
+- Merge pull request #7 from eFAILution/feat/pre-release-0.3.0
+- chore: copilot review suggestions
+- chore: bump version to 0.3.1
+- chore: add local release script to bump but not package or publish
+- docs(README): add gifs
+- docs: update readme with video demos for component features
+- chore: pkg lock
+- Merge pull request #6 from AstralDrift/feat/component-validation
+- refactor: enhance input suggestion handling with QuickPick UI and command registration
+- chore: remove remaining outputChannel imports
+- refactor: component cache manager to use a logger instead of output channel
+- chore(readme): remove changelog section
+
+
 ## [Unreleased]
 
 ### ✨ Features
