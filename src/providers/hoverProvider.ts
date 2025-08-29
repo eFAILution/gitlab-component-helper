@@ -339,7 +339,7 @@ export class HoverProvider implements vscode.HoverProvider {
   }
 
   private createParameterHover(param: ComponentParameter): vscode.Hover {
-    console.log(`[GitLab Component Helper] Creating hover for parameter: ${param.name}`);
+    this.logger.debug(`Creating hover for parameter: ${param.name}`, 'HoverProvider');
     const markdown = new vscode.MarkdownString();
 
     const requiredLabel = param.required ? '(required)' : '(optional)';

@@ -2,7 +2,7 @@
   "name": "gitlab-component-helper",
   "displayName": "GitLab Component Helper",
   "description": "Provides intellisense for GitLab CI components",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "icon": "images/icon.png",
   "engines": {
     "node": ">=22.0.0",
@@ -96,8 +96,13 @@
             "WARN",
             "ERROR"
           ],
-          "default": "INFO",
+          "default": "ERROR",
           "description": "Logging level for component service"
+        },
+        "gitlabComponentHelper.autoShowOutput": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically show output channel when log level changes (disabled during development)"
         },
         "gitlabComponentHelper.httpTimeout": {
           "type": "number",

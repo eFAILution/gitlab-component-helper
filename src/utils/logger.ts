@@ -10,17 +10,41 @@ export enum LogLevel {
 
 export class Logger {
   private static instance: Logger;
-  private currentLevel: LogLevel = LogLevel.INFO;
+  private currentLevel: LogLevel = LogLevel.ERROR;
+  private isInitialized: boolean = false;
+  private isDevelopmentMode: boolean = false;
 
   private constructor() {
-    this.updateLogLevel();
+    // Detect if we're in development mode (extension debugging)
+    this.isDevelopmentMode = this.isInDevelopmentMode();
+
+    this.updateLogLevel(false); // Don't show output channel during initialization
 
     // Watch for configuration changes
     vscode.workspace.onDidChangeConfiguration(e => {
-      if (e.affectsConfiguration('gitlabComponentHelper.logLevel')) {
-        this.updateLogLevel();
+      if (e.affectsConfiguration('gitlabComponentHelper.logLevel') ||
+          e.affectsConfiguration('gitlabComponentHelper.autoShowOutput')) {
+        this.updateLogLevel(!this.isDevelopmentMode); // Don't show output in dev mode
       }
     });
+
+    this.isInitialized = true;
+  }  private isInDevelopmentMode(): boolean {
+    try {
+      // Check if we're running in extension development mode
+      // In development, the extension runs from source and has different characteristics
+      const extensionPath = vscode.extensions.getExtension('efailution.gitlab-component-helper')?.extensionPath;
+      return Boolean(
+        // Check for common development indicators
+        process.env.NODE_ENV === 'development' ||
+        extensionPath?.includes('src') ||
+        extensionPath?.includes('.vscode') ||
+        // Extension development path typically includes the workspace folder
+        extensionPath?.includes('gitlab-component-helper')
+      );
+    } catch {
+      return false;
+    }
   }
 
   static getInstance(): Logger {
@@ -30,9 +54,10 @@ export class Logger {
     return Logger.instance;
   }
 
-  private updateLogLevel(): void {
+  private updateLogLevel(showOutput: boolean = false): void {
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-    const levelString = config.get<string>('logLevel', 'INFO');
+    const levelString = config.get<string>('logLevel', 'ERROR');
+    const autoShowOutput = config.get<boolean>('autoShowOutput', false);
 
     // Make log level case-insensitive with explicit mapping
     const normalizedLevel = levelString.toUpperCase();
@@ -58,10 +83,23 @@ export class Logger {
 
     this.currentLevel = newLevel;
 
-    outputChannel.show(true); // Always show output when log level changes
+    // Only show output when:
+    // 1. Explicitly requested AND
+    // 2. Not in development mode AND
+    // 3. Auto show setting is enabled
+    if (showOutput && !this.isDevelopmentMode && autoShowOutput) {
+      outputChannel.show(true);
+    }
+
     const levelName = LogLevel[this.currentLevel];
-    const msg = `[Logger] Log level updated to: ${levelString} (normalized: ${normalizedLevel}, actual: ${levelName}, numeric: ${this.currentLevel})`;
+    const devMode = this.isDevelopmentMode ? ' [DEV MODE]' : '';
+    const msg = `[Logger] Log level updated to: ${levelString} (normalized: ${normalizedLevel}, actual: ${levelName}, numeric: ${this.currentLevel})${devMode}`;
     outputChannel.appendLine(msg);
+  }
+
+  // Public method to explicitly show output channel (for commands that need it)
+  public showOutput(): void {
+    outputChannel.show(true);
   }
 
   private shouldLog(level: LogLevel): boolean {
