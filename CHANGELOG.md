@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### 🐛 Bug Fixes
+
+- fix: prevent output window from automatically opening during extension activation and debugging
+  - Added development mode detection to prevent output panel from showing during extension debugging
+  - Added `autoShowOutput` setting to control automatic output channel display
+  - Replaced console.log calls with proper Logger calls to avoid triggering output panels
+  - Output channel now only shows when explicitly requested by user actions, not during initialization
+- fix: change default log level to ERROR to reduce noise and improve user experience
+
+### ✨ Features
+
+- feat: add `autoShowOutput` configuration option (default: false) to control output panel behavior
+
 ## [0.4.0] - 2025-08-27
 
 ### ✨ Features

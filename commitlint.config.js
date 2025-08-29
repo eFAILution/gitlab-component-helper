@@ -10,10 +10,10 @@ module.exports = {
     'header-max-length': [2, 'always', 100],
     'subject-max-length': [2, 'always', 100],
     // Enforce conventional commit format
-    'subject-case': [2, 'always', 'lower-case'],
+    'subject-case': [0], // Disabled - allows any case including UPPERCASE_VARS, camelCase, etc.
     'subject-empty': [2, 'never'],
     'subject-full-stop': [2, 'never', '.'],
-    'type-case': [2, 'always', 'lower-case'],
+    'type-case': [2, 'always', 'lower-case'], // Keep type lowercase (feat, fix, etc.)
     'type-empty': [2, 'never'],
   },
 }
