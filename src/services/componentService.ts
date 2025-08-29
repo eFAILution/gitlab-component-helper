@@ -1144,7 +1144,7 @@ export class ComponentService implements ComponentSource {
       // Extract the path (everything except the last part)
       const path = pathParts.slice(1, pathParts.length - 1).join('/');
 
-      console.log(`Parsed component URL: ${gitlabInstance}/${path}/${name}${version ? `@${version}` : ''}`);
+      Logger.getInstance().debug(`Parsed component URL: ${gitlabInstance}/${path}/${name}${version ? `@${version}` : ''}`, 'ComponentService');
 
       return { gitlabInstance, path, name, version };
     } catch (e) {

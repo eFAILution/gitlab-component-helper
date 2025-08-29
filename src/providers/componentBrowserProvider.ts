@@ -24,7 +24,7 @@ export class ComponentBrowserProvider {
 
     // Log the context for debugging
     if (componentContext) {
-      console.log(`Browser received context: ${componentContext.gitlabInstance}/${componentContext.path}`);
+      this.logger.debug(`Browser received context: ${componentContext.gitlabInstance}/${componentContext.path}`, 'ComponentBrowser');
     }
 
     // If panel already exists, show it
