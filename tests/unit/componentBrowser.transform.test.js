@@ -451,24 +451,26 @@ function testVersionResolution() {
 }
 
 // Run all tests
-console.log('Running component browser transform tests...\n');
+if (require.main === module) {
+  console.log('Running component browser transform tests...\n');
 
-const transformTests = testTransformCachedComponentsToGroups();
-const versionTests = testVersionResolution();
+  const transformTests = testTransformCachedComponentsToGroups();
+  const versionTests = testVersionResolution();
 
-const allPassed = transformTests && versionTests;
+  const allPassed = transformTests && versionTests;
 
-console.log('\n=== Component Browser Transform Test Summary ===');
-console.log(`Transform logic: ${transformTests ? 'PASS ✅' : 'FAIL ❌'}`);
-console.log(`Version resolution: ${versionTests ? 'PASS ✅' : 'FAIL ❌'}`);
-console.log(`Overall: ${allPassed ? 'PASS ✅' : 'FAIL ❌'}`);
+  console.log('\n=== Component Browser Transform Test Summary ===');
+  console.log(`Transform logic: ${transformTests ? 'PASS ✅' : 'FAIL ❌'}`);
+  console.log(`Version resolution: ${versionTests ? 'PASS ✅' : 'FAIL ❌'}`);
+  console.log(`Overall: ${allPassed ? 'PASS ✅' : 'FAIL ❌'}`);
 
-if (allPassed) {
-  console.log('\n🎉 All transform tests passed!');
-} else {
-  console.log('\n💥 Some transform tests failed!');
+  if (allPassed) {
+    console.log('\n🎉 All transform tests passed!');
+  } else {
+    console.log('\n💥 Some transform tests failed!');
+  }
+
+  // Set exit code
+  // eslint-disable-next-line no-undef
+  process.exit(allPassed ? 0 : 1);
 }
-
-// Set exit code
-// eslint-disable-next-line no-undef
-process.exit(allPassed ? 0 : 1);
