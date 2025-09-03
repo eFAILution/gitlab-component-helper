@@ -561,25 +561,27 @@ function testEdgeCases() {
   return failed === 0;
 }
 
-// Run all tests
-console.log('Running component browser generateComponentText tests...\n');
+// Run all tests if this file is executed directly
+if (require.main === module) {
+  console.log('Running component browser generateComponentText tests...\n');
 
-const generateTextTests = testGenerateComponentText();
-const edgeCaseTests = testEdgeCases();
+  const generateTextTests = testGenerateComponentText();
+  const edgeCaseTests = testEdgeCases();
 
-const allPassed = generateTextTests && edgeCaseTests;
+  const allPassed = generateTextTests && edgeCaseTests;
 
-console.log('\n=== Component Browser Generate Text Test Summary ===');
-console.log(`Generate component text: ${generateTextTests ? 'PASS ✅' : 'FAIL ❌'}`);
-console.log(`Edge cases: ${edgeCaseTests ? 'PASS ✅' : 'FAIL ❌'}`);
-console.log(`Overall: ${allPassed ? 'PASS ✅' : 'FAIL ❌'}`);
+  console.log('\n=== Component Browser Generate Text Test Summary ===');
+  console.log(`Generate component text: ${generateTextTests ? 'PASS ✅' : 'FAIL ❌'}`);
+  console.log(`Edge cases: ${edgeCaseTests ? 'PASS ✅' : 'FAIL ❌'}`);
+  console.log(`Overall: ${allPassed ? 'PASS ✅' : 'FAIL ❌'}`);
 
-if (allPassed) {
-  console.log('\n🎉 All generateComponentText tests passed!');
-} else {
-  console.log('\n💥 Some generateComponentText tests failed!');
+  if (allPassed) {
+    console.log('\n🎉 All generateComponentText tests passed!');
+  } else {
+    console.log('\n💥 Some generateComponentText tests failed!');
+  }
+
+  // Set exit code
+  // eslint-disable-next-line no-undef
+  process.exit(allPassed ? 0 : 1);
 }
-
-// Set exit code
-// eslint-disable-next-line no-undef
-process.exit(allPassed ? 0 : 1);
