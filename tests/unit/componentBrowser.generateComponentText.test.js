@@ -65,9 +65,9 @@ function mockGenerateComponentText(component, includeInputs, selectedInputs, exi
           comment = 'optional';
           if (param.default !== undefined) {
             if (typeof param.default === 'string') {
-              // Check if it's a GitLab variable or complex object
-              if (param.default.includes('${') || typeof param.default === 'object') {
-                value = `"${typeof param.default === 'object' ? JSON.stringify(param.default) : param.default}"`;
+              // Check if it's a GitLab variable
+              if (param.default.includes('${')) {
+                value = `"${param.default}"`;
               } else {
                 value = `"${param.default}"`;
               }
