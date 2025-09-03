@@ -123,10 +123,7 @@ The refactor will be considered successful when:
 # Run all tests including new safety harness
 npm test
 
-# Run only safety harness tests
-npm test -- --grep "Component Browser"
-
-# Run specific test file
+# Run specific test files directly (recommended for safety harness)
 node tests/unit/componentBrowser.transform.test.js
 node tests/unit/componentBrowser.generateComponentText.test.js
 ```
