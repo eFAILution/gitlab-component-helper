@@ -131,7 +131,9 @@ export class HoverProvider implements vscode.HoverProvider {
           hoverContent.appendMarkdown(`| ${param.name} | ${param.description} | ${param.required ? 'Yes' : 'No'} | ${param.default !== undefined ? `\`${param.default}\`` : '-'} |\n`);
         }
         hoverContent.appendMarkdown(`\n`);
-      }      // Enable command URIs
+      }
+
+      // Enable command URIs
       hoverContent.isTrusted = true;
       hoverContent.supportThemeIcons = true;
 
