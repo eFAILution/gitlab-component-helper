@@ -103,11 +103,17 @@ export class HoverProvider implements vscode.HoverProvider {
 
       hoverContent.appendMarkdown(`${description}\n\n`);
 
-      // Source information
+      // Source information with clickable link
       if (component.context) {
-        hoverContent.appendMarkdown(`**Source:** ${component.context.gitlabInstance}/${component.context.path}\n\n`);
+        const sourceUrl = `https://${component.context.gitlabInstance}/${component.context.path}`;
+        hoverContent.appendMarkdown(`**Source:** [${component.context.gitlabInstance}/${component.context.path}](${sourceUrl})\n\n`);
       } else if (component.source) {
-        hoverContent.appendMarkdown(`**Source:** ${component.source}\n\n`);
+        // Try to create a clickable link from the source string
+        let sourceUrl = component.source;
+        if (!sourceUrl.startsWith('http')) {
+          sourceUrl = `https://${component.source}`;
+        }
+        hoverContent.appendMarkdown(`**Source:** [${component.source}](${sourceUrl})\n\n`);
       }
 
       // Version
