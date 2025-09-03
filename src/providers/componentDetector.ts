@@ -537,7 +537,9 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
     // Apply fallback logic if still no description
     if (!componentDescription) {
       componentDescription = 'Component/Project does not have a description';
-    }    const dynamicComponent: Component = {
+    }
+
+    const dynamicComponent: Component = {
       name: foundComponent.name,
       description: componentDescription,
       parameters: (foundComponent.variables || []).map((v: GitLabCatalogVariable) => ({
