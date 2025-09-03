@@ -18,7 +18,6 @@ interface CachedComponent {
   version: string;
   url: string;
   availableVersions?: string[]; // All available versions for this component
-  readme?: string;
 }
 
 export class ComponentCacheManager {
@@ -445,8 +444,7 @@ export class ComponentCacheManager {
         sourcePath: sourcePath,
         gitlabInstance: gitlabInstance,
         version: version,
-        url: `https://${gitlabInstance}/${sourcePath}/${catalogComponent.name}@${version}`,
-        readme: catalogComponent.readme
+        url: `https://${gitlabInstance}/${sourcePath}/${catalogComponent.name}@${version}`
       };
 
       // Add to cache

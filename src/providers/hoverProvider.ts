@@ -98,8 +98,9 @@ export class HoverProvider implements vscode.HoverProvider {
       const detachCommand = vscode.Uri.parse(`command:gitlab-component-helper.detachHover?${encodeURIComponent(JSON.stringify(componentWithContext))}`);
       hoverContent.appendMarkdown(`[🔗 Open in Detailed View](${detachCommand.toString()})\n\n`);
 
-      // Description
-      const description = component.description || '';
+      // Description with fallback handling
+      let description = component.description || '';
+
       hoverContent.appendMarkdown(`${description}\n\n`);
 
       // Source information
@@ -124,25 +125,7 @@ export class HoverProvider implements vscode.HoverProvider {
           hoverContent.appendMarkdown(`| ${param.name} | ${param.description} | ${param.required ? 'Yes' : 'No'} | ${param.default !== undefined ? `\`${param.default}\`` : '-'} |\n`);
         }
         hoverContent.appendMarkdown(`\n`);
-      }
-
-      // README section (collapsible) - only show preview in hover
-      if (component.readme && component.readme.trim()) {
-        hoverContent.appendMarkdown(`### 📖 README Preview\n\n`);
-
-        // Show just a preview of the README in the hover
-        let readmePreview = component.readme.trim();
-        if (readmePreview.length > 300) {
-          readmePreview = readmePreview.substring(0, 300) + '...';
-        }
-
-        // Take first few lines only
-        const lines = readmePreview.split('\n').slice(0, 4);
-        hoverContent.appendMarkdown(lines.join('\n'));
-        hoverContent.appendMarkdown(`\n\n*[Click "Open in Detailed View" above to see the full README]*\n`);
-      }
-
-      // Enable command URIs
+      }      // Enable command URIs
       hoverContent.isTrusted = true;
       hoverContent.supportThemeIcons = true;
 
@@ -324,7 +307,11 @@ export class HoverProvider implements vscode.HoverProvider {
     const markdown = new vscode.MarkdownString();
 
     markdown.appendMarkdown(`## ${component.name}\n\n`);
-    markdown.appendMarkdown(`${component.description}\n\n`);
+
+    // Enhanced description with fallback handling
+    let description = component.description || 'Component/Project does not have a description';
+
+    markdown.appendMarkdown(`${description}\n\n`);
 
     markdown.appendMarkdown('### Parameters\n\n');
 
@@ -335,6 +322,8 @@ export class HoverProvider implements vscode.HoverProvider {
       markdown.appendMarkdown(`* **${param.name}** ${requiredLabel} - ${param.description}. Type: ${param.type}. ${defaultValue}\n`);
     }
 
+    markdown.isTrusted = true;
+    markdown.supportThemeIcons = true;
     return new vscode.Hover(markdown);
   }
 

@@ -2,7 +2,7 @@
   "name": "gitlab-component-helper",
   "displayName": "GitLab Component Helper",
   "description": "Provides intellisense for GitLab CI components",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "icon": "images/icon.png",
   "engines": {
     "node": ">=22.0.0",

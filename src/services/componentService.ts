@@ -272,7 +272,6 @@ export class ComponentService implements ComponentSource {
       this.logger.debug(`Parsed URL: Project=${projectPath}, Component=${componentName}, Version=${version}`);
 
       let templateContent = '';
-      let readmeContent = '';
       let parameters: Array<{
         name: string;
         description: string;
@@ -340,13 +339,12 @@ export class ComponentService implements ComponentSource {
 
       this.logger.debug(`Using token for ${gitlabInstance}: ${token ? 'YES' : 'NO'}`);
 
-      // **PARALLEL FETCHING OPTIMIZATION** - Fetch project info, template, and README in parallel
-      let projectInfo: any, templateResult: any, readmeResult: any;
+      // **PARALLEL FETCHING OPTIMIZATION** - Fetch project info and template in parallel first
+      let projectInfo: any, templateResult: any;
       try {
-        [projectInfo, templateResult, readmeResult] = await Promise.allSettled([
+        [projectInfo, templateResult] = await Promise.allSettled([
           this.httpClient.fetchJson(projectApiUrl, fetchOptions),
-          this.fetchTemplate(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions),
-          this.fetchReadme(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions)
+          this.fetchTemplate(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions)
         ]);
       } catch (err: any) {
         if (err && (err.status === 401 || err.status === 403)) {
@@ -354,10 +352,9 @@ export class ComponentService implements ComponentSource {
           token = await promptForTokenIfNeeded(context, this, gitlabInstance, projectPath);
           if (token) {
             fetchOptions = { headers: { 'PRIVATE-TOKEN': token } };
-            [projectInfo, templateResult, readmeResult] = await Promise.allSettled([
+            [projectInfo, templateResult] = await Promise.allSettled([
               this.httpClient.fetchJson(projectApiUrl, fetchOptions),
-              this.fetchTemplate(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions),
-              this.fetchReadme(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions)
+              this.fetchTemplate(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions)
             ]);
           } else {
             throw err;
@@ -381,37 +378,17 @@ export class ComponentService implements ComponentSource {
         this.logger.debug(`Found component template with ${parameters.length} parameters`);
       }
 
-      // Process README result
-      if (readmeResult.status === 'fulfilled' && readmeResult.value) {
-        readmeContent = readmeResult.value;
-      }
-
       // Construct a cleaner description
-      let cleanDescription = project.description || `${componentName} component`;
+      // Build component description with proper fallbacks
+      let cleanDescription = '';
 
-      // If we have template content and extracted a better description from it, use that instead
-      if (templateContent && templateResult.status === 'fulfilled' && templateResult.value) {
-        const templateData = templateResult.value;
-
-        // Check if we extracted a description from the template spec
-        const specDescMatch = templateContent.match(/spec:\s*\n(?:\s*inputs:[\s\S]*?)?\n\s*description:\s*["']?(.*?)["']?\s*$/m);
-        if (specDescMatch && specDescMatch[1].trim()) {
-          cleanDescription = specDescMatch[1].trim();
-        } else {
-          // Try to extract a better description from README first few lines
-          if (readmeContent) {
-            const readmeLines = readmeContent.split('\n').filter(line => line.trim());
-            for (const line of readmeLines.slice(0, 5)) { // Check first 5 non-empty lines
-              const trimmed = line.trim();
-              // Skip headers, links, and very short lines
-              if (trimmed && !trimmed.startsWith('#') && !trimmed.startsWith('[') &&
-                  !trimmed.startsWith('**') && trimmed.length > 20 && trimmed.length < 200) {
-                cleanDescription = trimmed;
-                break;
-              }
-            }
-          }
-        }
+      // Priority 1: Use project description if available
+      if (project.description && project.description.trim()) {
+        cleanDescription = project.description.trim();
+      }
+      // Priority 2: Fallback message if no description found
+      else {
+        cleanDescription = `Component/Project does not have a description`;
       }
 
       // Construct the component
@@ -420,13 +397,11 @@ export class ComponentService implements ComponentSource {
         description: cleanDescription,
         parameters,
         version,
-        source: `${gitlabInstance}/${projectPath}`,
-        readme: readmeContent // Store full README separately for detailed view
+        source: `${gitlabInstance}/${projectPath}`
       };
 
       this.logger.logPerformance('fetchComponentMetadata (full)', Date.now() - startTime, {
         hasTemplate: !!templateContent,
-        hasReadme: !!readmeContent,
         paramCount: parameters.length
       });
 
@@ -453,7 +428,9 @@ export class ComponentService implements ComponentSource {
       const templatePath = `templates/${componentName}.yml`;
       const templateUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(templatePath)}/raw?ref=${version}`;
 
+      this.logger.debug(`[ComponentService] Fetching template from: ${templateUrl}`);
       const templateContent = await this.httpClient.fetchText(templateUrl, fetchOptions);
+      this.logger.debug(`[ComponentService] Template content received, length: ${templateContent.length} chars`);
 
       // Use the same sophisticated parameter extraction logic as fetchTemplateContent
       let extractedDescription = '';
@@ -467,11 +444,12 @@ export class ComponentService implements ComponentSource {
       this.logger.debug(`[ComponentService] Template ${componentName}: Spec section length: ${specSection.length} chars`);
 
       // Extract description from component spec
-      const specDescMatch = specSection.match(/spec:\s*\n(?:\s*inputs:[\s\S]*?)?\n\s*description:\s*["']?(.*?)["']?\s*$/m);
-      if (specDescMatch) {
-        extractedDescription = specDescMatch[1].trim();
-        this.logger.debug(`[ComponentService] Template ${componentName}: Found spec description: ${extractedDescription}`);
-      }
+      // // FIXED: GitLab component specs don't have spec.description - changed to never match
+      // const specDescMatch = specSection.match(/spec:\s*\n\s*NEVER_MATCH_description:\s*["']?(.*?)["']?\s*$/m);
+      // if (specDescMatch) {
+      //   extractedDescription = specDescMatch[1].trim();
+      //   this.logger.debug(`[ComponentService] Template ${componentName}: Found spec description: ${extractedDescription}`);
+      // }
 
       // Extract variables from GitLab CI/CD component spec format - ONLY from spec section
       const specMatches = specSection.match(SPEC_INPUTS_SECTION_REGEX);
@@ -566,28 +544,14 @@ export class ComponentService implements ComponentSource {
         }
       }
 
+      this.logger.debug(`[ComponentService] Template ${componentName}: Extracted ${extractedVariables.length} parameters`);
+      extractedVariables.forEach(param => {
+        this.logger.debug(`[ComponentService] Template ${componentName}: Parameter: ${param.name} (${param.type}, required: ${param.required})`);
+      });
+
       return { content: templateContent, parameters: extractedVariables };
     } catch (error) {
       this.logger.debug(`Could not fetch component template: ${error}`);
-      return null;
-    }
-  }
-
-  // Helper method for parallel README fetching
-  private async fetchReadme(apiBaseUrl: string, projectId: string, componentName: string, version: string, fetchOptions?: any): Promise<string | null> {
-    try {
-      // First check if there's a component-specific README
-      const componentReadmePath = `docs/${componentName}/README.md`;
-      try {
-        const readmeUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(componentReadmePath)}/raw?ref=${version}`;
-        return await this.httpClient.fetchText(readmeUrl, fetchOptions);
-      } catch (e) {
-        // Then try the project README
-        const projectReadmeUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/README.md/raw?ref=${version}`;
-        return await this.httpClient.fetchText(projectReadmeUrl, fetchOptions);
-      }
-    } catch (error) {
-      this.logger.debug(`Could not fetch README: ${error}`);
       return null;
     }
   }
@@ -779,43 +743,26 @@ export class ComponentService implements ComponentSource {
         async (file: GitLabTreeItem) => {
           const name = file.name.replace(/\.ya?ml$/, '');
           this.logger.debug(`Processing component: ${name} (${file.name})`);
-          // **PARALLEL CONTENT FETCHING** - Fetch template content and README in parallel
-          const [templateResult, readmeResult] = await Promise.allSettled([
-            this.fetchTemplateContent(apiBaseUrl, projectInfo.id, file.name, ref, fetchOptions),
-            this.fetchProjectReadme(apiBaseUrl, projectInfo.id, ref, fetchOptions)
-          ]);
+          // Fetch template content
+          const templateResult = await this.fetchTemplateContent(apiBaseUrl, projectInfo.id, file.name, ref, fetchOptions);
+
           let description = '';
           let variables: ComponentVariable[] = [];
-          let readmeContent = '';
+
           // Process template content
-          if (templateResult.status === 'fulfilled' && templateResult.value) {
-            const { content, extractedVariables, extractedDescription } = templateResult.value;
+          if (templateResult) {
+            const { content, extractedVariables, extractedDescription } = templateResult;
             variables = extractedVariables;
             description = extractedDescription || `${name} component`;
           } else {
             description = `${name} component`;
           }
-          // Process README content
-          if (readmeResult.status === 'fulfilled' && readmeResult.value) {
-            readmeContent = readmeResult.value;
-            // Extract description from README if not found in template
-            if (!description || description === `${name} component`) {
-              const readmeLines = readmeContent.split('\n').filter(line => line.trim());
-              for (const line of readmeLines) {
-                const trimmed = line.trim();
-                if (trimmed && !trimmed.startsWith('#') && !trimmed.startsWith('[') && trimmed.length > 20) {
-                  description = trimmed;
-                  break;
-                }
-              }
-            }
-          }
+
           return {
             name,
             description,
             variables,
-            latest_version: ref,
-            readme: readmeContent
+            latest_version: ref
           };
         },
         batchSize
@@ -858,11 +805,12 @@ export class ComponentService implements ComponentSource {
       this.logger.debug(`[ComponentService] Template ${fileName}: Spec section length: ${specSection.length} chars`);
 
       // Extract description from component spec
-      const specDescMatch = specSection.match(/spec:\s*\n(?:\s*inputs:[\s\S]*?)?\n\s*description:\s*["']?(.*?)["']?\s*$/m);
-      if (specDescMatch) {
-        extractedDescription = specDescMatch[1].trim();
-        this.logger.debug(`[ComponentService] Template ${fileName}: Found spec description: ${extractedDescription}`);
-      }
+      // FIXED: GitLab component specs don't have spec.description - changed to never match
+      // const specDescMatch = specSection.match(/spec:\s*\n\s*NEVER_MATCH_description:\s*["']?(.*?)["']?\s*$/m);
+      // if (specDescMatch) {
+      //   extractedDescription = specDescMatch[1].trim();
+      //   this.logger.debug(`[ComponentService] Template ${fileName}: Found spec description: ${extractedDescription}`);
+      // }
 
       // If no spec description, try comment at top of file
       if (!extractedDescription) {
@@ -971,17 +919,6 @@ export class ComponentService implements ComponentSource {
       return { content, extractedVariables, extractedDescription };
     } catch (error) {
       this.logger.debug(`Could not fetch template content: ${error}`);
-      return null;
-    }
-  }
-
-  // Helper method for parallel README fetching
-  private async fetchProjectReadme(apiBaseUrl: string, projectId: string, ref: string, fetchOptions?: any): Promise<string | null> {
-    try {
-      const readmeUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/README.md/raw?ref=${ref}`;
-      return await this.httpClient.fetchText(readmeUrl, fetchOptions);
-    } catch (error) {
-      this.logger.debug(`No README found: ${error}`);
       return null;
     }
   }
