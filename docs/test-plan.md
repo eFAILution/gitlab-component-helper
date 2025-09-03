@@ -34,7 +34,7 @@ These tests serve as a safety net to ensure the refactor maintains identical beh
 - **Data Validation**: Components missing `name`, `source`, or `sourcePath` are skipped
 - **Version Priority**: Semantic versions > 'latest' > 'main' > 'master' > other tags
 
-### 2. Component Text Generation Tests (`componentBrowser.generateComponentText.test.js`)
+### 2. Component Text Generation Tests (`componentBrowser.generateComponentText.test.js`) ✅
 
 **Purpose**: Test the `generateComponentText` method that creates YAML for component insertion.
 
@@ -53,6 +53,25 @@ These tests serve as a safety net to ensure the refactor maintains identical beh
 - **GitLab Variables**: Always preserved in double quotes, never expanded
 - **Input Filtering**: `selectedInputs` removes unselected parameters, adds new ones with defaults
 - **Existing Input Preservation**: When editing, existing values kept for selected inputs
+
+### 3. Edit Existing Component Tests (`componentBrowser.editExisting.test.js`) ✅
+
+**Purpose**: Test the `editExistingComponent` functionality including range finding, existing component parsing, and edit logic behavior.
+
+**Scenarios Covered**:
+- ✅ Component range detection for middle component in multi-component include list
+- ✅ Component range detection for last component (ensures end resolves to file end)
+- ✅ Component range detection when extra blank lines follow component block (trims trailing blank lines)
+- ✅ Existing component parsing from YAML snippets with mixed input types
+- ✅ Component text generation when editing: preserves existing selected inputs, removes unselected when narrowing
+- ✅ Component text generation when editing: adds new parameters not present previously
+
+**Key Behaviors Locked In**:
+- **Range Detection**: Correctly identifies component block boundaries in various positions
+- **Trailing Line Handling**: Excludes blank lines from component ranges
+- **Input Parsing**: Preserves string, boolean, and numeric values from existing YAML
+- **Edit Preservation**: Maintains existing values for selected inputs during editing
+- **Input Management**: Removes unselected inputs, adds new inputs with appropriate defaults
 
 ## Test Structure and Approach
 
@@ -73,22 +92,40 @@ Since the methods being tested are private, tests use bracket notation (`provide
 
 As the refactor proceeds and logic is extracted into smaller modules, the test suite will be expanded to cover:
 
-### Phase 1: Core Logic Extraction
-- **Version Resolution Service**: Extract version priority and selection logic
-- **Hierarchy Builder Service**: Extract component grouping and tree structure logic
-- **YAML Generator Service**: Extract component text generation with parameter handling
+### ✅ Step 1: Core Data Transformation (Completed)
+- **Transform Logic**: Component grouping and hierarchical organization ✅
+- **Component Text Generation**: YAML creation with parameter handling ✅
 
-### Phase 2: UI Component Decomposition  
+### ✅ Step 2: Component Editing Logic (Completed)  
+- **Range Detection**: Component boundary identification in YAML files ✅
+- **Existing Component Parsing**: Input extraction from YAML snippets ✅
+- **Edit Logic**: Input preservation and modification during component updates ✅
+
+### 🔄 Step 3: Version Management & Context Handling (Next Target)
+- **Version Resolution Edge Cases**: Test complex version selection scenarios
+  - Multiple versions with mixed semantic and non-semantic tags
+  - Version precedence with custom branch patterns
+  - Fallback behavior when preferred versions are unavailable
+- **Context Source Injection**: Test component URL construction edge cases  
+  - Mixed gitlab instances in multi-source environments
+  - Variable expansion and preservation in different contexts
+  - Original URL preservation vs constructed URL logic
+- **Configuration Integration**: Test settings and preference handling
+  - Custom gitlab instances and authentication contexts
+  - Source filtering and component visibility rules
+  - User-specific version defaults and always-latest preferences
+
+### Phase 4: UI Component Decomposition (Future)  
 - **Panel Lifecycle Management**: Test webview creation, disposal, and state management
 - **Message Handling**: Test webview↔extension communication protocols
 - **Search and Filtering**: Test component search and display filtering logic
 
-### Phase 3: Cache and State Management
+### Phase 5: Cache and State Management (Future)
 - **Cache Action Handlers**: Test cache update, reset, and refresh operations
 - **Component Version Fetching**: Test dynamic version loading and caching
 - **Error State Handling**: Test error display and recovery scenarios
 
-### Phase 4: Integration Points
+### Phase 6: Integration Points (Future)
 - **Extension Integration**: Test command handling and editor integration
 - **Configuration Management**: Test settings and user preference handling
 - **Error Recovery**: Test fallback behaviors and user guidance
