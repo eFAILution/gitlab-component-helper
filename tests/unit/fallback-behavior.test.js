@@ -1,6 +1,5 @@
-#!/usr/bin/env node
 /**
- * Test fallback behavior when no component-level description exists
+ * Unit test for fallback behavior when no component description exists
  */
 
 console.log('🧪 Testing Fallback Behavior for Description Extraction');
@@ -50,3 +49,8 @@ console.log(`   1. Project description from GitLab API`);
 console.log(`   2. First meaningful line from README`);
 console.log(`   3. Default component name`);
 console.log(`✅ No longer incorrectly uses input parameter descriptions as component description`);
+
+module.exports = {
+  testDescriptionExtraction,
+  templateWithNoComponentDescription
+};

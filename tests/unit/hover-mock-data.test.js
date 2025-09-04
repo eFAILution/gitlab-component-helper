@@ -1,4 +1,8 @@
-// Test the detach hover functionality
+/**
+ * Unit test for hover functionality with mock data
+ */
+
+// Test the hover functionality with mock data
 console.log('Testing hover with README functionality...');
 
 // Mock component data
@@ -62,3 +66,5 @@ console.log('README length:', mockComponent.readme.length, 'characters');
 console.log('Parameters count:', mockComponent.parameters.length);
 
 console.log('✅ Test data ready for hover functionality');
+
+module.exports = { mockComponent };

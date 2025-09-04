@@ -1,7 +1,13 @@
-const { ComponentService } = require('./out/src/services/componentService.js');
+/**
+ * Integration test for ComponentService
+ * Tests basic component loading functionality
+ */
 
 async function testComponent() {
   try {
+    // Import ComponentService dynamically to avoid path issues
+    const { ComponentService } = require('../../out/src/services/componentService.js');
+
     const service = new ComponentService();
     const comp = await service.getComponentFromUrl('https://gitlab.com/components/opentofu/full-pipeline@main');
 
@@ -20,4 +26,9 @@ async function testComponent() {
   }
 }
 
-testComponent();
+// Export for use as a module or run directly
+if (require.main === module) {
+  testComponent();
+}
+
+module.exports = { testComponent };

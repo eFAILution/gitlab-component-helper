@@ -1,6 +1,6 @@
-#!/usr/bin/env node
 /**
- * Test script to verify the component description extraction fix
+ * Unit test for component description extraction
+ * Tests the fix for component description parsing
  */
 
 console.log('🧪 Testing Component Description Extraction Fix');
@@ -101,3 +101,10 @@ console.log(`✅ NEW regex ignores input parameter descriptions`);
 console.log(`✅ Fix should resolve the issue where opentofu/full-pipeline was showing input description instead of component description`);
 
 console.log('\n🎉 Component description extraction fix verified!');
+
+module.exports = {
+  testDescriptionExtraction,
+  testOldDescriptionExtraction,
+  correctTemplateWithComponentDescription,
+  problematicTemplateWithInputDescription
+};

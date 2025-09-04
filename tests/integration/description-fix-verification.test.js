@@ -1,37 +1,30 @@
-#!/usr/bin/env node
 /**
- * Test script to verify the GitLab Component Description Fix
+ * Integration test to verify the GitLab Component Description Fix
  * This script tests that component descriptions no longer incorrectly extract from non-existent spec.description fields
+ *
+ * Note: Run `npm run compile` before running this test
  */
 
 const path = require('path');
 const fs = require('fs');
 
-// Import our componentService directly
-const componentServicePath = path.join(__dirname, 'out', 'services', 'componentService.js');
-if (!fs.existsSync(componentServicePath)) {
-  console.error('❌ ERROR: Component service not found. Please run npm run compile first.');
-  process.exit(1);
-}
-
-const { ComponentService } = require(componentServicePath);
-
-// Mock VS Code dependencies
-const vscode = {
-  window: {
-    showErrorMessage: (msg) => console.error('VSCODE ERROR:', msg),
-    showInformationMessage: (msg) => console.info('VSCODE INFO:', msg),
-  }
-};
-
 async function testDescriptionExtraction() {
   console.log('🧪 Testing GitLab Component Description Fix');
   console.log('==================================================\n');
 
-  // Create a component service instance
-  const componentService = new ComponentService();
-
   try {
+    // Import our componentService dynamically
+    const componentServicePath = path.resolve('./out/src/services/componentService.js');
+    if (!fs.existsSync(componentServicePath)) {
+      console.error('❌ ERROR: Component service not found. Please run npm run compile first.');
+      return false;
+    }
+
+    const { ComponentService } = require(componentServicePath);
+
+    // Create a component service instance
+    const componentService = new ComponentService();
+
     // Test the problematic component that was showing input descriptions
     console.log('Test 1: opentofu/full-pipeline component');
     console.log('------------------------------');
@@ -72,17 +65,20 @@ async function testDescriptionExtraction() {
   }
 }
 
-// Run the test
-testDescriptionExtraction().then(success => {
-  console.log('\n==================================================');
-  if (success) {
-    console.log('🎉 GitLab Component Description Fix Verification: PASSED');
-    console.log('✅ Component descriptions no longer incorrectly extract from non-existent spec.description fields');
-  } else {
-    console.log('💥 GitLab Component Description Fix Verification: FAILED');
-    process.exit(1);
-  }
-}).catch(error => {
-  console.error('💥 Test execution failed:', error);
-  process.exit(1);
-});
+// Export for use as a module or run directly
+if (require.main === module) {
+  // Run the test
+  testDescriptionExtraction().then(success => {
+    console.log('\n==================================================');
+    if (success) {
+      console.log('🎉 GitLab Component Description Fix Verification: PASSED');
+      console.log('✅ Component descriptions no longer incorrectly extract from non-existent spec.description fields');
+    } else {
+      console.log('💥 GitLab Component Description Fix Verification: FAILED');
+    }
+  }).catch(error => {
+    console.error('💥 Test execution failed:', error);
+  });
+}
+
+module.exports = { testDescriptionExtraction };

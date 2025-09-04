@@ -3,6 +3,7 @@
  * Simple test runner for GitLab Component Helper extension
  * Runs unit tests and reports results
  */
+/* eslint-env node */
 
 const fs = require('fs');
 const path = require('path');
@@ -22,16 +23,46 @@ const colors = {
 
 console.log(`${colors.cyan}=== GitLab Component Helper Tests ===${colors.reset}\n`);
 
-// Find all test files
+// Check for test type filter from command line arguments
 // eslint-disable-next-line no-undef
-const testDir = path.join(__dirname, 'unit');
-const testFiles = fs.readdirSync(testDir)
-  .filter(file => file.endsWith('.test.js'))
-  .map(file => path.join(testDir, file));
+const testTypeFilter = process.argv[2]; // e.g., 'unit', 'integration', 'performance'
 
-console.log(`${colors.blue}Found ${testFiles.length} test file(s):${colors.reset}`);
+// Find all test files in different directories
+const testDirectories = [
+  // eslint-disable-next-line no-undef
+  { path: path.join(__dirname, 'unit'), type: 'unit' },
+  // eslint-disable-next-line no-undef
+  { path: path.join(__dirname, 'integration'), type: 'integration' },
+  // eslint-disable-next-line no-undef
+  { path: __dirname, type: 'performance' } // Root tests directory for files like performance.test.js
+];
+
+let testFiles = [];
+
+testDirectories.forEach(testDir => {
+  if (fs.existsSync(testDir.path)) {
+    let files = fs.readdirSync(testDir.path)
+      .filter(file => file.endsWith('.test.js'))
+      .map(file => ({ path: path.join(testDir.path, file), type: testDir.type }));
+
+    // Filter by test type if specified
+    if (testTypeFilter) {
+      files = files.filter(file => file.type === testTypeFilter);
+    }
+
+    testFiles = testFiles.concat(files);
+  }
+});
+
+// Sort test files for consistent execution order
+testFiles.sort((a, b) => a.path.localeCompare(b.path));
+
+const typeMessage = testTypeFilter ? ` (${testTypeFilter} tests only)` : '';
+console.log(`${colors.blue}Found ${testFiles.length} test file(s)${typeMessage}:${colors.reset}`);
 testFiles.forEach(file => {
-  console.log(`  - ${path.basename(file)}`);
+  // eslint-disable-next-line no-undef
+  const relativePath = path.relative(__dirname, file.path);
+  console.log(`  - ${relativePath} (${file.type})`);
 });
 console.log();
 
@@ -41,7 +72,8 @@ let failedTests = 0;
 
 // Run each test file
 async function runTests() {
-  for (const testFile of testFiles) {
+  for (const testFileObj of testFiles) {
+    const testFile = testFileObj.path;
     console.log(`${colors.yellow}Running ${path.basename(testFile)}...${colors.reset}`);
 
     try {
