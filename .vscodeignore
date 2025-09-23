@@ -31,3 +31,5 @@ out/services/**
 out/types/**
 out/utils/**
 out/test/**
+.env
+**/.env
