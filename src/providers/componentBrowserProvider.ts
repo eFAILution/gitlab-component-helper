@@ -2662,6 +2662,4 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
 
     return insertion;
   }
-
-  // ...existing code...
 }

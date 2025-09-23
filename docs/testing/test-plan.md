@@ -15,78 +15,88 @@ The `componentBrowserProvider.ts` file contains complex logic for:
 
 These tests serve as a safety net to ensure the refactor maintains identical behavior while improving code organization.
 
-## Current Test Coverage
+## Current Test Coverage Status
 
-### 1. Transform Logic Tests (`componentBrowser.transform.test.js`)
+### ✅ Completed and Functional  
+- **Transform Logic Tests** (`componentBrowser.transform.test.js`): Full test suite implemented and passing
+- **VSCode API Mocking Infrastructure**: Working mock framework for extension testing
+- **Test Structure Pattern**: Established approach for private method testing using bracket notation
 
-**Purpose**: Test the `transformCachedComponentsToGroups` method that converts flat component data into hierarchical display structure.
+### ⚠️ Partially Complete - Blocked by Source Code Issues
+- **Generate Component Text Tests** (`componentBrowser.generateComponentText.test.js`): Tests written but cannot execute due to incomplete TypeScript implementation
 
-**Scenarios Covered**:
-- ✅ Single component transformation (basic hierarchy creation)
-- ✅ Multiple versions with semantic prioritization (v2.0.0 > latest > main > v1.2.3)
-- ✅ Component filtering (skip components with missing critical fields)
-- ✅ Complex multi-source, multi-project hierarchy organization
-- ✅ Version priority edge cases (v10.0.0 > v2.10.0 > v2.1.0)
+### 1. Transform Logic Tests (`componentBrowser.transform.test.js`) ✅
 
-**Key Behaviors Locked In**:
-- **Version Selection Logic**: 'latest' resolves to highest semantic version, not literally 'latest'
-- **Grouping Hierarchy**: Source → Project → Component → Versions structure
-- **Data Validation**: Components missing `name`, `source`, or `sourcePath` are skipped
-- **Version Priority**: Semantic versions > 'latest' > 'main' > 'master' > other tags
+**Purpose**: Test the `transformCachedComponentsToGroups` private method that converts flat component data into hierarchical display structure.
 
-### 2. Component Text Generation Tests (`componentBrowser.generateComponentText.test.js`) ✅
-
-**Purpose**: Test the `generateComponentText` method that creates YAML for component insertion.
+**Implementation**: Uses bracket notation to access private method from compiled JavaScript output (`provider['transformCachedComponentsToGroups']`).
 
 **Scenarios Covered**:
-- ✅ Basic component without inputs (URL construction)
-- ✅ Required vs optional parameter placeholders with type-specific defaults
-- ✅ Selected inputs filtering (only include chosen parameters)
-- ✅ Existing component editing (preserve selected inputs, remove unselected)
-- ✅ GitLab variable preservation (`"${CI_PROJECT_PATH}"` stays quoted and unmodified)
-- ✅ Original URL with variables (`originalUrl` field handling)
-- ✅ Type-specific default value formatting (string/boolean/number)
+- ✅ Single component transformation with hierarchy counts (totalComponents=1, versionCount=1, defaultVersion=version)
+- ✅ Multiple versions with semantic prioritization: ['latest','v1.2.3','v2.0.0','main'] → defaultVersion resolves to 'v2.0.0'
+- ✅ Component filtering: components missing critical fields (`name`, `source`, `sourcePath`) are skipped from output
 
 **Key Behaviors Locked In**:
-- **Parameter Defaults**: Required strings → `"TODO: set value"`, booleans → `true`, numbers → `0`
-- **Optional Defaults**: Strings → `""`, booleans → `false`, numbers → `0`
-- **GitLab Variables**: Always preserved in double quotes, never expanded
-- **Input Filtering**: `selectedInputs` removes unselected parameters, adds new ones with defaults
-- **Existing Input Preservation**: When editing, existing values kept for selected inputs
+- **Version Selection Logic**: Highest semantic version takes precedence over 'latest', 'main', etc.
+- **Grouping Hierarchy**: Source → Project → Component → Versions structure with proper counts
+- **Data Validation**: Components with missing essential data are excluded from output
+- **Version Priority**: Semantic versions > branch names, with proper numeric comparison
 
-### 3. Edit Existing Component Tests (`componentBrowser.editExisting.test.js`) ✅
+### 2. Component Text Generation Tests (`componentBrowser.generateComponentText.test.js`) ⚠️
 
-**Purpose**: Test the `editExistingComponent` functionality including range finding, existing component parsing, and edit logic behavior.
+**Purpose**: Test the `generateComponentText` private method that creates YAML for component insertion.
 
-**Scenarios Covered**:
-- ✅ Component range detection for middle component in multi-component include list
-- ✅ Component range detection for last component (ensures end resolves to file end)
-- ✅ Component range detection when extra blank lines follow component block (trims trailing blank lines)
-- ✅ Existing component parsing from YAML snippets with mixed input types
-- ✅ Component text generation when editing: preserves existing selected inputs, removes unselected when narrowing
-- ✅ Component text generation when editing: adds new parameters not present previously
+**Implementation**: Uses bracket notation to access private method from compiled JavaScript output (`provider['generateComponentText']`).
+
+**Current Status**: ⚠️ **Blocked - Incomplete Source Implementation**
+- Method exists in TypeScript source at line 2495 but is incomplete
+- Source file ends with `// ...existing code...` comment instead of actual implementation  
+- Method does not compile to JavaScript output, making it untestable
+- Tests are written but cannot be executed until method implementation is completed
+
+**Scenarios Ready for Testing** (once method is complete):
+- includeInputs=true with required/optional parameters produces expected type-specific defaults
+- selectedInputs subset filtering (only selected inputs included, no extraneous ones)
+- Editing existing component: existing inputs preserved, unselected inputs removed, new selected inputs added with defaults
+- GitLab variable preservation: defaults like `'${CI_PROJECT_PATH}'` remain quoted and unmodified
+- Component without inputs generates clean component reference without inputs section
 
 **Key Behaviors Locked In**:
-- **Range Detection**: Correctly identifies component block boundaries in various positions
-- **Trailing Line Handling**: Excludes blank lines from component ranges
-- **Input Parsing**: Preserves string, boolean, and numeric values from existing YAML
-- **Edit Preservation**: Maintains existing values for selected inputs during editing
-- **Input Management**: Removes unselected inputs, adds new inputs with appropriate defaults
+- **Parameter Defaults**: Required (string→"TODO: set value", boolean→true, number→0), Optional (string→"", boolean→false, number→0)
+- **GitLab Variables**: Always preserved in double quotes exactly as-is: `"${CI_PROJECT_PATH}"`
+- **Input Selection**: selectedInputs array controls exactly which parameters appear in output
+- **Existing Input Preservation**: When editing, selected existing values are kept, unselected are removed
+- **URL Construction**: Standard format `https://{instance}/{sourcePath}/{name}@{version}`
 
 ## Test Structure and Approach
 
 ### Reflection-Based Testing
-Since the methods being tested are private, tests use bracket notation (`provider['methodName']`) to access them. This is acceptable for transitional safety nets and avoids modifying production code.
+Tests use bracket notation (`provider['methodName']`) to access private methods from compiled JavaScript. This approach:
+- ✅ Tests actual production code (not mocks)
+- ✅ Requires no modification to production code
+- ✅ Works with TypeScript compilation output
+- ✅ Provides authentic behavior validation
 
 ### Mock Strategy
-- **Minimal VSCode API Mocking**: Only mock what's needed for constructor compatibility
-- **No Network Dependencies**: All tests are deterministic and run offline
-- **Isolated Logic Testing**: Focus on pure functions without UI interactions
+```javascript
+// Minimal VSCode API mocking for constructor compatibility
+global.vscode = {
+  window: { showInformationMessage: () => {} },
+  ViewColumn: { Beside: 2 },
+  Uri: { joinPath: () => ({ path: '' }) },
+  // ... other minimal required mocks
+};
+
+// Fake ExtensionContext and ComponentCacheManager
+const mockExtensionContext = { /* minimal required properties */ };
+const mockCacheManager = { /* minimal required methods */ };
+```
 
 ### Test Organization
-- **Common Structure**: All tests use Node.js `assert` module for consistency with existing test infrastructure
-- **Clear Test Names**: Each test case clearly describes the scenario being validated
-- **Comprehensive Assertions**: Tests validate both structure and specific behavior details
+- **Deterministic**: No network, filesystem, or time dependencies
+- **Node.js Assertions**: Uses built-in `assert` module for consistency
+- **Clear Structure**: Each test file follows consistent pattern with setup, test cases, and summary
+- **Comprehensive Validation**: Tests check both structure and specific behavior details
 
 ## Planned Expansion During Refactor
 
