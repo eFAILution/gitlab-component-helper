@@ -24,7 +24,7 @@ export class ComponentBrowserProvider {
 
     // Log the context for debugging
     if (componentContext) {
-      console.log(`Browser received context: ${componentContext.gitlabInstance}/${componentContext.path}`);
+      this.logger.debug(`Browser received context: ${componentContext.gitlabInstance}/${componentContext.path}`, 'ComponentBrowser');
     }
 
     // If panel already exists, show it
@@ -1440,7 +1440,9 @@ export class ComponentBrowserProvider {
             <span class="version-loading" id="versionLoading" style="display: none;">Loading version details...</span>
           </div>
           ${component.documentationUrl ?
-            `<div><strong>Documentation:</strong> <a href="${component.documentationUrl}" target="_blank" id="componentDocUrl">${component.documentationUrl}</a></div>` : ''}
+            `<div><strong>Project URL:</strong> <a href="${component.documentationUrl}" target="_blank" id="componentDocUrl">${component.documentationUrl}</a></div>` : ''}
+          ${component.url ?
+            `<div><strong>Component URL:</strong> <a href="${component.url}" target="_blank" id="componentUrl">${component.url}</a></div>` : ''}
         </div>
 
         <div class="parameters-header">
@@ -1603,6 +1605,13 @@ export class ComponentBrowserProvider {
             if (component.documentationUrl && docUrlElement) {
               docUrlElement.href = component.documentationUrl;
               docUrlElement.textContent = component.documentationUrl;
+            }
+
+            // Update component URL
+            const componentUrlElement = document.getElementById('componentUrl');
+            if (component.url && componentUrlElement) {
+              componentUrlElement.href = component.url;
+              componentUrlElement.textContent = component.url;
             }
 
             // Update parameters

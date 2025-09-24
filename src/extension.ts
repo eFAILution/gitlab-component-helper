@@ -420,7 +420,6 @@ export function activate(context: vscode.ExtensionContext) {
 // Helper function to generate HTML for detached component details
 async function getDetachedComponentHtml(component: any): Promise<string> {
   const parameters = component.parameters || [];
-  const readme = component.readme || '';
 
   // Detect existing inputs for this component in the active editor
   const existingInputs: string[] = [];
@@ -670,31 +669,6 @@ async function getDetachedComponentHtml(component: any): Promise<string> {
         button.secondary:hover {
           background-color: var(--vscode-button-secondaryHoverBackground);
         }
-        .readme {
-          background-color: var(--vscode-editor-background);
-          border: 1px solid var(--vscode-panel-border);
-          border-radius: 6px;
-          padding: 20px;
-          max-height: 60vh;
-          overflow-y: auto;
-        }
-        .readme pre {
-          background-color: var(--vscode-textCodeBlock-background);
-          padding: 12px;
-          border-radius: 4px;
-          overflow-x: auto;
-        }
-        .readme code {
-          background-color: var(--vscode-textCodeBlock-background);
-          padding: 2px 4px;
-          border-radius: 3px;
-          font-family: monospace;
-        }
-        .readme h1, .readme h2, .readme h3 {
-          color: var(--vscode-editor-foreground);
-          margin-top: 20px;
-          margin-bottom: 10px;
-        }
         .no-content {
           color: var(--vscode-disabledForeground);
           font-style: italic;
@@ -728,7 +702,12 @@ async function getDetachedComponentHtml(component: any): Promise<string> {
         <div class="description">
           ${component.description}
         </div>
-      ` : ''}
+      ` : `
+        <div class="description">
+          <strong>Component/Project does not have a description</strong><br>
+          <em>No additional documentation available.</em>
+        </div>
+      `}
 
       <div class="section">
         <div class="parameters-header">
@@ -792,15 +771,6 @@ async function getDetachedComponentHtml(component: any): Promise<string> {
           <button onclick="insertComponent()">${existingInputs.length > 0 ? 'Update Component' : 'Insert Component'}</button>
         </div>
       </div>
-
-      ${readme ? `
-        <div class="section">
-          <h2>📖 README</h2>
-          <div class="readme">
-            ${readme.replace(/\n/g, '<br>').replace(/```([^`]+)```/g, '<pre><code>$1</code></pre>')}
-          </div>
-        </div>
-      ` : ''}
 
       <script>
         const vscode = acquireVsCodeApi();

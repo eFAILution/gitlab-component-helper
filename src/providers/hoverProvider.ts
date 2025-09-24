@@ -98,15 +98,22 @@ export class HoverProvider implements vscode.HoverProvider {
       const detachCommand = vscode.Uri.parse(`command:gitlab-component-helper.detachHover?${encodeURIComponent(JSON.stringify(componentWithContext))}`);
       hoverContent.appendMarkdown(`[🔗 Open in Detailed View](${detachCommand.toString()})\n\n`);
 
-      // Description
-      const description = component.description || '';
+      // Description with fallback handling
+      let description = component.description || '';
+
       hoverContent.appendMarkdown(`${description}\n\n`);
 
-      // Source information
+      // Source information with clickable link
       if (component.context) {
-        hoverContent.appendMarkdown(`**Source:** ${component.context.gitlabInstance}/${component.context.path}\n\n`);
+        const sourceUrl = `https://${component.context.gitlabInstance}/${component.context.path}`;
+        hoverContent.appendMarkdown(`**Source:** [${component.context.gitlabInstance}/${component.context.path}](${sourceUrl})\n\n`);
       } else if (component.source) {
-        hoverContent.appendMarkdown(`**Source:** ${component.source}\n\n`);
+        // Try to create a clickable link from the source string
+        let sourceUrl = component.source;
+        if (!sourceUrl.startsWith('http')) {
+          sourceUrl = `https://${component.source}`;
+        }
+        hoverContent.appendMarkdown(`**Source:** [${component.source}](${sourceUrl})\n\n`);
       }
 
       // Version
@@ -124,22 +131,6 @@ export class HoverProvider implements vscode.HoverProvider {
           hoverContent.appendMarkdown(`| ${param.name} | ${param.description} | ${param.required ? 'Yes' : 'No'} | ${param.default !== undefined ? `\`${param.default}\`` : '-'} |\n`);
         }
         hoverContent.appendMarkdown(`\n`);
-      }
-
-      // README section (collapsible) - only show preview in hover
-      if (component.readme && component.readme.trim()) {
-        hoverContent.appendMarkdown(`### 📖 README Preview\n\n`);
-
-        // Show just a preview of the README in the hover
-        let readmePreview = component.readme.trim();
-        if (readmePreview.length > 300) {
-          readmePreview = readmePreview.substring(0, 300) + '...';
-        }
-
-        // Take first few lines only
-        const lines = readmePreview.split('\n').slice(0, 4);
-        hoverContent.appendMarkdown(lines.join('\n'));
-        hoverContent.appendMarkdown(`\n\n*[Click "Open in Detailed View" above to see the full README]*\n`);
       }
 
       // Enable command URIs
@@ -324,7 +315,11 @@ export class HoverProvider implements vscode.HoverProvider {
     const markdown = new vscode.MarkdownString();
 
     markdown.appendMarkdown(`## ${component.name}\n\n`);
-    markdown.appendMarkdown(`${component.description}\n\n`);
+
+    // Enhanced description with fallback handling
+    let description = component.description || 'Component/Project does not have a description';
+
+    markdown.appendMarkdown(`${description}\n\n`);
 
     markdown.appendMarkdown('### Parameters\n\n');
 
@@ -335,11 +330,13 @@ export class HoverProvider implements vscode.HoverProvider {
       markdown.appendMarkdown(`* **${param.name}** ${requiredLabel} - ${param.description}. Type: ${param.type}. ${defaultValue}\n`);
     }
 
+    markdown.isTrusted = true;
+    markdown.supportThemeIcons = true;
     return new vscode.Hover(markdown);
   }
 
   private createParameterHover(param: ComponentParameter): vscode.Hover {
-    console.log(`[GitLab Component Helper] Creating hover for parameter: ${param.name}`);
+    this.logger.debug(`Creating hover for parameter: ${param.name}`, 'HoverProvider');
     const markdown = new vscode.MarkdownString();
 
     const requiredLabel = param.required ? '(required)' : '(optional)';
