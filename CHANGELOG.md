@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2025-09-24
+
+### ✨ Features
+
+- feat: add comprehensive tests for editExistingComponent functionality
+- feat: enhance hover source information with clickable links
+- feat: update logging behavior and add autoShowOutput configuration option
+
+### 🐛 Bug Fixes
+
+- fix: address Copilot formatting suggestions
+- fix: component descriptions
+
+### 🔧 Other Changes
+
+- Merge pull request #10 from eFAILution/pre-release/0.5.x
+- chore: update version to 0.5.2 and add .env to .vscodeignore
+- test: reorganize tests and enhance test runner functionality; add new integration and unit tests
+- Merge pull request #12 from eFAILution/copilot/fix-d1f604cc-d9d8-4a53-ac6f-73cdf65cf681
+- Initial plan
+- Merge pull request #11 from eFAILution/copilot/fix-2d49ceda-34e6-4169-97a6-ef574dc0f580
+- chore: update test execution instructions in test plan
+- Update tests/unit/componentBrowser.generateComponentText.test.js
+- Update tests/unit/componentBrowser.transform.test.js
+- Update tests/unit/componentBrowser.generateComponentText.test.js
+- test: add safety harness for component browser provider refactor
+- Initial plan
+- Merge pull request #9 from eFAILution/8-output-window-always-opens
+
+
 ## [Unreleased]
 
 ### 🐛 Bug Fixes
