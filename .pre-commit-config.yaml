@@ -6,7 +6,7 @@
 repos:
     # renovate: datasource=github-tags depName=pre-commit/pre-commit-hooks versioning=semver
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
         exclude: ^(docs)
@@ -42,7 +42,7 @@ repos:
         exclude: ^(docs)
     # renovate: datasource=github-tags depName=compilerla/conventional-pre-commit versioning=semver
   - repo: https://github.com/compilerla/conventional-pre-commit
-    rev: v4.0.0
+    rev: v4.3.0
     hooks:
       - id: conventional-pre-commit
         stages: [commit-msg]
@@ -60,19 +60,19 @@ repos:
         ]
     # renovate: datasource=github-tags depName=scop/pre-commit-shfmt versioning=semver
   - repo: https://github.com/scop/pre-commit-shfmt
-    rev: v3.10.0-2 # Note: keep this in sync with .tool-versions
+    rev: v3.12.0-2 # Note: keep this in sync with .tool-versions
     hooks:
       - id: shfmt
         args: [-w, -s, -i, "2"]
     # renovate: datasource=github-tags depName=adrienverge/yamllint versioning=semver
   - repo: https://github.com/adrienverge/yamllint
-    rev: v1.37.0
+    rev: v1.37.1
     hooks:
       - id: yamllint
         args: [-c=.yamllint.yml]
     # renovate: datasource=github-tags depName=gitleaks/gitleaks versioning=semver
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.24.2
+    rev: v8.29.0
     hooks:
       - id: gitleaks
   # - repo: https://github.com/jorisroovers/gitlint
