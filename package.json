@@ -243,7 +243,7 @@
   },
   "devDependencies": {
     "@commitlint/cli": "^20.1.0",
-    "@commitlint/config-conventional": "^19.5.0",
+    "@commitlint/config-conventional": "^20.0.0",
     "@digitalroute/cz-conventional-changelog-for-jira": "^8.0.1",
     "@eslint/js": "^9.39.1",
     "@octokit/core": "^7.0.6",
