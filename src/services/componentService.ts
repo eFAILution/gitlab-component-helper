@@ -5,7 +5,8 @@ import { HttpClient } from '../utils/httpClient';
 import { Logger } from '../utils/logger';
 
 // Regex patterns for parsing GitLab CI/CD component specs
-const SPEC_INPUTS_SECTION_REGEX = /spec:\s*\n\s*inputs:([\s\S]*?)(?=\n---|\ndescription:|\nvariables:|\n[a-zA-Z][a-zA-Z0-9_-]*:|$)/;
+// Updated to allow other spec properties before inputs (e.g., type, owner, lifecycle)
+const SPEC_INPUTS_SECTION_REGEX = /spec:[\s\S]*?\n\s*inputs:([\s\S]*?)(?=\n---|\ndescription:|\nvariables:|\n[a-zA-Z][a-zA-Z0-9_-]*:|$)/;
 
 // Helper: Prompt for token if needed and store it
 async function promptForTokenIfNeeded(
@@ -425,12 +426,32 @@ export class ComponentService implements ComponentSource {
   // Helper method for parallel template fetching
   private async fetchTemplate(apiBaseUrl: string, projectId: string, componentName: string, version: string, fetchOptions?: any): Promise<{ content: string; parameters: any[] } | null> {
     try {
-      const templatePath = `templates/${componentName}.yml`;
-      const templateUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(templatePath)}/raw?ref=${version}`;
+      // Step 1: Resolve the actual ref (handles version with/without 'v' prefix)
+      const resolvedRef = await this.resolveActualRef(apiBaseUrl, projectId, version, fetchOptions);
+      const ref = resolvedRef || version; // Use resolved ref if available, otherwise use provided version
 
-      this.logger.debug(`[ComponentService] Fetching template from: ${templateUrl}`);
-      const templateContent = await this.httpClient.fetchText(templateUrl, fetchOptions);
-      this.logger.debug(`[ComponentService] Template content received, length: ${templateContent.length} chars`);
+      this.logger.debug(`[ComponentService] fetchTemplate: Using ref ${ref} (requested: ${version})`);
+
+      // Try simple component format first: templates/component-name.yml
+      let templatePath = `templates/${componentName}.yml`;
+      let templateUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(templatePath)}/raw?ref=${ref}`;
+
+      this.logger.debug(`[ComponentService] Trying simple component format: ${templateUrl}`);
+
+      let templateContent: string;
+      try {
+        templateContent = await this.httpClient.fetchText(templateUrl, fetchOptions);
+        this.logger.debug(`[ComponentService] Simple component found, template content received, length: ${templateContent.length} chars`);
+      } catch (simpleError) {
+        // If simple format fails, try complex component format: templates/component-name/template.yml
+        this.logger.debug(`[ComponentService] Simple component format failed, trying complex format`);
+        templatePath = `templates/${componentName}/template.yml`;
+        templateUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(templatePath)}/raw?ref=${ref}`;
+
+        this.logger.debug(`[ComponentService] Trying complex component format: ${templateUrl}`);
+        templateContent = await this.httpClient.fetchText(templateUrl, fetchOptions);
+        this.logger.debug(`[ComponentService] Complex component found, template content received, length: ${templateContent.length} chars`);
+      }
 
       // Use the same sophisticated parameter extraction logic as fetchTemplateContent
       let extractedDescription = '';
@@ -438,10 +459,14 @@ export class ComponentService implements ComponentSource {
 
       // Split content by the GitLab component spec separator '---'
       const parts = templateContent.split(/^---\s*$/m);
-      const specSection = parts[0] || '';
 
-      this.logger.debug(`[ComponentService] Template ${componentName}: Found ${parts.length} sections (spec + jobs)`);
+      // Handle YAML documents that may start with '---' (YAML frontmatter)
+      // If parts[0] is empty, the doc starts with '---', so spec is in parts[1]
+      const specSection = parts[0] === '' && parts.length > 1 ? parts[1] : (parts[0] || '');
+
+      this.logger.debug(`[ComponentService] Template ${componentName}: Found ${parts.length} sections`);
       this.logger.debug(`[ComponentService] Template ${componentName}: Spec section length: ${specSection.length} chars`);
+      this.logger.debug(`[ComponentService] Template ${componentName}: parts[0] empty: ${parts[0] === ''}, using parts[${parts[0] === '' ? '1' : '0'}]`);
 
       // Extract description from component spec
       // // FIXED: GitLab component specs don't have spec.description - changed to never match
@@ -685,29 +710,21 @@ export class ComponentService implements ComponentSource {
     this.logger.info(`Fetching fresh catalog data from ${cleanGitlabInstance}`);
 
     try {
-      // **PARALLEL OPTIMIZATION** - Fetch project info and templates in parallel
       const apiBaseUrl = `https://${cleanGitlabInstance}/api/v4`;
-      let ref = version || 'main';
       let token: string | undefined = await this.getTokenForProject(cleanGitlabInstance, projectPath);
       let fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
       let projectInfo: any, templates: any;
+
+      // Step 1: Fetch project info
       try {
-        [projectInfo, templates] = await Promise.all([
-          this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`, fetchOptions),
-          this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`, fetchOptions)
-            .catch(() => [] as GitLabTreeItem[])
-        ]);
+        projectInfo = await this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`, fetchOptions);
       } catch (err: any) {
         if (err && (err.status === 401 || err.status === 403)) {
           // Prompt for token and retry
           token = await promptForTokenIfNeeded(context, this, cleanGitlabInstance, projectPath);
           if (token) {
             fetchOptions = { headers: { 'PRIVATE-TOKEN': token } };
-            [projectInfo, templates] = await Promise.all([
-              this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`, fetchOptions),
-              this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`, fetchOptions)
-                .catch(() => [] as GitLabTreeItem[])
-            ]);
+            projectInfo = await this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`, fetchOptions);
           } else {
             throw err;
           }
@@ -715,22 +732,48 @@ export class ComponentService implements ComponentSource {
           throw err;
         }
       }
-      // --- Use the project's default branch if available ---
-      if (projectInfo && projectInfo.default_branch) {
-        ref = projectInfo.default_branch;
-      }
-      this.logger.debug(`Found project: ${projectInfo.name} (ID: ${projectInfo.id}), using ref: ${ref}`);
-      // Re-fetch templates with correct ref if needed
-      templates = await this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`, fetchOptions)
-        .catch(() => [] as GitLabTreeItem[]);
 
-      // Filter YAML files
+      this.logger.debug(`Found project: ${projectInfo.name} (ID: ${projectInfo.id})`);
+
+      // Step 2: Resolve the actual ref to use (handles version matching with/without 'v' prefix)
+      let ref: string;
+      if (version) {
+        // Try to resolve the requested version to an actual tag
+        const resolvedRef = await this.resolveActualRef(apiBaseUrl, projectInfo.id, version, fetchOptions);
+        if (resolvedRef) {
+          ref = resolvedRef;
+          this.logger.debug(`Resolved requested version '${version}' to actual ref: ${ref}`);
+        } else {
+          // If we can't resolve the version, fall back to default branch
+          ref = projectInfo.default_branch || 'main';
+          this.logger.warn(`Could not resolve version '${version}', falling back to default branch: ${ref}`);
+        }
+      } else {
+        // No version specified, use default branch
+        ref = projectInfo.default_branch || 'main';
+        this.logger.debug(`No version specified, using default branch: ${ref}`);
+      }
+
+      // Step 3: Fetch templates using the resolved ref
+      templates = await this.httpClient.fetchJson(
+        `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`,
+        fetchOptions
+      ).catch(() => [] as GitLabTreeItem[]);
+
+      this.logger.debug(`Using ref: ${ref}`);
+
+      // Filter YAML files (simple components) and directories (complex components)
       const yamlFiles = templates.filter((file: GitLabTreeItem) =>
         file.name.endsWith('.yml') || file.name.endsWith('.yaml')
       );
-      this.logger.debug(`Found ${yamlFiles.length} YAML template files`);
-      if (yamlFiles.length === 0) {
-        this.logger.info(`No YAML templates found in ${projectPath}`);
+
+      // Also check for directories that might contain complex components (templates/component-name/template.yml)
+      const directories = templates.filter((item: GitLabTreeItem) => item.type === 'tree');
+
+      this.logger.debug(`Found ${yamlFiles.length} YAML template files and ${directories.length} directories`);
+
+      if (yamlFiles.length === 0 && directories.length === 0) {
+        this.logger.info(`No YAML templates or component directories found in ${projectPath}`);
         const catalogData = { components: [] };
         this.catalogCache.set(cacheKey, catalogData);
         return catalogData;
@@ -738,13 +781,27 @@ export class ComponentService implements ComponentSource {
       // **BATCH PROCESSING OPTIMIZATION** - Process components in batches
       const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
       const batchSize = config.get<number>('batchSize', 5);
+
+      // Combine both simple components (YAML files) and complex components (directories)
+      const allComponentItems = [
+        ...yamlFiles.map((file: GitLabTreeItem) => ({ ...file, componentType: 'simple' })),
+        ...directories.map((dir: GitLabTreeItem) => ({ ...dir, componentType: 'complex' }))
+      ];
+
+      this.logger.debug(`Processing ${allComponentItems.length} total components (${yamlFiles.length} simple, ${directories.length} complex)`);
+
       const components = await this.httpClient.processBatch(
-        yamlFiles,
-        async (file: GitLabTreeItem) => {
-          const name = file.name.replace(/\.ya?ml$/, '');
-          this.logger.debug(`Processing component: ${name} (${file.name})`);
-          // Fetch template content
-          const templateResult = await this.fetchTemplateContent(apiBaseUrl, projectInfo.id, file.name, ref, fetchOptions);
+        allComponentItems,
+        async (item: GitLabTreeItem & { componentType: string }) => {
+          const name = item.componentType === 'simple'
+            ? item.name.replace(/\.ya?ml$/, '')  // For simple components, strip .yml extension
+            : item.name;  // For complex components (directories), use directory name as-is
+
+          this.logger.debug(`Processing ${item.componentType} component: ${name} (${item.name})`);
+
+          // Fetch template content (fetchTemplateContent now handles both formats)
+          const fileName = item.componentType === 'simple' ? item.name : item.name; // Pass directory name for complex
+          const templateResult = await this.fetchTemplateContent(apiBaseUrl, projectInfo.id, fileName, ref, fetchOptions, item.componentType);
 
           let description = '';
           let variables: ComponentVariable[] = [];
@@ -754,20 +811,27 @@ export class ComponentService implements ComponentSource {
             const { content, extractedVariables, extractedDescription } = templateResult;
             variables = extractedVariables;
             description = extractedDescription || `${name} component`;
+            this.logger.debug(`[ComponentService] Component ${name}: Assigned ${variables.length} variables from template`);
           } else {
             description = `${name} component`;
+            this.logger.debug(`[ComponentService] Component ${name}: No template result, using empty variables`);
           }
 
+          this.logger.debug(`[ComponentService] Component ${name}: Returning component with ${variables.length} variables`);
           return {
             name,
             description,
             variables,
-            latest_version: ref
+            latest_version: ref,
+            componentType: item.componentType as 'simple' | 'complex'
           };
         },
         batchSize
       );
-      const catalogData = { components };
+      const catalogData = {
+        components,
+        resolvedRef: ref // Include the resolved ref so callers know the actual git tag used
+      };
       // Cache the result
       this.catalogCache.set(cacheKey, catalogData);
       this.logger.info(`Successfully processed ${components.length} components`);
@@ -784,14 +848,44 @@ export class ComponentService implements ComponentSource {
   }
 
   // Helper method for parallel template content fetching
-  private async fetchTemplateContent(apiBaseUrl: string, projectId: string, fileName: string, ref: string, fetchOptions?: any): Promise<{
+  // Note: ref should already be resolved to the actual tag (with or without 'v' prefix) by fetchCatalogData
+  private async fetchTemplateContent(apiBaseUrl: string, projectId: string, fileName: string, ref: string, fetchOptions?: any, componentType?: string): Promise<{
     content: string;
     extractedVariables: ComponentVariable[];
     extractedDescription?: string;
   } | null> {
     try {
-      const contentUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent('templates/' + fileName)}/raw?ref=${ref}`;
-      const content = await this.httpClient.fetchText(contentUrl, fetchOptions);
+      // Determine the component name (remove .yml extension if present for simple components)
+      const componentName = fileName.replace(/\.ya?ml$/, '');
+
+      let content: string;
+      let contentUrl: string;
+
+      // If we know it's a complex component (directory), skip straight to complex format
+      if (componentType === 'complex') {
+        contentUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent('templates/' + componentName + '/template.yml')}/raw?ref=${ref}`;
+        this.logger.debug(`[ComponentService] Fetching complex component: ${contentUrl}`);
+        content = await this.httpClient.fetchText(contentUrl, fetchOptions);
+        this.logger.debug(`[ComponentService] Complex component found for ${fileName}`);
+      } else {
+        // For simple components or unknown type, try simple format first
+        contentUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent('templates/' + fileName)}/raw?ref=${ref}`;
+
+        this.logger.debug(`[ComponentService] Trying simple component format: ${contentUrl}`);
+
+        try {
+          content = await this.httpClient.fetchText(contentUrl, fetchOptions);
+          this.logger.debug(`[ComponentService] Simple component found for ${fileName}`);
+        } catch (simpleError) {
+          // If simple format fails, try complex component format: templates/component-name/template.yml
+          this.logger.debug(`[ComponentService] Simple component format failed for ${fileName}, trying complex format`);
+          contentUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent('templates/' + componentName + '/template.yml')}/raw?ref=${ref}`;
+
+          this.logger.debug(`[ComponentService] Trying complex component format: ${contentUrl}`);
+          content = await this.httpClient.fetchText(contentUrl, fetchOptions);
+          this.logger.debug(`[ComponentService] Complex component found for ${fileName}`);
+        }
+      }
 
       let extractedDescription = '';
       let extractedVariables: ComponentVariable[] = [];
@@ -799,10 +893,14 @@ export class ComponentService implements ComponentSource {
       // Split content by the GitLab component spec separator '---'
       // Everything before '---' is the spec section, everything after is the CI/CD job definitions
       const parts = content.split(/^---\s*$/m);
-      const specSection = parts[0] || '';
 
-      this.logger.debug(`[ComponentService] Template ${fileName}: Found ${parts.length} sections (spec + jobs)`);
+      // Handle YAML documents that may start with '---' (YAML frontmatter)
+      // If parts[0] is empty, the doc starts with '---', so spec is in parts[1]
+      const specSection = parts[0] === '' && parts.length > 1 ? parts[1] : (parts[0] || '');
+
+      this.logger.debug(`[ComponentService] Template ${fileName}: Found ${parts.length} sections`);
       this.logger.debug(`[ComponentService] Template ${fileName}: Spec section length: ${specSection.length} chars`);
+      this.logger.debug(`[ComponentService] Template ${fileName}: parts[0] empty: ${parts[0] === ''}, using parts[${parts[0] === '' ? '1' : '0'}]`);
 
       // Extract description from component spec
       // FIXED: GitLab component specs don't have spec.description - changed to never match
@@ -916,10 +1014,65 @@ export class ComponentService implements ComponentSource {
         }
       }
 
+      this.logger.debug(`[ComponentService] Template ${fileName}: Final extracted variables count: ${extractedVariables.length}`);
+      this.logger.debug(`[ComponentService] Template ${fileName}: Variables: ${JSON.stringify(extractedVariables)}`);
+
       return { content, extractedVariables, extractedDescription };
     } catch (error) {
       this.logger.debug(`Could not fetch template content: ${error}`);
       return null;
+    }
+  }
+
+  /**
+   * Resolve the actual tag/ref name by checking what exists in the repository
+   * Handles version matching with/without 'v' prefix
+   * @returns The actual ref that exists, or undefined if not found
+   */
+  private async resolveActualRef(apiBaseUrl: string, projectId: string, requestedRef: string, fetchOptions?: any): Promise<string | undefined> {
+    try {
+      // If no specific version requested, return undefined to use default branch
+      if (!requestedRef || requestedRef === 'main' || requestedRef === 'master') {
+        return requestedRef;
+      }
+
+      // Fetch tags from the project
+      const tags = await this.httpClient.fetchJson(`${apiBaseUrl}/projects/${projectId}/repository/tags?per_page=100`, fetchOptions);
+
+      if (Array.isArray(tags)) {
+        const tagNames = tags.map((tag: any) => tag.name);
+        this.logger.debug(`[ComponentService] Available tags: ${tagNames.join(', ')}`);
+
+        // Try exact match first
+        if (tagNames.includes(requestedRef)) {
+          this.logger.debug(`[ComponentService] Found exact tag match: ${requestedRef}`);
+          return requestedRef;
+        }
+
+        // Try with 'v' prefix if requested ref doesn't have it
+        if (!requestedRef.startsWith('v')) {
+          const vRef = `v${requestedRef}`;
+          if (tagNames.includes(vRef)) {
+            this.logger.debug(`[ComponentService] Found tag with 'v' prefix: ${vRef}`);
+            return vRef;
+          }
+        }
+
+        // Try without 'v' prefix if requested ref has it
+        if (requestedRef.startsWith('v')) {
+          const noVRef = requestedRef.substring(1);
+          if (tagNames.includes(noVRef)) {
+            this.logger.debug(`[ComponentService] Found tag without 'v' prefix: ${noVRef}`);
+            return noVRef;
+          }
+        }
+      }
+
+      this.logger.debug(`[ComponentService] No matching tag found for: ${requestedRef}`);
+      return undefined;
+    } catch (error) {
+      this.logger.debug(`[ComponentService] Error resolving ref: ${error}`);
+      return undefined;
     }
   }
 

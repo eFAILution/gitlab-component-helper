@@ -21,10 +21,12 @@ export interface Component {
   gitlabInstance?: string; // GitLab instance
   sourcePath?: string; // Source path
   originalUrl?: string; // Original URL with variables (if any)
+  componentType?: 'simple' | 'complex'; // Type: simple (single .yml file) or complex (directory with template.yml)
   // Add this context property that's needed by the hover provider
   context?: {
     gitlabInstance: string;
     path: string;
+    componentSourceUrl?: string; // Direct URL to the component source (file or folder)
   };
 }
 
@@ -240,6 +242,16 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
 
       if (exactMatch) {
         logger.debug(`[ComponentDetector] Found exact version match in cache: ${exactMatch.name}@${exactMatch.version}`, 'ComponentDetector');
+
+        // Construct component source URL based on type
+        const componentType = (exactMatch as any).componentType;
+        let componentSourceUrl: string;
+        if (componentType === 'complex') {
+          componentSourceUrl = `${exactMatch.gitlabInstance}/${exactMatch.sourcePath}/-/tree/${exactMatch.version}/templates/${exactMatch.name}`;
+        } else {
+          componentSourceUrl = `${exactMatch.gitlabInstance}/${exactMatch.sourcePath}/-/blob/${exactMatch.version}/templates/${exactMatch.name}.yml`;
+        }
+
         return {
           name: exactMatch.name,
           description: exactMatch.description,
@@ -251,9 +263,11 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
           gitlabInstance: exactMatch.gitlabInstance,
           sourcePath: exactMatch.sourcePath,
           readme: (exactMatch as any).readme || '', // Include README from cache
+          componentType: componentType,
           context: {
             gitlabInstance: exactMatch.gitlabInstance,
-            path: exactMatch.sourcePath
+            path: exactMatch.sourcePath,
+            componentSourceUrl: componentSourceUrl
           }
         };
       }
@@ -280,6 +294,16 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
       // If the requested version matches the cached version, return cached data
       if (!requestedVersion || requestedVersion === cachedComponent.version) {
         logger.debug(`[ComponentDetector] Version matches cache, returning cached component`, 'ComponentDetector');
+
+        // Construct component source URL based on type
+        const componentType = (cachedComponent as any).componentType;
+        let componentSourceUrl: string;
+        if (componentType === 'complex') {
+          componentSourceUrl = `${cachedComponent.gitlabInstance}/${cachedComponent.sourcePath}/-/tree/${cachedComponent.version}/templates/${cachedComponent.name}`;
+        } else {
+          componentSourceUrl = `${cachedComponent.gitlabInstance}/${cachedComponent.sourcePath}/-/blob/${cachedComponent.version}/templates/${cachedComponent.name}.yml`;
+        }
+
         return {
           name: cachedComponent.name,
           description: cachedComponent.description,
@@ -291,9 +315,11 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
           gitlabInstance: cachedComponent.gitlabInstance,
           sourcePath: cachedComponent.sourcePath,
           readme: (cachedComponent as any).readme || '', // Include README from cache
+          componentType: componentType,
           context: {
             gitlabInstance: cachedComponent.gitlabInstance,
-            path: cachedComponent.sourcePath
+            path: cachedComponent.sourcePath,
+            componentSourceUrl: componentSourceUrl
           }
         };
       }
@@ -332,6 +358,14 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
       }
 
       // Fallback to cached version with a note about the version difference
+      const componentType = (cachedComponent as any).componentType;
+      let componentSourceUrl: string;
+      if (componentType === 'complex') {
+        componentSourceUrl = `${cachedComponent.gitlabInstance}/${cachedComponent.sourcePath}/-/tree/${requestedVersion}/templates/${cachedComponent.name}`;
+      } else {
+        componentSourceUrl = `${cachedComponent.gitlabInstance}/${cachedComponent.sourcePath}/-/blob/${requestedVersion}/templates/${cachedComponent.name}.yml`;
+      }
+
       return {
         name: cachedComponent.name,
         description: cachedComponent.description +
@@ -339,9 +373,11 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
         parameters: cachedComponent.parameters,
         version: requestedVersion,
         source: `${cachedComponent.gitlabInstance}/${cachedComponent.sourcePath}`,
+        componentType: componentType,
         context: {
           gitlabInstance: cachedComponent.gitlabInstance,
-          path: cachedComponent.sourcePath
+          path: cachedComponent.sourcePath,
+          componentSourceUrl: componentSourceUrl
         }
       };
     }
@@ -354,6 +390,16 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
     const cachedComponent = cachedComponents.find(comp => comp.url === componentUrl);
     if (cachedComponent) {
       logger.debug(`[ComponentDetector] Found component via exact URL match: ${cachedComponent.name}`, 'ComponentDetector');
+
+      // Construct component source URL based on type
+      const componentType = (cachedComponent as any).componentType;
+      let componentSourceUrl: string;
+      if (componentType === 'complex') {
+        componentSourceUrl = `${cachedComponent.gitlabInstance}/${cachedComponent.sourcePath}/-/tree/${cachedComponent.version}/templates/${cachedComponent.name}`;
+      } else {
+        componentSourceUrl = `${cachedComponent.gitlabInstance}/${cachedComponent.sourcePath}/-/blob/${cachedComponent.version}/templates/${cachedComponent.name}.yml`;
+      }
+
       return {
         name: cachedComponent.name,
         description: cachedComponent.description,
@@ -364,9 +410,11 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
         originalUrl: originalUrl,
         gitlabInstance: cachedComponent.gitlabInstance,
         sourcePath: cachedComponent.sourcePath,
+        componentType: componentType,
         context: {
           gitlabInstance: cachedComponent.gitlabInstance,
-          path: cachedComponent.sourcePath
+          path: cachedComponent.sourcePath,
+          componentSourceUrl: componentSourceUrl
         }
       };
     }
@@ -493,14 +541,18 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
     logger.debug(`[ComponentDetector] Parsed GitLab project: ${gitlabInstance}/${projectPath}@${version}`, 'ComponentDetector');
     logger.debug(`[ComponentDetector] Looking for component named: ${componentName}`, 'ComponentDetector');
 
-    // Use the component service to fetch catalog data
+    // Use the component service to fetch catalog data with the specified version
     const componentService = getComponentService();
-    const catalogData = await componentService.fetchCatalogData(gitlabInstance, projectPath, true);
+    const catalogData = await componentService.fetchCatalogData(gitlabInstance, projectPath, true, version);
 
     if (!catalogData || !catalogData.components) {
       logger.debug(`[ComponentDetector] No catalog data found for ${gitlabInstance}/${projectPath}`, 'ComponentDetector');
       return null;
     }
+
+    // Get the resolved ref (actual git tag) to use in URLs
+    const resolvedRef = catalogData.resolvedRef || version;
+    logger.debug(`[ComponentDetector] Using resolved ref: ${resolvedRef} (requested: ${version})`, 'ComponentDetector');
 
     // Find the specific component
     const foundComponent = catalogData.components.find((comp: GitLabCatalogComponent) => comp.name === componentName);
@@ -508,6 +560,11 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
       logger.debug(`[ComponentDetector] Component ${componentName} not found in catalog. Available components: ${catalogData.components.map((c: GitLabCatalogComponent) => c.name).join(', ')}`, 'ComponentDetector');
       return null;
     }
+
+    // Debug: log what we found
+    logger.debug(`[ComponentDetector] Found component in catalog: ${foundComponent.name}`, 'ComponentDetector');
+    logger.debug(`[ComponentDetector] Component has ${(foundComponent.variables || []).length} variables`, 'ComponentDetector');
+    logger.debug(`[ComponentDetector] Variables: ${JSON.stringify(foundComponent.variables)}`, 'ComponentDetector');
 
     // Convert to our Component interface
     // Use the componentService to get proper description and README data
@@ -539,16 +596,37 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
       componentDescription = 'Component/Project does not have a description';
     }
 
+    // Construct the source URL to point to the component in the templates folder
+    // Use the resolved ref (actual git tag) instead of the requested version
+    const componentType = (foundComponent as any).componentType;
+    let componentSourceUrl: string;
+
+    if (componentType === 'complex') {
+      // For complex components, link to the component's directory
+      componentSourceUrl = `${gitlabInstance}/${projectPath}/-/tree/${resolvedRef}/templates/${componentName}`;
+    } else {
+      // For simple components, link to the YAML file
+      componentSourceUrl = `${gitlabInstance}/${projectPath}/-/blob/${resolvedRef}/templates/${componentName}.yml`;
+    }
+
+    logger.debug(`[ComponentDetector] foundComponent.variables: ${JSON.stringify(foundComponent.variables)}`, 'ComponentDetector');
+    logger.debug(`[ComponentDetector] componentType: ${componentType}`, 'ComponentDetector');
+    logger.debug(`[ComponentDetector] componentSourceUrl: ${componentSourceUrl}`, 'ComponentDetector');
+
+    const mappedParameters = (foundComponent.variables || []).map((v: GitLabCatalogVariable) => ({
+      name: v.name,
+      description: v.description || `Parameter: ${v.name}`,
+      required: v.required || false,
+      type: v.type || 'string',
+      default: v.default
+    }));
+
+    logger.debug(`[ComponentDetector] Mapped ${mappedParameters.length} parameters`, 'ComponentDetector');
+
     const dynamicComponent: Component = {
       name: foundComponent.name,
       description: componentDescription,
-      parameters: (foundComponent.variables || []).map((v: GitLabCatalogVariable) => ({
-        name: v.name,
-        description: v.description || `Parameter: ${v.name}`,
-        required: v.required || false,
-        type: v.type || 'string',
-        default: v.default
-      })),
+      parameters: mappedParameters,
       version: version,
       source: `${gitlabInstance}/${projectPath}`,
       url: componentUrl,
@@ -557,11 +635,15 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
       sourcePath: projectPath,
       documentationUrl: foundComponent.documentation_url,
       readme: readmeContent, // Include README content from full fetch
+      componentType: componentType,
       context: {
         gitlabInstance: gitlabInstance,
-        path: projectPath
+        path: projectPath,
+        componentSourceUrl: componentSourceUrl
       }
     };
+
+    logger.debug(`[ComponentDetector] Created dynamicComponent with ${dynamicComponent.parameters.length} parameters`, 'ComponentDetector');
 
     // Add to cache for future use
     try {
@@ -580,7 +662,8 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
         sourcePath: projectPath,
         gitlabInstance: gitlabInstance,
         version: version,
-        url: componentUrl
+        url: componentUrl,
+        componentType: componentType // Store component type in cache
       };
 
       cacheManager.addDynamicComponent(cacheComponent);

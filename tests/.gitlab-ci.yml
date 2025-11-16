@@ -12,7 +12,11 @@ include:
     inputs:
       some_input: "value"
       some_other_input: "another_value"
-
+  # Complex component
+  - component: https://gitlab.com/components/package/ecr-migration@1.0.0
+    inputs:
+      AWS_DEFAULT_REGION: "us-west-2"
+      BULK_MIGRATE: true
 # Test GitLab CI file
 stages:
   - test
