@@ -1,0 +1,239 @@
+# .ai/workflows.yaml - Common Development Tasks
+workflows:
+  setup_dev_environment:
+    description: "Initial setup for development"
+    steps:
+      - action: clone_repository
+        command: "git clone https://github.com/eFAILution/gitlab-component-helper.git"
+      - action: install_dependencies
+        command: "npm install"
+      - action: compile_typescript
+        command: "npm run compile"
+      - action: open_in_vscode
+        command: "code ."
+      - action: start_debugging
+        key: "F5"
+        note: "Opens Extension Development Host window"
+
+  add_new_provider:
+    description: "Add a new language feature provider"
+    steps:
+      - action: create_file
+        location: "src/providers/{name}Provider.ts"
+        template: |
+          import * as vscode from 'vscode';
+
+          export class {Name}Provider implements vscode.{Type}Provider {
+            provide{Type}(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken) {
+              // Implementation
+            }
+          }
+      - action: register_provider
+        file: "src/extension.ts"
+        add_import: "import { {Name}Provider } from './providers/{name}Provider';"
+        add_registration: |
+          context.subscriptions.push(
+            vscode.languages.register{Type}Provider(
+              [{ language: 'yaml' }],
+              new {Name}Provider()
+            )
+          );
+      - action: add_tests
+        location: "tests/unit/{name}-provider.test.js"
+    reference: "src/providers/hoverProvider.ts"
+
+  add_new_command:
+    description: "Add a new VS Code command"
+    steps:
+      - action: register_command
+        file: "src/extension.ts"
+        code: |
+          context.subscriptions.push(
+            vscode.commands.registerCommand('gitlab-component-helper.{commandName}', async () => {
+              // Command implementation
+            })
+          );
+      - action: add_to_package_json
+        file: "package.json"
+        section: "contributes.commands"
+        add: |
+          {
+            "command": "gitlab-component-helper.{commandName}",
+            "title": "GitLab CI: {Title}"
+          }
+      - action: add_tests
+        location: "tests/integration/{command-name}.test.js"
+    reference: "browseComponents command in src/extension.ts"
+
+  run_tests:
+    description: "Run test suite"
+    command: "npm test"
+    options:
+      all_tests: "npm run test:all"
+      unit_tests: "npm run test:unit"
+      integration_tests: "npm run test:integration"
+      performance_tests: "npm run test:performance"
+      watch_mode: "npm test -- --watch"
+      specific_file: "npm test -- tests/unit/{filename}.test.js"
+
+  debug_extension:
+    description: "Debug the extension in VS Code"
+    steps:
+      - action: open_project
+        command: "code ."
+      - action: start_debugging
+        key: "F5"
+        note: "Launches Extension Development Host"
+      - action: set_breakpoints
+        location: "src/**/*.ts"
+      - action: view_debug_console
+        key: "Ctrl+Shift+Y"
+      - action: check_output_channel
+        command: "View → Output → GitLab Component Helper"
+
+  build_and_package:
+    description: "Build extension for distribution"
+    steps:
+      - action: run_tests
+        command: "npm test"
+      - action: check_types
+        command: "npm run check-types"
+      - action: package_extension
+        command: "npm run package"
+        output: "out/extension.js (production build)"
+      - action: create_vsix
+        command: "vsce package"
+        output: "gitlab-component-helper-{version}.vsix"
+
+  release:
+    description: "Create a new release"
+    steps:
+      - action: commit_changes
+        command: "git add . && git commit -m 'feat: description'"
+        note: "Use conventional commits (feat, fix, chore, etc.)"
+      - action: push_to_main
+        command: "git push origin main"
+      - action: automatic_release
+        note: "semantic-release runs automatically on push to main"
+        creates:
+          - "GitHub release"
+          - "Version bump in package.json"
+          - "Updated CHANGELOG.md"
+          - "VSIX artifact"
+    reference: "SEMANTIC_RELEASE.md"
+
+  add_configuration_option:
+    description: "Add new user configuration setting"
+    steps:
+      - action: add_to_package_json
+        file: "package.json"
+        section: "contributes.configuration.properties"
+        add: |
+          "gitlabComponentHelper.{settingName}": {
+            "type": "string|number|boolean|array",
+            "default": "value",
+            "description": "Description of setting"
+          }
+      - action: read_configuration
+        code: |
+          const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+          const value = config.get('{settingName}', defaultValue);
+      - action: update_docs
+        files:
+          - "README.md"
+          - ".ai/context.yaml"
+
+  fix_failing_test:
+    description: "Debug and fix a failing test"
+    steps:
+      - action: run_specific_test
+        command: "npm test -- tests/unit/{test-file}.test.js"
+      - action: add_debug_output
+        code: "console.log('Debug:', variable);"
+      - action: check_test_fixtures
+        location: "tests/fixtures/mock-data.json"
+      - action: fix_implementation
+        location: "src/**/*.ts"
+      - action: verify_fix
+        command: "npm test"
+
+  update_dependencies:
+    description: "Update npm dependencies"
+    steps:
+      - action: check_outdated
+        command: "npm outdated"
+      - action: update_packages
+        command: "npm update"
+      - action: run_tests
+        command: "npm test"
+      - action: commit_changes
+        command: "git commit -m 'chore: update dependencies'"
+
+common_commands:
+  compile: "npm run compile"
+  watch: "npm run watch"
+  test: "npm test"
+  debug: "F5 (in VS Code)"
+  package: "npm run package"
+  lint: "npm run lint"
+
+git_workflow:
+  branch_naming: "feature/description or fix/description"
+  commit_format: "type(scope): description"
+  commit_types:
+    - "feat: New feature"
+    - "fix: Bug fix"
+    - "docs: Documentation"
+    - "chore: Maintenance"
+    - "refactor: Code refactoring"
+    - "test: Tests"
+
+  husky_hooks:
+    pre_commit:
+      file: ".husky/pre-commit"
+      triggers: "Before commit is created"
+      actions:
+        - "Runs npm run compile (TypeScript type checking)"
+      purpose: "Ensure code compiles before committing"
+
+    prepare_commit_msg:
+      file: ".husky/prepare-commit-msg"
+      triggers: "Before commit message editor opens"
+      actions:
+        - "Runs pre-commit hooks (formatting, linting)"
+        - "Checks for TODO comments"
+        - "Checks for release-utils ignore comments"
+        - "Launches commitizen for conventional commits"
+      purpose: "Ensure code quality and conventional commit format"
+
+    commit_msg:
+      file: ".husky/commit-msg"
+      triggers: "After commit message is entered"
+      actions:
+        - "Runs commitlint to validate message format"
+      purpose: "Enforce conventional commit message format"
+      format: "type(scope): description"
+
+syntax_highlighting:
+  language_definition:
+    location: "syntaxes/gitlab-ci.tmLanguage.json"
+    language_id: "gitlab-ci"
+    scope: "source.yaml.gitlab-ci"
+    file_extensions:
+      - ".gitlab-ci.yml"
+      - ".gitlab-ci.yaml"
+
+  configuration:
+    location: "language-configuration.json"
+    features:
+      - "Comment toggling"
+      - "Bracket matching"
+      - "Auto-closing pairs"
+      - "Folding markers"
+
+  registration:
+    file: "package.json"
+    section: "contributes.languages"
+    grammar_path: "syntaxes/gitlab-ci.tmLanguage.json"
+    embedded_languages:
+      yaml: "For base YAML syntax"

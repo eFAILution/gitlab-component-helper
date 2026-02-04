@@ -1,40 +1,35 @@
-# .ai Directory
+# .ai/ Directory
 
-This directory contains AI-readable project documentation using the AICaC standard.
+Structured documentation for AI coding assistants using [AI Context as Code (AICaC)](https://github.com/eFAILution/AICaC).
 
 ## Files
 
-- `context.yaml` - Project metadata and overview (REQUIRED)
-- `architecture.yaml` - Component relationships (optional)
-- `workflows.yaml` - Common tasks and procedures (optional)
-- `decisions.yaml` - Architectural decisions (optional)
-- `errors.yaml` - Error patterns and solutions (optional)
+| File | Purpose |
+|------|---------|
+| `context.yaml` | Project overview, tech stack, dependencies |
+| `architecture.yaml` | Components, relationships, data flow |
+| `workflows.yaml` | Common development tasks and commands |
+| `decisions.yaml` | Architectural decisions and rationale |
+| `errors.yaml` | Common errors and solutions |
 
-## Next Steps
+## For AI Assistants
 
-1. Review and complete TODO items in `context.yaml`
-2. Add additional files as needed for your project
-3. Reference this directory from your project's `AGENTS.md`
-4. Add an AICaC badge to your README.md
+**Read order:**
+1. `context.yaml` - Start here for project overview
+2. `workflows.yaml` - How to build, test, and develop
+3. `architecture.yaml` - Code structure and components
+4. `errors.yaml` - If debugging issues
 
-See [AICaC specification](https://github.com/eFAILution/AICaC) for details.
+**Load only what you need:**
+- Adding feature → `workflows.yaml`
+- Understanding architecture → `architecture.yaml`
+- Fixing error → `errors.yaml`
+- Project setup → `context.yaml`
 
-## AI-Assisted Completion
+## For Humans
 
-To get help populating these files with AI:
+These are human-readable YAML files documenting the project structure. See `../README.md` for end-user documentation.
 
-### Using GitHub Copilot
-Open files in your editor with Copilot enabled and use inline suggestions.
+## Schema
 
-### Using Claude Code or Cursor
-Ask your AI assistant to analyze your project and populate the .ai/ files:
-```
-Based on my project structure, help me complete the .ai/context.yaml file
-and add relevant architecture.yaml and workflows.yaml files.
-```
-
-### Using Free AI (via API)
-Run the bootstrap script with AI assistance:
-```bash
-python .github/actions/aicac-adoption/bootstrap.py --with-ai --api-key=YOUR_KEY
-```
+AICaC v1.0 - https://github.com/eFAILution/AICaC
