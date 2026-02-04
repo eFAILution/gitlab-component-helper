@@ -1,23 +1,79 @@
-# GitHub Actions Release Workflow (DISABLED to avoid costs)
-#
-# This workflow has been disabled to prevent GitHub Actions costs.
-# Use local release scripts instead:
-#   - npm run release:manual (fully manual, no dependencies)
-#   - npm run release:local-only (semantic-release without GitHub)
-#
-# To re-enable this workflow, remove the comments and the 'if: false' condition below.
-
 name: Release
 
 on:
   push:
     branches:
       - main
+      - beta
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
-    if: false  # DISABLED - remove this line to re-enable
     steps:
-      - name: Disabled
-        run: echo "Release workflow is disabled to avoid GitHub Actions costs. Use local release scripts instead."
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install vsce
+        run: npm install -g @vscode/vsce
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Setup GPG (optional)
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          if [ -n "$GPG_PRIVATE_KEY" ]; then
+            echo "Importing GPG key..."
+            echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+            GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format=long | grep sec | awk '{print $2}' | cut -d'/' -f2 | head -n1)
+            git config --global user.signingkey "$GPG_KEY_ID"
+            git config --global commit.gpgsign true
+            git config --global tag.gpgsign true
+            echo "✅ GPG signing enabled"
+          else
+            echo "⚠️  GPG signing disabled (no key provided)"
+          fi
+
+      - name: Release (Beta)
+        if: github.ref == 'refs/heads/beta'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HUSKY: 0
+        run: npx release-it --config .release-it.beta.json --ci
+
+      - name: Release (Main)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          HUSKY: 0
+        run: npx release-it --config .release-it.json --ci
+
+      - name: Upload .vsix artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-package-${{ github.ref_name }}
+          path: '*.vsix'
+          retention-days: 30

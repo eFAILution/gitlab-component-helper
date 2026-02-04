@@ -1,35 +1,76 @@
+# VS Code directories
 .vscode/**
 .vscode-test/**
+
+# Source and build files
 src/**
 tests/**
-.gitignore
-.yarnrc
-vsc-extension-quickstart.md
-**/tsconfig.json
-**/.eslintrc.json
+esbuild.js
+
+# TypeScript files (compiled to out/)
 **/*.map
 **/*.ts
-.nyc_output
-coverage
-**/.git
-node_modules/**
-.husky/**
-commitlint.config.js
+
+# Development config files
+.gitignore
+.yarnrc
+package-lock.json
+tsconfig.json
+**/tsconfig.json
+.eslintrc.js
+.eslintrc.json
+**/.eslintrc.json
 eslint.config.js
+commitlint.config.js
+.pre-commit-config.yaml
+.yamllint.yml
+
+# Git and CI/CD
+**/.git
+.git/**
+.github/**
+.husky/**
+
+# AI and docs (keep README.md and CHANGELOG.md only)
+.ai/**
+docs/**
+AGENTS.md
+CACHE_MANAGEMENT.md
+CLAUDE.md
+CONTRIBUTING.md
+DEVELOPERS.md
+TODO.md
+vsc-extension-quickstart.md
+
+# Scripts and utilities
+scripts/**
 rsync-changes.sh
 sync-changes.sh
+
+# Test and coverage
+.nyc_output
+coverage
 compile.txt
+
+# Build artifacts
 **/*.backup
-.git/**
-esbuild.js
-.eslintrc.js
 *.vsix
+
+# Dependencies
+node_modules/**
 .venv/**
-.pre-commit-config.yaml
+
+# Environment files
+.env
+**/.env
+
+# Release config (not needed in package)
+.releaserc.json
+.releaserc.local.json
+
+# Excluded out/ subdirectories (only keep extension.js)
 out/providers/**
 out/services/**
 out/types/**
 out/utils/**
 out/test/**
-.env
-**/.env
