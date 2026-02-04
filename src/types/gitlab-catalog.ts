@@ -1,6 +1,10 @@
 export interface GitLabCatalogComponent {
   name: string;
   description?: string;
+  summary?: string;
+  usage?: string;
+  notes?: string[];
+  rawYaml?: string;
   documentation_url?: string;
   latest_version?: string;
   variables?: GitLabCatalogVariable[];
@@ -25,6 +29,10 @@ export interface GitLabYamlFragment {
   name: string;
   fileName: string;
   description?: string;
+  summary?: string;
+  usage?: string;
+  notes?: string[];
+  rawYaml?: string;
   latest_version?: string;
   anchors: GitLabFragmentAnchor[];
 }

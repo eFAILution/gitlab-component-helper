@@ -391,13 +391,20 @@ export class ComponentService implements ComponentSource {
         cleanDescription = `Component/Project does not have a description`;
       }
 
+      // Extract header metadata if we have template content
+      const headerMetadata = templateContent ? this.parseHeaderMetadata(templateContent) : { summary: undefined, usage: undefined, notes: undefined };
+
       // Construct the component
       const component: Component = {
         name: componentName,
         description: cleanDescription,
+        summary: headerMetadata.summary,
+        usage: headerMetadata.usage,
+        notes: headerMetadata.notes,
         parameters,
         version,
-        source: `${gitlabInstance}/${projectPath}`
+        source: `${gitlabInstance}/${projectPath}`,
+        rawYaml: templateContent || undefined
       };
 
       this.logger.logPerformance('fetchComponentMetadata (full)', Date.now() - startTime, {
@@ -762,7 +769,7 @@ export class ComponentService implements ComponentSource {
             return null;
           }
 
-          const { content, extractedVariables, extractedDescription, isValidComponent, isYamlFragment, fragmentAnchors } = templateResult;
+          const { content, extractedVariables, extractedDescription, headerSummary, headerUsage, headerNotes, isValidComponent, isYamlFragment, fragmentAnchors } = templateResult;
 
           // Return different result types based on what we found
           if (isValidComponent) {
@@ -771,6 +778,10 @@ export class ComponentService implements ComponentSource {
               type: 'component' as const,
               name,
               description: extractedDescription || `${name} component`,
+              summary: headerSummary,
+              usage: headerUsage,
+              notes: headerNotes,
+              rawYaml: content,
               variables: extractedVariables,
               latest_version: ref
             };
@@ -781,6 +792,10 @@ export class ComponentService implements ComponentSource {
               name,
               fileName: file.name,
               description: extractedDescription || `Reusable YAML fragment with ${fragmentAnchors.length} anchor${fragmentAnchors.length > 1 ? 's' : ''}`,
+              summary: headerSummary,
+              usage: headerUsage,
+              notes: headerNotes,
+              rawYaml: content,
               anchors: fragmentAnchors,
               latest_version: ref
             };
@@ -825,6 +840,9 @@ export class ComponentService implements ComponentSource {
     content: string;
     extractedVariables: ComponentVariable[];
     extractedDescription?: string;
+    headerSummary?: string;
+    headerUsage?: string;
+    headerNotes?: string[];
     isValidComponent: boolean;
     isYamlFragment: boolean;
     fragmentAnchors?: Array<{
@@ -910,21 +928,11 @@ export class ComponentService implements ComponentSource {
       // Check for explicit component marker to override heuristics
       const hasComponentMarker = content.match(/^#\s*@(gitlab-component-helper:\s*component|type:\s*component)/m) !== null;
 
-      // Extract description from component spec
-      // FIXED: GitLab component specs don't have spec.description - changed to never match
-      // const specDescMatch = specSection.match(/spec:\s*\n\s*NEVER_MATCH_description:\s*["']?(.*?)["']?\s*$/m);
-      // if (specDescMatch) {
-      //   extractedDescription = specDescMatch[1].trim();
-      //   this.logger.debug(`[ComponentService] Template ${fileName}: Found spec description: ${extractedDescription}`);
-      // }
-
-      // If no spec description, try comment at top of file
-      if (!extractedDescription) {
-        const commentMatch = specSection.match(/^#\s*(.+?)$/m);
-        if (commentMatch && !commentMatch[1].toLowerCase().includes('gitlab') && !commentMatch[1].toLowerCase().includes('ci')) {
-          extractedDescription = commentMatch[1].trim();
-          this.logger.debug(`[ComponentService] Template ${fileName}: Found comment description: ${extractedDescription}`);
-        }
+      // Extract structured header metadata (only spec-compliant comments)
+      const headerMetadata = this.parseHeaderMetadata(content);
+      if (headerMetadata.summary) {
+        extractedDescription = headerMetadata.summary;
+        this.logger.debug(`[ComponentService] Template ${fileName}: Using header summary as description`);
       }
 
       // Extract variables from GitLab CI/CD component spec format - ONLY from spec section
@@ -1043,6 +1051,9 @@ export class ComponentService implements ComponentSource {
         content,
         extractedVariables,
         extractedDescription,
+        headerSummary: headerMetadata.summary,
+        headerUsage: headerMetadata.usage,
+        headerNotes: headerMetadata.notes,
         isValidComponent,
         isYamlFragment: isYamlFragment || hasFragmentMarker,
         fragmentAnchors: fragmentAnchors.length > 0 ? fragmentAnchors : undefined
@@ -1078,6 +1089,63 @@ export class ComponentService implements ComponentSource {
       this.logger.debug(`Error extracting anchor content for ${anchorName}: ${error}`);
       return null;
     }
+  }
+
+  /**
+   * Parse spec-compliant header comments for context.
+   * Only lines matching the header spec are included; other comments are ignored.
+   *
+   * Supported formats (must be at top of file before any non-comment content):
+   *   # @gitlab-component-helper: summary: <text>
+   *   # @gitlab-component-helper: usage: <text>
+   *   # @gitlab-component-helper: note: <text>
+   *   # @gch: summary: <text>
+   *   # @gch: usage: <text>
+   *   # @gch: note: <text>
+   */
+  private parseHeaderMetadata(content: string): { summary?: string; usage?: string; notes?: string[] } {
+    const lines = content.split('\n');
+    const notes: string[] = [];
+    let summary: string | undefined;
+    let usage: string | undefined;
+
+    let started = false;
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      if (!started) {
+        if (trimmed === '') {
+          continue; // Skip leading blank lines
+        }
+        if (!trimmed.startsWith('#')) {
+          break; // Header comments must be at top of file
+        }
+        started = true;
+      }
+
+      if (!trimmed.startsWith('#')) {
+        break; // Stop at first non-comment line after header starts
+      }
+
+      const match = trimmed.match(/^#\s*@(?:gitlab-component-helper|gch):\s*(summary|usage|note)s?\s*:\s*(.+)$/i);
+      if (match) {
+        const key = match[1].toLowerCase();
+        const value = match[2].trim();
+        if (key === 'summary') {
+          summary = value;
+        } else if (key === 'usage') {
+          usage = value;
+        } else if (key === 'note') {
+          notes.push(value);
+        }
+      }
+    }
+
+    return {
+      summary,
+      usage,
+      notes: notes.length > 0 ? notes : undefined
+    };
   }
 
   /**
