@@ -7,14 +7,12 @@ on:
       - beta
 
 permissions:
-  contents: write  # For creating releases and pushing tags
-  issues: write    # For commenting on issues
-  pull-requests: write  # For commenting on PRs
+  contents: write
+  issues: write
+  pull-requests: write
 
 jobs:
-  validate-version:
-    # Only run version validation on beta branch
-    if: github.ref == 'refs/heads/beta'
+  release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -32,103 +30,49 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate version is odd minor (pre-release)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "Running semantic-release in dry-run mode to determine next version..."
-
-          # Run semantic-release dry-run and capture output
-          OUTPUT=$(npx semantic-release --dry-run 2>&1 || true)
-          echo "$OUTPUT"
-
-          # Extract version from output
-          VERSION=$(echo "$OUTPUT" | grep -oP "The next release version is \K[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?" || echo "")
-
-          if [ -z "$VERSION" ]; then
-            echo "❌ Could not determine next version from semantic-release"
-            exit 1
-          fi
-
-          echo "Next version would be: $VERSION"
-
-          # Extract minor version (second number)
-          MINOR=$(echo "$VERSION" | cut -d'.' -f2)
-
-          echo "Minor version: $MINOR"
-
-          # Check if minor version is odd (pre-release in VS Code)
-          if [ $((MINOR % 2)) -eq 0 ]; then
-            echo "❌ ERROR: Minor version $MINOR is EVEN, which VS Code treats as STABLE release"
-            echo "   Beta branch must have ODD minor versions (0.7.x, 0.9.x, etc.)"
-            echo "   Current would create: $VERSION"
-            echo ""
-            echo "To fix this, you need a commit that triggers a minor version bump."
-            echo "Change your commit type from 'fix:' to 'feat:' to bump minor version."
-            exit 1
-          fi
-
-          echo "✅ Minor version $MINOR is ODD - VS Code will treat this as pre-release"
-          echo "   Version $VERSION is valid for beta branch"
-
-  release:
-    needs: [validate-version]
-    # Run if tests passed AND (validation passed OR validation was skipped for main branch)
-    if: always() && (needs.validate-version.result == 'success' || needs.validate-version.result == 'skipped')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Full history for semantic-release
-          persist-credentials: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
       - name: Install vsce
         run: npm install -g @vscode/vsce
 
-      - name: Setup GPG for commit signing
+      - name: Setup Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Setup GPG (optional)
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           if [ -n "$GPG_PRIVATE_KEY" ]; then
             echo "Importing GPG key..."
             echo "$GPG_PRIVATE_KEY" | gpg --batch --import
-
-            # Get the GPG key ID
             GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format=long | grep sec | awk '{print $2}' | cut -d'/' -f2 | head -n1)
-
-            # Configure git to use GPG
             git config --global user.signingkey "$GPG_KEY_ID"
             git config --global commit.gpgsign true
             git config --global tag.gpgsign true
-
-            echo "✅ Git configured to sign commits with GPG key: $GPG_KEY_ID"
+            echo "✅ GPG signing enabled"
           else
-            echo "⚠️  No GPG key found - commits will not be signed"
-            echo "   To enable signed commits, add GPG_PRIVATE_KEY secret to repository"
+            echo "⚠️  GPG signing disabled (no key provided)"
           fi
 
-      - name: Semantic Release
+      - name: Release (Beta)
+        if: github.ref == 'refs/heads/beta'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}  # Optional: for marketplace publishing
-          HUSKY: 0  # Disable git hooks in CI
-        run: npx semantic-release
+          HUSKY: 0
+        run: npx release-it --config .release-it.beta.json --ci
 
-      - name: Upload .vsix as artifact
+      - name: Release (Main)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          HUSKY: 0
+        run: npx release-it --config .release-it.json --ci
+
+      - name: Upload .vsix artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: vsix-package
+          name: vsix-package-${{ github.ref_name }}
           path: '*.vsix'
           retention-days: 30

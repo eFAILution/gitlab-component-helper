@@ -31,10 +31,10 @@ jobs:
       - name: Install vsce
         run: npm install -g @vscode/vsce
 
-      - name: Semantic Release Dry Run
+      - name: Release-it Dry Run
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "🔍 Running semantic-release in dry-run mode to preview what would be released..."
+          echo "🔍 Running release-it in dry-run mode to preview what would be released..."
           echo ""
-          npx semantic-release --dry-run
+          npx release-it --config .release-it.json --dry-run

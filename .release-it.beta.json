@@ -1,0 +1,42 @@
+{
+  "git": {
+    "commit": true,
+    "commitMessage": "chore(release): ${version} [skip ci]",
+    "commitArgs": [],
+    "tag": false,
+    "tagName": null,
+    "push": true,
+    "pushArgs": [
+      "--follow-tags"
+    ],
+    "requireBranch": "beta",
+    "requireCleanWorkingDir": false
+  },
+  "github": {
+    "release": false,
+    "releaseName": "${version}",
+    "draft": false,
+    "preRelease": false
+  },
+  "npm": {
+    "publish": false
+  },
+  "hooks": {
+    "before:init": [],
+    "after:bump": "npm run package && vsce package ${version} --pre-release",
+    "after:release": "echo '\ud83d\udce6 Beta ${version} packaged and ready for manual marketplace publish'"
+  },
+  "plugins": {
+    "./.release-it/vscode-version.js": {
+      "requireOddMinor": true
+    },
+    "@release-it/conventional-changelog": {
+      "preset": {
+        "name": "angular"
+      },
+      "infile": "CHANGELOG.md",
+      "header": "# Changelog\n\nAll notable changes to this project will be documented in this file.",
+      "ignoreRecommendedBump": false
+    }
+  }
+}
