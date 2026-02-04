@@ -1,10 +1,13 @@
 name: Release
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
     branches:
       - main
-      - beta  # Pre-release branch
+      - beta
 
 permissions:
   contents: write  # For creating releases and pushing tags
@@ -13,8 +16,8 @@ permissions:
 
 jobs:
   validate-version:
-    # Only run version validation on beta branch
-    if: github.ref == 'refs/heads/beta'
+    # Only run if CI succeeded and on beta branch
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'beta'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -73,8 +76,8 @@ jobs:
 
   release:
     needs: [validate-version]
-    # Run if validation passed, or if it was skipped (main branch)
-    if: always() && (needs.validate-version.result == 'success' || needs.validate-version.result == 'skipped')
+    # Run if CI succeeded AND (validation passed OR validation was skipped for main branch)
+    if: github.event.workflow_run.conclusion == 'success' && (needs.validate-version.result == 'success' || needs.validate-version.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -94,9 +97,6 @@ jobs:
 
       - name: Install vsce
         run: npm install -g @vscode/vsce
-
-      - name: Run tests
-        run: npm test || echo "No tests configured"
 
       - name: Semantic Release
         env:
