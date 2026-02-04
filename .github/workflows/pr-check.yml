@@ -37,4 +37,4 @@ jobs:
         run: |
           echo "🔍 Running release-it in dry-run mode to preview what would be released..."
           echo ""
-          npx release-it --config .release-it.json --dry-run
+          npx release-it --dry-run --no-git.requireBranch --no-git.push
