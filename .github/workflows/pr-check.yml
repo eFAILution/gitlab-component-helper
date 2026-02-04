@@ -17,7 +17,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history for semantic-release
+          fetch-depth: 0
+          ref: ${{ github.head_ref }}  # Full history for semantic-release
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
