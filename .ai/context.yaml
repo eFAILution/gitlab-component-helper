@@ -1,0 +1,11 @@
+version: '1.0'
+project:
+  name: gitlab-component-helper
+  type: node-app
+  description: 'TODO: Add project description'
+entrypoints:
+  main: 'TODO: Add main entrypoint'
+common_tasks:
+  dev: 'TODO: Add development command'
+  test: 'TODO: Add test command'
+  build: 'TODO: Add build command'
