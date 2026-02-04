@@ -29,14 +29,6 @@
   "plugins": {
     "./.release-it/vscode-version.js": {
       "requireOddMinor": true
-    },
-    "@release-it/conventional-changelog": {
-      "preset": {
-        "name": "angular"
-      },
-      "infile": "CHANGELOG.md",
-      "header": "# Changelog\n\nAll notable changes to this project will be documented in this file.",
-      "ignoreRecommendedBump": false
     }
   }
 }
