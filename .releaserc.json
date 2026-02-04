@@ -1,6 +1,10 @@
 {
   "branches": [
-    "main"
+    "main",
+    {
+      "name": "beta",
+      "prerelease": true
+    }
   ],
   "repositoryUrl": "https://github.com/eFAILution/gitlab-component-helper.git",
   "tagFormat": "${version}",
@@ -22,7 +26,7 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "npm run package",
+        "prepareCmd": "npm run package && vsce package ${nextRelease.version} ${nextRelease.channel === 'beta' ? '--pre-release' : ''}",
         "publishCmd": "echo 'Extension packaged successfully'"
       }
     ],
