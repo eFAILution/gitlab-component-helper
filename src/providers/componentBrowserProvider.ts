@@ -202,6 +202,10 @@ export class ComponentBrowserProvider {
               const components = catalogData.components.map((c: GitLabCatalogComponent) => ({
                 name: c.name,
                 description: c.description || `Component from ${contextPath}`,
+                summary: c.summary,
+                usage: c.usage,
+                notes: c.notes,
+                rawYaml: c.rawYaml,
                 parameters: (c.variables || []).map((v: GitLabCatalogVariable) => ({
                   name: v.name,
                   description: v.description || `Parameter: ${v.name}`,
@@ -424,7 +428,7 @@ export class ComponentBrowserProvider {
     return this.insertComponent(component, includeInputs, selectedInputs);
   }
 
-  private async showComponentDetails(component: any) {
+  public async showComponentDetails(component: any) {
     // Create a new webview panel for component details
     const detailsPanel = vscode.window.createWebviewPanel(
       'gitlabComponentDetails',
@@ -454,12 +458,32 @@ export class ComponentBrowserProvider {
               version
             );
             if (updatedComponent) {
-              await this.insertComponent(updatedComponent, includeInputs, selectedInputs);
+              if (component._hoverContext) {
+                await this.editExistingComponentFromDetached(
+                  updatedComponent,
+                  component._hoverContext.documentUri,
+                  component._hoverContext.position,
+                  includeInputs || false,
+                  selectedInputs || []
+                );
+              } else {
+                await this.insertComponent(updatedComponent, includeInputs, selectedInputs);
+              }
             } else {
               vscode.window.showErrorMessage(`Failed to fetch version ${version} of component ${component.name}`);
             }
           } else {
-            await this.insertComponent(component, includeInputs, selectedInputs);
+            if (component._hoverContext) {
+              await this.editExistingComponentFromDetached(
+                component,
+                component._hoverContext.documentUri,
+                component._hoverContext.position,
+                includeInputs || false,
+                selectedInputs || []
+              );
+            } else {
+              await this.insertComponent(component, includeInputs, selectedInputs);
+            }
           }
         } else if (message.command === 'fetchVersions') {
           // Fetch available versions for the component
@@ -1093,7 +1117,8 @@ export class ComponentBrowserProvider {
               const component = {
                 ...componentData[version],
                 name: componentName,
-                version: version
+                version: version,
+                templateFileUrl: buildTemplateFileUrl(componentData[version], componentName, version)
               };
               vscode.postMessage({ command: 'viewComponentDetails', component });
             }
@@ -1111,6 +1136,14 @@ export class ComponentBrowserProvider {
               };
               vscode.postMessage({ command: 'insertComponent', component });
             }
+          }
+
+          function buildTemplateFileUrl(versionData, componentName, version) {
+            if (!versionData || !versionData.sourcePath || !versionData.gitlabInstance) {
+              return '';
+            }
+            const ref = version || 'main';
+            return 'https://' + versionData.gitlabInstance + '/' + versionData.sourcePath + '/-/blob/' + ref + '/templates/' + componentName + '.yml';
           }
 
           function filterComponents() {
@@ -1276,9 +1309,16 @@ export class ComponentBrowserProvider {
     `;
   }
 
-  private getComponentDetailsHtml(component: any): string {
+  public getComponentDetailsHtml(component: any): string {
     const parameters = component.parameters || [];
     const availableVersions = component.availableVersions || [component.version || 'main'];
+    const headerSummary = component.summary;
+    const headerUsage = component.usage;
+    const headerNotes = Array.isArray(component.notes) ? component.notes : [];
+    const hasContext = Boolean(headerSummary || headerUsage || headerNotes.length > 0);
+    const rawYaml = component.rawYaml || '';
+    const hasRawYaml = Boolean(rawYaml);
+    const templateFileUrl = this.buildTemplateFileUrl(component);
 
     return `
       <!DOCTYPE html>
@@ -1421,6 +1461,14 @@ export class ComponentBrowserProvider {
           button.secondary:hover {
             background-color: var(--vscode-button-secondaryHoverBackground);
           }
+          #rawYamlContent {
+            white-space: pre;
+            overflow-x: auto;
+            background-color: var(--vscode-textCodeBlock-background);
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid var(--vscode-panel-border);
+          }
         </style>
       </head>
       <body>
@@ -1428,6 +1476,30 @@ export class ComponentBrowserProvider {
 
         <div class="description" id="componentDescription">
           ${component.description}
+        </div>
+
+        <div class="metadata" id="componentContext" style="display: ${hasContext ? 'block' : 'none'};">
+          <div><strong>Context</strong></div>
+          <div id="componentSummaryRow" style="display: ${headerSummary ? 'block' : 'none'};">
+            <strong>Summary:</strong> <span id="componentSummary">${headerSummary || ''}</span>
+          </div>
+          <div id="componentUsageRow" style="display: ${headerUsage ? 'block' : 'none'};">
+            <strong>Usage:</strong> <span id="componentUsage">${headerUsage || ''}</span>
+          </div>
+          <div id="componentNotesRow" style="display: ${headerNotes.length > 0 ? 'block' : 'none'};">
+            <strong>Notes:</strong>
+            <ul id="componentNotes">
+              ${headerNotes.map((note: string) => '<li>' + note + '</li>').join('')}
+            </ul>
+          </div>
+        </div>
+
+        <div class="metadata" id="rawYamlSection" style="display: ${hasRawYaml ? 'block' : 'none'};">
+          <div class="parameters-header" style="margin-bottom: 5px;">
+            <h2 style="margin: 0;">Raw YAML</h2>
+            <button class="secondary" id="toggleRawYaml" onclick="toggleRawYaml()">Show</button>
+          </div>
+          <pre id="rawYamlContent" style="display: none;">${this.escapeHtml(rawYaml)}</pre>
         </div>
 
         <div class="metadata">
@@ -1446,6 +1518,8 @@ export class ComponentBrowserProvider {
             `<div><strong>Project URL:</strong> <a href="${component.documentationUrl}" target="_blank" id="componentDocUrl">${component.documentationUrl}</a></div>` : ''}
           ${component.url ?
             `<div><strong>Component URL:</strong> <a href="${component.url}" target="_blank" id="componentUrl">${component.url}</a></div>` : ''}
+          ${templateFileUrl ?
+            `<div><strong>Template File:</strong> <a href="${templateFileUrl}" target="_blank" id="templateFileUrl">${templateFileUrl}</a></div>` : ''}
         </div>
 
         <div class="parameters-header">
@@ -1584,6 +1658,24 @@ export class ComponentBrowserProvider {
             vscode.postMessage({ command: 'fetchVersions' });
           }
 
+          function toggleRawYaml() {
+            const rawContent = document.getElementById('rawYamlContent');
+            const toggleButton = document.getElementById('toggleRawYaml');
+            if (!rawContent || !toggleButton) return;
+
+            const isHidden = rawContent.style.display === 'none';
+            rawContent.style.display = isHidden ? 'block' : 'none';
+            toggleButton.textContent = isHidden ? 'Hide' : 'Show';
+          }
+
+          function buildTemplateFileUrlFromComponent(component) {
+            if (!component || !component.gitlabInstance || !component.sourcePath || !component.name) {
+              return '';
+            }
+            const ref = component.version || 'main';
+            return 'https://' + component.gitlabInstance + '/' + component.sourcePath + '/-/blob/' + ref + '/templates/' + component.name + '.yml';
+          }
+
           function updateComponentDetails(component) {
             console.log('Updating component details:', component);
 
@@ -1592,6 +1684,57 @@ export class ComponentBrowserProvider {
 
             // Update description
             document.getElementById('componentDescription').textContent = component.description || 'No description available';
+
+            // Update context section (summary/usage/notes) from spec-compliant header comments
+            const contextContainer = document.getElementById('componentContext');
+            const summaryRow = document.getElementById('componentSummaryRow');
+            const usageRow = document.getElementById('componentUsageRow');
+            const notesRow = document.getElementById('componentNotesRow');
+            const summary = component.summary || '';
+            const usage = component.usage || '';
+            const notes = Array.isArray(component.notes) ? component.notes : [];
+            const hasContext = summary || usage || notes.length > 0;
+
+            if (contextContainer) {
+              contextContainer.style.display = hasContext ? 'block' : 'none';
+            }
+
+            if (summaryRow) {
+              summaryRow.style.display = summary ? 'block' : 'none';
+              const summaryEl = document.getElementById('componentSummary');
+              if (summaryEl) summaryEl.textContent = summary;
+            }
+
+            if (usageRow) {
+              usageRow.style.display = usage ? 'block' : 'none';
+              const usageEl = document.getElementById('componentUsage');
+              if (usageEl) usageEl.textContent = usage;
+            }
+
+            if (notesRow) {
+              notesRow.style.display = notes.length > 0 ? 'block' : 'none';
+              const notesEl = document.getElementById('componentNotes');
+              if (notesEl) {
+                notesEl.innerHTML = notes.map(note => '<li>' + note + '</li>').join('');
+              }
+            }
+
+            // Update raw YAML section
+            const rawYamlSection = document.getElementById('rawYamlSection');
+            const rawYamlContent = document.getElementById('rawYamlContent');
+            const rawYamlToggle = document.getElementById('toggleRawYaml');
+            const rawYaml = component.rawYaml || '';
+            const hasRawYaml = rawYaml.length > 0;
+            if (rawYamlSection) {
+              rawYamlSection.style.display = hasRawYaml ? 'block' : 'none';
+            }
+            if (rawYamlContent) {
+              rawYamlContent.textContent = rawYaml;
+              rawYamlContent.style.display = 'none';
+            }
+            if (rawYamlToggle) {
+              rawYamlToggle.textContent = 'Show';
+            }
 
             // Update source if available
             if (component.source) {
@@ -1615,6 +1758,19 @@ export class ComponentBrowserProvider {
             if (component.url && componentUrlElement) {
               componentUrlElement.href = component.url;
               componentUrlElement.textContent = component.url;
+            }
+
+            // Update template file URL
+            const templateFileUrlElement = document.getElementById('templateFileUrl');
+            if (templateFileUrlElement) {
+              const computedTemplateUrl = component.templateFileUrl || buildTemplateFileUrlFromComponent(component);
+              if (computedTemplateUrl) {
+                templateFileUrlElement.href = computedTemplateUrl;
+                templateFileUrlElement.textContent = computedTemplateUrl;
+                templateFileUrlElement.style.display = 'inline';
+              } else {
+                templateFileUrlElement.style.display = 'none';
+              }
             }
 
             // Update parameters
@@ -1731,6 +1887,23 @@ export class ComponentBrowserProvider {
       </body>
       </html>
     `;
+  }
+
+  private escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  private buildTemplateFileUrl(component: any): string | undefined {
+    if (!component || !component.gitlabInstance || !component.sourcePath || !component.name) {
+      return undefined;
+    }
+    const ref = component.version || 'main';
+    return `https://${component.gitlabInstance}/${component.sourcePath}/-/blob/${ref}/templates/${component.name}.yml`;
   }
 
   private getNoSourcesHtml(): string {
@@ -2041,6 +2214,10 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
         projectGroup.components.set(comp.name, {
           name: comp.name,
           description: comp.description || 'No description available',
+          summary: comp.summary,
+          usage: comp.usage,
+          notes: comp.notes,
+          rawYaml: comp.rawYaml,
           parameters: comp.parameters || [],
           source: comp.source,
           sourcePath: comp.sourcePath,
@@ -2058,6 +2235,10 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
       componentGroup.versions.set(comp.version || 'latest', {
         version: comp.version || 'latest',
         description: comp.description || 'No description available',
+        summary: comp.summary,
+        usage: comp.usage,
+        notes: comp.notes,
+        rawYaml: comp.rawYaml,
         parameters: comp.parameters || [],
         documentationUrl: comp.url ? this.extractProjectUrl(comp.url) : '',
         source: comp.source,
@@ -2077,16 +2258,23 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
         ...project,
         components: Array.from(project.components.values()).map((component: any) => {
           // Determine the best default version using available versions if present
-          const availableVersions = component.availableVersions || [component.version || 'latest'];
-          const versions: any[] = availableVersions.filter(Boolean).map((version: string) => ({
-            version: version,
-            description: component.description || 'No description available',
-            parameters: component.parameters || [],
-            documentationUrl: component.url ? this.extractProjectUrl(component.url) : '',
-            source: component.source,
-            sourcePath: component.sourcePath,
-            gitlabInstance: component.gitlabInstance || 'gitlab.com'
-          }));
+          const availableVersions = component.availableVersions || Array.from(component.versions.keys());
+          const versions: any[] = availableVersions.filter(Boolean).map((version: string) => {
+            const versionData = component.versions.get(version) || {};
+            return {
+              version: version,
+              description: versionData.description || component.description || 'No description available',
+              summary: versionData.summary || component.summary,
+              usage: versionData.usage || component.usage,
+              notes: versionData.notes || component.notes,
+              rawYaml: versionData.rawYaml || component.rawYaml,
+              parameters: versionData.parameters || component.parameters || [],
+              documentationUrl: versionData.documentationUrl || component.documentationUrl || '',
+              source: versionData.source || component.source,
+              sourcePath: versionData.sourcePath || component.sourcePath,
+              gitlabInstance: versionData.gitlabInstance || component.gitlabInstance || 'gitlab.com'
+            };
+          });
 
           let defaultVersion = component.version || 'latest';
 

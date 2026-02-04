@@ -12,7 +12,8 @@ include:
     inputs:
       some_input: "value"
       some_other_input: "another_value"
-
+  - component: https://gitlab.phactory.beast-code.com/devsecops/ci-cd-components/after_scripts/memory-profiler@0.0.7
+  - component: https://gitlab.phactory.beast-code.com/devsecops/ci-cd-components/after_scripts/mr-commenter@0.0.7
 # Test GitLab CI file
 stages:
   - test

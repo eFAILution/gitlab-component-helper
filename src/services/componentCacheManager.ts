@@ -5,6 +5,10 @@ import { Logger } from '../utils/logger';
 interface CachedComponent {
   name: string;
   description: string;
+  summary?: string;
+  usage?: string;
+  notes?: string[];
+  rawYaml?: string;
   parameters: Array<{
     name: string;
     description: string;
@@ -82,6 +86,10 @@ export class ComponentCacheManager {
   public addDynamicComponent(component: {
     name: string;
     description: string;
+    summary?: string;
+    usage?: string;
+    notes?: string[];
+    rawYaml?: string;
     parameters: Array<{
       name: string;
       description: string;
@@ -433,6 +441,10 @@ export class ComponentCacheManager {
       const cachedComponent: CachedComponent = {
         name: catalogComponent.name,
         description: catalogComponent.description || `Component from ${sourcePath}`,
+        summary: catalogComponent.summary,
+        usage: catalogComponent.usage,
+        notes: catalogComponent.notes,
+        rawYaml: catalogComponent.rawYaml,
         parameters: (catalogComponent.variables || []).map((v: any) => ({
           name: v.name,
           description: v.description || `Parameter: ${v.name}`,
@@ -481,6 +493,10 @@ export class ComponentCacheManager {
           return {
             name: c.name,
             description: c.description || `Component from ${sourceName}`,
+            summary: c.summary,
+            usage: c.usage,
+            notes: c.notes,
+            rawYaml: c.rawYaml,
             parameters: (c.variables || []).map((v: any) => ({
               name: v.name,
               description: v.description || `Parameter: ${v.name}`,

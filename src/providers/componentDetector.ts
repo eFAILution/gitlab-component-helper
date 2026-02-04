@@ -12,6 +12,10 @@ const logger = Logger.getInstance();
 export interface Component {
   name: string;
   description: string;
+  summary?: string;
+  usage?: string;
+  notes?: string[];
+  rawYaml?: string;
   parameters: ComponentParameter[];
   version?: string;
   source?: string;
@@ -495,7 +499,7 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
 
     // Use the component service to fetch catalog data
     const componentService = getComponentService();
-    const catalogData = await componentService.fetchCatalogData(gitlabInstance, projectPath, true);
+    const catalogData = await componentService.fetchCatalogData(gitlabInstance, projectPath, true, version);
 
     if (!catalogData || !catalogData.components) {
       logger.debug(`[ComponentDetector] No catalog data found for ${gitlabInstance}/${projectPath}`, 'ComponentDetector');
@@ -505,7 +509,64 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
     // Find the specific component
     const foundComponent = catalogData.components.find((comp: GitLabCatalogComponent) => comp.name === componentName);
     if (!foundComponent) {
+      // Check fragments if this is a YAML fragment (no spec)
+      const foundFragment = catalogData.fragments?.find((fragment: any) => fragment.name === componentName);
+      if (foundFragment) {
+        logger.debug(`[ComponentDetector] Found fragment ${componentName} in catalog`, 'ComponentDetector');
+
+        const fragmentComponent: Component = {
+          name: foundFragment.name,
+          description: foundFragment.description || 'Reusable YAML fragment',
+          summary: foundFragment.summary,
+          usage: foundFragment.usage,
+          notes: foundFragment.notes,
+          rawYaml: foundFragment.rawYaml,
+          parameters: [],
+          version: version,
+          source: `${gitlabInstance}/${projectPath}`,
+          url: componentUrl,
+          originalUrl: originalUrl || componentUrl,
+          gitlabInstance: gitlabInstance,
+          sourcePath: projectPath,
+          context: {
+            gitlabInstance: gitlabInstance,
+            path: projectPath
+          }
+        };
+
+        // Add to cache for future use
+        try {
+          const cacheManager = getComponentCacheManager();
+          cacheManager.addDynamicComponent({
+            name: fragmentComponent.name,
+            description: fragmentComponent.description,
+            summary: fragmentComponent.summary,
+            usage: fragmentComponent.usage,
+            notes: fragmentComponent.notes,
+            rawYaml: fragmentComponent.rawYaml,
+            parameters: [],
+            source: `${gitlabInstance}/${projectPath}`,
+            sourcePath: projectPath,
+            gitlabInstance: gitlabInstance,
+            version: version,
+            url: componentUrl
+          });
+        } catch (cacheError) {
+          logger.debug(`[ComponentDetector] Could not add fragment to cache: ${cacheError}`, 'ComponentDetector');
+        }
+
+        return fragmentComponent;
+      }
+
       logger.debug(`[ComponentDetector] Component ${componentName} not found in catalog. Available components: ${catalogData.components.map((c: GitLabCatalogComponent) => c.name).join(', ')}`, 'ComponentDetector');
+
+      // As a last resort, try fetching directly from the component URL
+      const directComponent = await componentService.getComponentFromUrl(componentUrl);
+      if (directComponent) {
+        logger.debug(`[ComponentDetector] Direct fetch succeeded for ${componentName}`, 'ComponentDetector');
+        return directComponent;
+      }
+
       return null;
     }
 
@@ -542,6 +603,10 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
     const dynamicComponent: Component = {
       name: foundComponent.name,
       description: componentDescription,
+      summary: (foundComponent as any).summary,
+      usage: (foundComponent as any).usage,
+      notes: (foundComponent as any).notes,
+      rawYaml: (foundComponent as any).rawYaml,
       parameters: (foundComponent.variables || []).map((v: GitLabCatalogVariable) => ({
         name: v.name,
         description: v.description || `Parameter: ${v.name}`,
@@ -569,6 +634,10 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
       const cacheComponent = {
         name: foundComponent.name,
         description: componentDescription, // Use the enhanced description
+        summary: (foundComponent as any).summary,
+        usage: (foundComponent as any).usage,
+        notes: (foundComponent as any).notes,
+        rawYaml: (foundComponent as any).rawYaml,
         parameters: (foundComponent.variables || []).map((v: GitLabCatalogVariable) => ({
           name: v.name,
           description: v.description || `Parameter: ${v.name}`,
