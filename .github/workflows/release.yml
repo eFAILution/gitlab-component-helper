@@ -95,10 +95,34 @@ jobs:
       - name: Install vsce
         run: npm install -g @vscode/vsce
 
+      - name: Setup GPG for commit signing
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          if [ -n "$GPG_PRIVATE_KEY" ]; then
+            echo "Importing GPG key..."
+            echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+
+            # Get the GPG key ID
+            GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format=long | grep sec | awk '{print $2}' | cut -d'/' -f2 | head -n1)
+
+            # Configure git to use GPG
+            git config --global user.signingkey "$GPG_KEY_ID"
+            git config --global commit.gpgsign true
+            git config --global tag.gpgsign true
+
+            echo "✅ Git configured to sign commits with GPG key: $GPG_KEY_ID"
+          else
+            echo "⚠️  No GPG key found - commits will not be signed"
+            echo "   To enable signed commits, add GPG_PRIVATE_KEY secret to repository"
+          fi
+
       - name: Semantic Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VSCE_PAT: ${{ secrets.VSCE_PAT }}  # Optional: for marketplace publishing
+          HUSKY: 0  # Disable git hooks in CI
         run: npx semantic-release
 
       - name: Upload .vsix as artifact
