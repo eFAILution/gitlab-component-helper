@@ -1,5 +1,8 @@
 # 🚀 GitLab Component Helper
 
+[![AICaC](https://img.shields.io/badge/AICaC-Comprehensive-success.svg)](https://github.com/eFAILution/AICaC)
+
+
 > Turbocharge your GitLab CI/CD workflow in VS Code! Instantly browse, insert, and manage reusable components from any GitLab instance—public or private.
 
 ### 🎬 See it in Action: Component Browser
