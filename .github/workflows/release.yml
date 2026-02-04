@@ -1,23 +1,51 @@
-# GitHub Actions Release Workflow (DISABLED to avoid costs)
-#
-# This workflow has been disabled to prevent GitHub Actions costs.
-# Use local release scripts instead:
-#   - npm run release:manual (fully manual, no dependencies)
-#   - npm run release:local-only (semantic-release without GitHub)
-#
-# To re-enable this workflow, remove the comments and the 'if: false' condition below.
-
 name: Release
 
 on:
   push:
     branches:
       - main
+      - beta  # Pre-release branch
+
+permissions:
+  contents: write  # For creating releases and pushing tags
+  issues: write    # For commenting on issues
+  pull-requests: write  # For commenting on PRs
 
 jobs:
   release:
     runs-on: ubuntu-latest
-    if: false  # DISABLED - remove this line to re-enable
     steps:
-      - name: Disabled
-        run: echo "Release workflow is disabled to avoid GitHub Actions costs. Use local release scripts instead."
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for semantic-release
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install vsce
+        run: npm install -g @vscode/vsce
+
+      - name: Run tests
+        run: npm test || echo "No tests configured"
+
+      - name: Semantic Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}  # Optional: for marketplace publishing
+        run: npx semantic-release
+
+      - name: Upload .vsix as artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-package
+          path: '*.vsix'
+          retention-days: 30
