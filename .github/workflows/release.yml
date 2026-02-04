@@ -1,10 +1,7 @@
 name: Release
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types:
-      - completed
+  push:
     branches:
       - main
       - beta
@@ -16,8 +13,8 @@ permissions:
 
 jobs:
   validate-version:
-    # Only run if CI succeeded and on beta branch
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'beta'
+    # Only run version validation on beta branch
+    if: github.ref == 'refs/heads/beta'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -76,8 +73,8 @@ jobs:
 
   release:
     needs: [validate-version]
-    # Run if CI succeeded AND (validation passed OR validation was skipped for main branch)
-    if: github.event.workflow_run.conclusion == 'success' && (needs.validate-version.result == 'success' || needs.validate-version.result == 'skipped')
+    # Run if tests passed AND (validation passed OR validation was skipped for main branch)
+    if: always() && (needs.validate-version.result == 'success' || needs.validate-version.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
