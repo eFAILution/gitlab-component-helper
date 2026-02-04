@@ -46,7 +46,7 @@ dependencies:
     - husky: "Git hooks"
     - semantic-release: "Automated releases"
 
-common_commands:
+common_tasks:
   compile: "npm run compile"
   watch: "npm run watch"
   test: "npm test"
