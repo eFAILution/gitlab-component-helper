@@ -286,7 +286,7 @@ export function activate(context: vscode.ExtensionContext) {
         // Create a webview panel for the detached component details
         const panel = vscode.window.createWebviewPanel(
           'gitlabComponentDetails',
-          `${component.name} - Details`,
+          `Component: ${component.name}`,
           vscode.ViewColumn.Beside,
           {
             enableScripts: true,
@@ -295,8 +295,82 @@ export function activate(context: vscode.ExtensionContext) {
           }
         );
 
-        // Generate HTML content for the detached panel with interactive features
-        panel.webview.html = await getDetachedComponentHtml(component);
+        // Use the same details HTML as the Component Browser
+        const componentBrowser = new ComponentBrowserProvider(context, cacheManager);
+
+        // Try to enrich the component details (raw YAML, header metadata) before rendering
+        let activeComponent = component;
+        try {
+          const resolvedGitlabInstance = component?.gitlabInstance || component?.context?.gitlabInstance;
+          const resolvedSourcePath = component?.sourcePath || component?.context?.path;
+          const resolvedName = component?.name;
+
+          if (resolvedGitlabInstance && resolvedSourcePath && resolvedName) {
+            const targetVersion = component.version || 'main';
+
+            // Prefer cache for version-specific fetch
+            const cached = await cacheManager.fetchSpecificVersion(
+              resolvedName,
+              resolvedSourcePath,
+              resolvedGitlabInstance,
+              targetVersion
+            );
+
+            if (cached) {
+              activeComponent = {
+                ...cached,
+                originalUrl: component.originalUrl,
+                url: component.url,
+                _hoverContext: component._hoverContext
+              };
+            } else {
+              const componentService = getComponentService();
+              const componentUrl = `https://${resolvedGitlabInstance}/${resolvedSourcePath}/${resolvedName}@${targetVersion}`;
+
+              // Try catalog fragments (for YAML fragments without spec)
+              try {
+                const catalogData = await componentService.fetchCatalogData(
+                  resolvedGitlabInstance,
+                  resolvedSourcePath,
+                  true,
+                  targetVersion
+                );
+                const fragment = catalogData?.fragments?.find((frag: any) => frag.name === resolvedName);
+                if (fragment) {
+                  activeComponent = {
+                    ...component,
+                    name: fragment.name,
+                    description: fragment.description || component.description,
+                    summary: fragment.summary,
+                    usage: fragment.usage,
+                    notes: fragment.notes,
+                    rawYaml: fragment.rawYaml,
+                    gitlabInstance: resolvedGitlabInstance,
+                    sourcePath: resolvedSourcePath,
+                    version: targetVersion,
+                    _hoverContext: component._hoverContext
+                  };
+                }
+              } catch (catalogError) {
+                logger.debug(`[Extension] Fragment catalog fetch failed: ${catalogError}`, 'Extension');
+              }
+
+              const fetched = await componentService.getComponentFromUrl(componentUrl);
+              if (fetched) {
+                activeComponent = {
+                  ...fetched,
+                  originalUrl: component.originalUrl,
+                  url: component.url || fetched.url,
+                  _hoverContext: component._hoverContext
+                };
+              }
+            }
+          }
+        } catch (error) {
+          logger.debug(`[Extension] Failed to enrich detached hover component: ${error}`, 'Extension');
+        }
+
+        panel.webview.html = componentBrowser.getComponentDetailsHtml(activeComponent);
 
         // Ensure the original editor remains focused after panel creation
         setTimeout(async () => {
@@ -324,25 +398,52 @@ export function activate(context: vscode.ExtensionContext) {
                   return;
                 }
 
-                const componentBrowser = new ComponentBrowserProvider(context, cacheManager);
+                // Handle different insertion options
+                const { version, includeInputs, selectedInputs } = message;
 
-                // Check if we have hover context (editing existing component)
-                if (component._hoverContext) {
-                  // Edit the existing component at the hover position
-                  await componentBrowser.editExistingComponentFromDetached(
-                    component,
-                    component._hoverContext.documentUri,
-                    component._hoverContext.position,
-                    message.includeInputs || false,
-                    message.selectedInputs || []
+                // Update component version if specified
+                if (version && version !== activeComponent.version) {
+                  const updatedComponent = await cacheManager.fetchSpecificVersion(
+                    activeComponent.name,
+                    activeComponent.sourcePath,
+                    activeComponent.gitlabInstance,
+                    version
                   );
+                  if (updatedComponent) {
+                    if (activeComponent._hoverContext) {
+                      await componentBrowser.editExistingComponentFromDetached(
+                        updatedComponent,
+                        activeComponent._hoverContext.documentUri,
+                        activeComponent._hoverContext.position,
+                        includeInputs || false,
+                        selectedInputs || []
+                      );
+                    } else {
+                      await componentBrowser.insertComponentFromDetached(
+                        updatedComponent,
+                        includeInputs || false,
+                        selectedInputs || []
+                      );
+                    }
+                  } else {
+                    vscode.window.showErrorMessage(`Failed to fetch version ${version} of component ${activeComponent.name}`);
+                  }
                 } else {
-                  // Insert new component at cursor position
-                  await componentBrowser.insertComponentFromDetached(
-                    component,
-                    message.includeInputs || false,
-                    message.selectedInputs || []
-                  );
+                  if (activeComponent._hoverContext) {
+                    await componentBrowser.editExistingComponentFromDetached(
+                      activeComponent,
+                      activeComponent._hoverContext.documentUri,
+                      activeComponent._hoverContext.position,
+                      includeInputs || false,
+                      selectedInputs || []
+                    );
+                  } else {
+                    await componentBrowser.insertComponentFromDetached(
+                      activeComponent,
+                      includeInputs || false,
+                      selectedInputs || []
+                    );
+                  }
                 }
 
                 // Close the panel after successful insertion/edit
@@ -350,6 +451,49 @@ export function activate(context: vscode.ExtensionContext) {
               } catch (error) {
                 logger.error(`[Extension] Error inserting component from detached view: ${error}`, 'Extension');
                 vscode.window.showErrorMessage(`Error inserting component: ${error}`);
+              }
+              break;
+            case 'fetchVersions':
+              try {
+                const versions = await cacheManager.fetchComponentVersions(activeComponent);
+                panel.webview.postMessage({
+                  command: 'versionsLoaded',
+                  versions: versions,
+                  currentVersion: activeComponent.version
+                });
+              } catch (error) {
+                panel.webview.postMessage({
+                  command: 'versionsError',
+                  error: error instanceof Error ? error.message : String(error)
+                });
+              }
+              break;
+            case 'versionChanged':
+              try {
+                const { selectedVersion } = message;
+                const updatedComponent = await cacheManager.fetchSpecificVersion(
+                  activeComponent.name,
+                  activeComponent.sourcePath,
+                  activeComponent.gitlabInstance,
+                  selectedVersion
+                );
+                if (updatedComponent) {
+                  activeComponent = updatedComponent;
+                  panel.webview.postMessage({
+                    command: 'componentDetailsUpdated',
+                    component: updatedComponent
+                  });
+                } else {
+                  panel.webview.postMessage({
+                    command: 'versionChangeError',
+                    error: `Failed to fetch details for version ${selectedVersion}`
+                  });
+                }
+              } catch (error) {
+                panel.webview.postMessage({
+                  command: 'versionChangeError',
+                  error: error instanceof Error ? error.message : String(error)
+                });
               }
               break;
           }

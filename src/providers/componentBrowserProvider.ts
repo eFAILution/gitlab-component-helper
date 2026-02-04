@@ -428,7 +428,7 @@ export class ComponentBrowserProvider {
     return this.insertComponent(component, includeInputs, selectedInputs);
   }
 
-  private async showComponentDetails(component: any) {
+  public async showComponentDetails(component: any) {
     // Create a new webview panel for component details
     const detailsPanel = vscode.window.createWebviewPanel(
       'gitlabComponentDetails',
@@ -458,12 +458,32 @@ export class ComponentBrowserProvider {
               version
             );
             if (updatedComponent) {
-              await this.insertComponent(updatedComponent, includeInputs, selectedInputs);
+              if (component._hoverContext) {
+                await this.editExistingComponentFromDetached(
+                  updatedComponent,
+                  component._hoverContext.documentUri,
+                  component._hoverContext.position,
+                  includeInputs || false,
+                  selectedInputs || []
+                );
+              } else {
+                await this.insertComponent(updatedComponent, includeInputs, selectedInputs);
+              }
             } else {
               vscode.window.showErrorMessage(`Failed to fetch version ${version} of component ${component.name}`);
             }
           } else {
-            await this.insertComponent(component, includeInputs, selectedInputs);
+            if (component._hoverContext) {
+              await this.editExistingComponentFromDetached(
+                component,
+                component._hoverContext.documentUri,
+                component._hoverContext.position,
+                includeInputs || false,
+                selectedInputs || []
+              );
+            } else {
+              await this.insertComponent(component, includeInputs, selectedInputs);
+            }
           }
         } else if (message.command === 'fetchVersions') {
           // Fetch available versions for the component
@@ -1289,7 +1309,7 @@ export class ComponentBrowserProvider {
     `;
   }
 
-  private getComponentDetailsHtml(component: any): string {
+  public getComponentDetailsHtml(component: any): string {
     const parameters = component.parameters || [];
     const availableVersions = component.availableVersions || [component.version || 'main'];
     const headerSummary = component.summary;
