@@ -1,0 +1,258 @@
+# .ai/errors.yaml - Common Errors and Solutions
+errors:
+  component_not_loading:
+    symptoms:
+      - "Component browser shows no components"
+      - "Autocomplete not working"
+      - "Hover not showing documentation"
+    causes:
+      - cause: "No component sources configured"
+        solution:
+          steps:
+            - "Open VS Code settings"
+            - "Search for 'gitlabComponentHelper.componentSources'"
+            - "Add component sources array"
+          example: |
+            "gitlabComponentHelper.componentSources": [
+              {
+                "name": "OpenTofu",
+                "path": "components/opentofu",
+                "gitlabInstance": "gitlab.com"
+              }
+            ]
+      - cause: "Cache not initialized"
+        solution:
+          command: "GitLab CI: Update Cache"
+          location: "Command Palette (Ctrl+Shift+P)"
+      - cause: "File language mode not YAML"
+        solution:
+          steps:
+            - "Check bottom-right status bar"
+            - "Click language selector"
+            - "Choose 'YAML' or 'GitLab CI'"
+
+  authentication_failed:
+    symptoms:
+      - "Error: 401 Unauthorized"
+      - "Private components not loading"
+      - "API rate limit exceeded"
+    causes:
+      - cause: "Missing or invalid GitLab token"
+        solution:
+          steps:
+            - "Run command: GitLab CI: Add Component Project/Group"
+            - "Enter GitLab instance URL"
+            - "Enter project/group path"
+            - "Provide valid Personal Access Token"
+          token_scopes:
+            - "read_api"
+            - "read_repository"
+      - cause: "Token expired"
+        solution:
+          steps:
+            - "Generate new token in GitLab (User Settings → Access Tokens)"
+            - "Re-run: GitLab CI: Add Component Project/Group"
+            - "Update with new token"
+
+  compilation_errors:
+    symptoms:
+      - "TypeScript errors during build"
+      - "npm run compile fails"
+    causes:
+      - cause: "Type mismatch"
+        solution:
+          command: "npm run check-types"
+          fix: "Check tsconfig.json and fix type annotations"
+      - cause: "Missing dependencies"
+        solution:
+          command: "npm install"
+      - cause: "Node version incompatible"
+        solution:
+          requirement: "Node.js >=22.0.0"
+          check: "node --version"
+          fix: "Install Node.js 22 or higher"
+
+  test_failures:
+    symptoms:
+      - "npm test fails"
+      - "Tests timing out"
+    causes:
+      - cause: "VS Code test environment not set up"
+        solution:
+          steps:
+            - "Ensure @vscode/test-electron is installed"
+            - "Check tests/run-tests.js configuration"
+            - "Run: npm run test:unit (faster)"
+      - cause: "Mock data out of date"
+        solution:
+          location: "tests/fixtures/mock-data.json"
+          action: "Update mock data to match current API responses"
+      - cause: "Test timeout"
+        solution:
+          config: "Increase timeout in test file"
+          code: "this.timeout(5000);"
+
+  extension_not_activating:
+    symptoms:
+      - "Extension commands not available"
+      - "No autocomplete or hover"
+      - "Extension not in Extensions list"
+    causes:
+      - cause: "Extension not compiled"
+        solution:
+          command: "npm run compile"
+      - cause: "Activation events not triggered"
+        solution:
+          check:
+            - "Open a .gitlab-ci.yml file"
+            - "Or run: GitLab CI: Browse Components"
+          activation_events:
+            - "onLanguage:yaml"
+            - "onLanguage:gitlab-ci"
+            - "workspaceContains:.gitlab-ci.yml"
+      - cause: "Extension crash on activation"
+        solution:
+          steps:
+            - "Check: View → Output → GitLab Component Helper"
+            - "Look for error stack traces"
+            - "Check VS Code version (>=1.102.0 required)"
+
+  cache_issues:
+    symptoms:
+      - "Stale component data"
+      - "Components not updating"
+      - "Cache errors in output"
+    causes:
+      - cause: "Cache needs refresh"
+        solution:
+          command: "GitLab CI: Update Cache"
+          note: "Forces fresh fetch from GitLab"
+      - cause: "Corrupted cache"
+        solution:
+          command: "GitLab CI: Reset Cache"
+          warning: "Clears all cached data (requires confirmation)"
+      - cause: "Cache time too long"
+        solution:
+          setting: "gitlabComponentHelper.cacheTime"
+          default: 3600
+          recommendation: "Lower for frequently changing components"
+
+  api_rate_limiting:
+    symptoms:
+      - "Error: 429 Too Many Requests"
+      - "Components loading slowly"
+      - "Timeout errors"
+    causes:
+      - cause: "Too many API requests"
+        solution:
+          settings:
+            - setting: "gitlabComponentHelper.batchSize"
+              default: 5
+              recommendation: "Lower to 3 for rate-limited instances"
+            - setting: "gitlabComponentHelper.retryAttempts"
+              default: 3
+              recommendation: "Lower to 2 to fail faster"
+      - cause: "No authentication token"
+        solution:
+          note: "Authenticated requests have higher rate limits"
+          action: "Add GitLab token via: GitLab CI: Add Component Project/Group"
+
+  hover_not_working:
+    symptoms:
+      - "No documentation on hover"
+      - "Hover shows generic info only"
+    causes:
+      - cause: "Not hovering on component URL"
+        solution:
+          correct_format: "component: https://gitlab.com/project/path@version"
+          location: "Hover over the URL part"
+      - cause: "Component not in cache"
+        solution:
+          command: "GitLab CI: Update Cache"
+      - cause: "README.md not found in component"
+        solution:
+          note: "Component needs README.md or template.yml for docs"
+          fallback: "Shows basic component info if available"
+
+  autocomplete_not_triggering:
+    symptoms:
+      - "No suggestions when typing"
+      - "Autocomplete dropdown empty"
+    causes:
+      - cause: "Wrong trigger character"
+        solution:
+          triggers:
+            - "Type 'component:' followed by space"
+            - "Type '@' after component URL for versions"
+          example: "component: gitlab.com/path@"
+      - cause: "Language mode not YAML"
+        solution:
+          check: "Bottom-right status bar should show 'YAML' or 'GitLab CI'"
+      - cause: "Position in wrong YAML context"
+        solution:
+          correct_context: "Must be in 'include:' block with 'component:' key"
+
+  semantic_release_failure:
+    symptoms:
+      - "Release not created on push to main"
+      - "Version not bumped"
+      - "CHANGELOG not updated"
+    causes:
+      - cause: "Commit message format wrong"
+        solution:
+          format: "type(scope): description"
+          examples:
+            - "feat: add new feature"
+            - "fix: resolve bug"
+            - "docs: update README"
+          reference: "SEMANTIC_RELEASE.md"
+      - cause: "No releasable commits"
+        solution:
+          note: "Only feat, fix, and breaking changes trigger releases"
+          types: "chore, docs, style don't trigger version bump"
+      - cause: "GitHub token missing"
+        solution:
+          check: "GitHub Actions secrets"
+          required: "GITHUB_TOKEN (automatic) or GH_TOKEN"
+
+debugging:
+  enable_debug_logs:
+    steps:
+      - "Open VS Code settings"
+      - "Search: gitlabComponentHelper.logLevel"
+      - "Set to: DEBUG"
+      - "View: Output → GitLab Component Helper"
+    note: "Shows detailed operation logs"
+
+  check_extension_state:
+    command: "GitLab CI: Show Cache Status"
+    shows:
+      - "Configured sources"
+      - "Cache statistics"
+      - "Last update time"
+
+  test_providers:
+    command: "GitLab CI: Test Providers"
+    purpose: "Verify all providers are working correctly"
+
+common_solutions:
+  reload_window:
+    when: "After configuration changes"
+    command: "Developer: Reload Window"
+    key: "Ctrl+R (in Command Palette)"
+
+  clear_and_reinstall:
+    steps:
+      - "rm -rf node_modules package-lock.json"
+      - "npm install"
+      - "npm run compile"
+
+  check_vscode_version:
+    minimum: "1.102.0"
+    command: "code --version"
+    upgrade: "Help → Check for Updates"
+
+  verify_node_version:
+    minimum: "22.0.0"
+    command: "node --version"
+    install: "https://nodejs.org/"

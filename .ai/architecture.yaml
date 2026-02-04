@@ -1,0 +1,198 @@
+# .ai/architecture.yaml - Component Relationships
+components:
+  - name: extension
+    location: "src/extension.ts"
+    purpose: "VS Code extension activation and initialization"
+    responsibilities:
+      - "Register providers (hover, completion, validation)"
+      - "Initialize cache manager"
+      - "Register commands"
+      - "Setup configuration watchers"
+    depends_on:
+      - providers
+      - services
+      - utils
+
+  - name: providers
+    location: "src/providers/"
+    purpose: "VS Code language feature providers"
+    files:
+      - completionProvider.ts: "Autocomplete for component URLs and versions"
+      - hoverProvider.ts: "Documentation on hover"
+      - validationProvider.ts: "Input validation with Quick Fixes"
+      - componentBrowserProvider.ts: "Component browser UI"
+      - componentDetector.ts: "Detect GitLab CI component usage"
+      - componentHtmlRenderer.ts: "Render component docs as HTML"
+    depends_on:
+      - services
+      - utils
+      - types
+
+  - name: services
+    location: "src/services/"
+    purpose: "Business logic and data management"
+    files:
+      - componentService.ts: "Fetch and manage components from GitLab"
+      - componentCacheManager.ts: "Cache components for performance"
+    depends_on:
+      - utils
+      - types
+
+  - name: utils
+    location: "src/utils/"
+    purpose: "Utility functions and helpers"
+    files:
+      - httpClient.ts: "HTTP requests with retry logic"
+      - yamlParser.ts: "Parse GitLab CI YAML files"
+      - logger.ts: "Centralized logging"
+      - outputChannel.ts: "VS Code output channel management"
+      - gitlabVariables.ts: "GitLab CI variable expansion"
+    depends_on:
+      - types
+
+  - name: types
+    location: "src/types/"
+    purpose: "TypeScript type definitions"
+    files:
+      - git-component.ts: "Component data structures"
+      - gitlab-catalog.ts: "GitLab catalog API types"
+
+  - name: scripts
+    location: "scripts/"
+    purpose: "Build, release, and automation scripts"
+    files:
+      - manual-release.js: "Manual release execution"
+      - release.js: "Release automation logic"
+      - version-bump.js: "Version management and bumping"
+      - release.sh: "Release orchestration script"
+      - publish-release.sh: "Publish to VS Code marketplace"
+      - release-and-publish.sh: "Combined release and publish"
+      - setup-github-token.sh: "GitHub token configuration"
+    depends_on:
+      - semantic-release configuration
+
+interfaces:
+  Component:
+    location: "src/types/git-component.ts"
+    attributes:
+      - name: "string"
+      - description: "string"
+      - parameters: "ComponentParameter[]"
+      - version: "string | undefined"
+      - source: "string | undefined"
+      - gitlabInstance: "string | undefined"
+      - sourcePath: "string | undefined"
+      - availableVersions: "string[] | undefined"
+      - originalUrl: "string | undefined"
+
+  ComponentParameter:
+    location: "src/types/git-component.ts"
+    attributes:
+      - name: "string"
+      - description: "string | undefined"
+      - required: "boolean"
+      - type: "string | undefined"
+      - default: "any | undefined"
+
+data_flow:
+  component_completion:
+    - step: 1
+      component: completionProvider
+      action: "User types 'component:' in .gitlab-ci.yml"
+    - step: 2
+      component: componentService
+      action: "Fetch components from cache or GitLab API"
+    - step: 3
+      component: componentCacheManager
+      action: "Return cached components if available"
+    - step: 4
+      component: completionProvider
+      action: "Show completion items to user"
+
+  hover_documentation:
+    - step: 1
+      component: hoverProvider
+      action: "User hovers over component URL"
+    - step: 2
+      component: componentDetector
+      action: "Detect if line contains GitLab component"
+    - step: 3
+      component: componentService
+      action: "Fetch component details"
+    - step: 4
+      component: componentHtmlRenderer
+      action: "Render documentation as HTML"
+    - step: 5
+      component: hoverProvider
+      action: "Display hover card"
+
+  component_caching:
+    - step: 1
+      component: componentCacheManager
+      action: "Initialize on extension activation"
+    - step: 2
+      component: componentService
+      action: "Fetch components from GitLab API"
+    - step: 3
+      component: httpClient
+      action: "HTTP request with retry logic"
+    - step: 4
+      component: componentCacheManager
+      action: "Cache components for configured time"
+
+extension_points:
+  - name: "New provider"
+    location: "src/providers/"
+    registration: "src/extension.ts (vscode.languages.register*)"
+  - name: "New command"
+    location: "src/extension.ts"
+    registration: "vscode.commands.registerCommand()"
+  - name: "New component source"
+    location: "settings.json"
+    property: "gitlabComponentHelper.componentSources[]"
+
+architecture_patterns:
+  - pattern: "Provider Pattern"
+    usage: "VS Code language feature providers"
+    files: "src/providers/*Provider.ts"
+  - pattern: "Singleton"
+    usage: "Logger, ComponentService, ComponentCacheManager"
+    files: "src/utils/logger.ts, src/services/*.ts"
+  - pattern: "Cache-Aside"
+    usage: "Component caching with TTL"
+    files: "src/services/componentCacheManager.ts"
+
+external_apis:
+  gitlab_api:
+    base_url: "https://{instance}/api/v4/"
+    endpoints:
+      - path: "/projects/{id}/repository/files/{path}"
+        method: "GET"
+        purpose: "Fetch component template files"
+        example_response:
+          file_name: "template.yml"
+          content: "base64_encoded_content"
+          encoding: "base64"
+      - path: "/groups/{id}/projects"
+        method: "GET"
+        purpose: "List projects in a group"
+        example_response:
+          - id: 123
+            name: "component-project"
+            path_with_namespace: "group/component-project"
+      - path: "/catalog/resources"
+        method: "GET"
+        purpose: "Fetch CI/CD catalog components"
+        example_response:
+          - id: 1
+            name: "terraform"
+            description: "Terraform deployment component"
+            web_path: "/components/terraform"
+    authentication: "Personal Access Token (SecretStorage)"
+    rate_limits:
+      authenticated: "2000 requests/minute"
+      unauthenticated: "20 requests/minute"
+    retry_strategy:
+      attempts: 3
+      backoff: "exponential"
+      timeout: "10000ms"

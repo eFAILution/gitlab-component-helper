@@ -1,0 +1,218 @@
+# .ai/decisions.yaml - Architectural Decision Records
+decisions:
+  use_esbuild:
+    date: "2024"
+    status: "accepted"
+    context: "Need fast bundling for TypeScript extension"
+    decision: "Use esbuild instead of webpack"
+    rationale:
+      - "10-100x faster than webpack"
+      - "Simple configuration"
+      - "Good TypeScript support"
+      - "Smaller bundle size"
+    alternatives_considered:
+      - webpack: "Too slow, complex configuration"
+      - rollup: "Not optimized for Node.js"
+    consequences:
+      positive:
+        - "Fast compilation during development"
+        - "Quick CI/CD builds"
+        - "Smaller extension size"
+      negative:
+        - "Less ecosystem plugins than webpack"
+    references:
+      - "esbuild.js"
+      - "package.json (build scripts)"
+
+  cache_components:
+    date: "2024"
+    status: "accepted"
+    context: "GitLab API calls are slow and rate-limited"
+    decision: "Implement component caching with TTL"
+    rationale:
+      - "Reduce API calls to GitLab"
+      - "Improve autocomplete performance"
+      - "Better user experience"
+      - "Respect rate limits"
+    implementation:
+      pattern: "Cache-aside pattern"
+      ttl: "3600 seconds (configurable)"
+      storage: "In-memory cache in ComponentCacheManager"
+    alternatives_considered:
+      - no_cache: "Too slow, too many API calls"
+      - persistent_cache: "Unnecessary complexity, stale data issues"
+    consequences:
+      positive:
+        - "Fast autocomplete"
+        - "Fewer API calls"
+        - "Better UX"
+      negative:
+        - "Slightly stale data (max 1 hour)"
+        - "Memory usage"
+    references:
+      - "src/services/componentCacheManager.ts"
+      - "CACHE_MANAGEMENT.md"
+
+  use_secretstorage_for_tokens:
+    date: "2024"
+    status: "accepted"
+    context: "Need secure storage for GitLab access tokens"
+    decision: "Use VS Code SecretStorage API"
+    rationale:
+      - "Secure, encrypted storage"
+      - "Built into VS Code"
+      - "Cross-platform"
+      - "No plain text files"
+    alternatives_considered:
+      - settings_json: "Insecure, tokens visible in plain text"
+      - environment_variables: "Not portable, hard to manage"
+      - file_system: "Security risk"
+    consequences:
+      positive:
+        - "Secure token storage"
+        - "Native VS Code integration"
+        - "Cross-platform compatibility"
+      negative:
+        - "Tokens tied to VS Code installation"
+    references:
+      - "src/services/componentService.ts (setSecretStorage)"
+      - "README.md (security section)"
+
+  semantic_release:
+    date: "2024"
+    status: "accepted"
+    context: "Need automated versioning and releases"
+    decision: "Use semantic-release for automated releases"
+    rationale:
+      - "Automated version bumping"
+      - "Automatic CHANGELOG generation"
+      - "GitHub release creation"
+      - "Conventional commits enforcement"
+    implementation:
+      triggers: "Push to main branch"
+      config: ".releaserc.json"
+      commit_format: "conventional-commits"
+    alternatives_considered:
+      - manual_releases: "Error-prone, time-consuming"
+      - github_actions_only: "Reinventing the wheel"
+    consequences:
+      positive:
+        - "Zero manual versioning"
+        - "Consistent release process"
+        - "Automatic documentation"
+      negative:
+        - "Requires conventional commits discipline"
+    references:
+      - "SEMANTIC_RELEASE.md"
+      - ".releaserc.json"
+
+  multi_source_support:
+    date: "2024"
+    status: "accepted"
+    context: "Users have components in multiple GitLab instances"
+    decision: "Support multiple component sources with per-instance tokens"
+    rationale:
+      - "Users need public gitlab.com components"
+      - "Users need private self-hosted GitLab components"
+      - "Different instances require different tokens"
+    implementation:
+      config: "gitlabComponentHelper.componentSources[]"
+      auth: "Per-instance token in SecretStorage"
+    alternatives_considered:
+      - single_source: "Too limiting for enterprise users"
+      - no_auth: "Can't access private components"
+    consequences:
+      positive:
+        - "Flexible for any GitLab setup"
+        - "Supports hybrid (public + private)"
+      negative:
+        - "More complex configuration"
+        - "Token management per instance"
+    references:
+      - "package.json (componentSources config)"
+      - "README.md (configuration section)"
+
+  typescript_strict_mode:
+    date: "2024"
+    status: "accepted"
+    context: "Need type safety and catch errors early"
+    decision: "Enable TypeScript strict mode"
+    rationale:
+      - "Catch type errors at compile time"
+      - "Better IDE support"
+      - "Safer refactoring"
+      - "Self-documenting code"
+    implementation:
+      config: "tsconfig.json (strict: true)"
+      target: "ES2020"
+    consequences:
+      positive:
+        - "Type safety"
+        - "Fewer runtime errors"
+        - "Better documentation"
+      negative:
+        - "More boilerplate type annotations"
+    references:
+      - "tsconfig.json"
+
+  batch_api_requests:
+    date: "2024"
+    status: "accepted"
+    context: "Loading many components causes API rate limiting"
+    decision: "Batch API requests with configurable concurrency"
+    rationale:
+      - "Respect GitLab rate limits"
+      - "Faster initial load with parallelism"
+      - "Configurable batch size"
+    implementation:
+      default_batch_size: 5
+      config: "gitlabComponentHelper.batchSize"
+    alternatives_considered:
+      - sequential_requests: "Too slow"
+      - unlimited_parallel: "Hits rate limits"
+    consequences:
+      positive:
+        - "Fast component loading"
+        - "Respects rate limits"
+      negative:
+        - "More complex implementation"
+    references:
+      - "src/services/componentService.ts"
+      - "PERFORMANCE_OPTIMIZATIONS.md"
+
+  mocha_over_jest:
+    date: "2024"
+    status: "accepted"
+    context: "Need testing framework for VS Code extension"
+    decision: "Use Mocha with @vscode/test-electron"
+    rationale:
+      - "Official VS Code testing recommendation"
+      - "Better VS Code API integration"
+      - "Simpler setup for extensions"
+    alternatives_considered:
+      - jest: "Poor VS Code extension support"
+      - vitest: "Not designed for VS Code extensions"
+    consequences:
+      positive:
+        - "Works well with VS Code APIs"
+        - "Good documentation"
+      negative:
+        - "Less modern than Jest/Vitest"
+    references:
+      - "tests/run-tests.js"
+      - "package.json (test scripts)"
+
+future_decisions:
+  - question: "Should we support other CI/CD platforms (GitHub Actions, CircleCI)?"
+    status: "under_consideration"
+    considerations:
+      - "User demand"
+      - "Maintainability"
+      - "Scope creep"
+
+  - question: "Add telemetry for usage analytics?"
+    status: "deferred"
+    considerations:
+      - "Privacy concerns"
+      - "User consent"
+      - "Value vs complexity"

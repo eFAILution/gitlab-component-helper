@@ -1,0 +1,90 @@
+# .ai/context.yaml - Project Overview
+version: "1.0"
+schema: "https://aicac.dev/schema/v1"
+
+project:
+  name: "gitlab-component-helper"
+  type: "vscode-extension"
+  language: "typescript"
+  node_version: ">=22.0.0"
+  vscode_version: ">=1.102.0"
+  description: "VS Code extension providing intellisense for GitLab CI components"
+  purpose: "Smart autocomplete, hover docs, and component browsing for GitLab CI/CD"
+
+repository:
+  url: "https://github.com/eFAILution/gitlab-component-helper"
+  default_branch: "main"
+
+entrypoints:
+  extension: "src/extension.ts"
+  main_output: "out/extension.js"
+
+structure:
+  source: "src/"
+  compiled: "out/"
+  tests: "tests/"
+  providers: "src/providers/"
+  services: "src/services/"
+  types: "src/types/"
+  utils: "src/utils/"
+  scripts: "scripts/"
+
+context_modules:
+  architecture: "architecture.yaml"
+  workflows: "workflows.yaml"
+  decisions: "decisions.yaml"
+  errors: "errors.yaml"
+
+dependencies:
+  runtime:
+    - vscode: "VS Code Extension API"
+    - js-yaml: "YAML parsing"
+  dev:
+    - typescript: "Type-safe development"
+    - esbuild: "Fast bundling"
+    - mocha: "Testing framework"
+    - husky: "Git hooks"
+    - semantic-release: "Automated releases"
+
+common_tasks:
+  compile: "npm run compile"
+  watch: "npm run watch"
+  test: "npm test"
+  test_unit: "npm run test:unit"
+  test_integration: "npm run test:integration"
+  package: "npm run package"
+
+build_system:
+  bundler: "esbuild"
+  config: "esbuild.js"
+  output_format: "commonjs"
+  target: "ES2020"
+
+testing:
+  framework: "mocha"
+  runner: "tests/run-tests.js"
+  types:
+    - unit: "tests/unit/"
+    - integration: "tests/integration/"
+    - performance: "tests/performance.test.js"
+
+release:
+  automation: "semantic-release"
+  config: ".releaserc.json"
+  commit_convention: "conventional-commits"
+  versioning: "automatic"
+
+constraints:
+  - "Must work on VS Code 1.102.0+"
+  - "Compatible with Node.js 22+"
+  - "Support both gitlab.com and self-hosted GitLab instances"
+  - "Component data cached for performance"
+  - "Support private GitLab repositories with token auth"
+
+key_features:
+  - "Component browser with search and filter"
+  - "Smart autocomplete for component URLs and versions"
+  - "Hover documentation with parameter details"
+  - "Input validation with Quick Fix suggestions"
+  - "Multi-source support (multiple GitLab instances)"
+  - "Secure token storage via VS Code SecretStorage"
