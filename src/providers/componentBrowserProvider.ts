@@ -100,12 +100,6 @@ export class ComponentBrowserProvider {
           case 'setAlwaysUseLatest':
             await this.setAlwaysUseLatest(message.componentName, message.projectId);
             return;
-          case 'setDefaultVersion':
-            await this.setDefaultVersion(message.componentName, message.version, message.projectId);
-            return;
-          case 'setAlwaysUseLatest':
-            await this.setAlwaysUseLatest(message.componentName, message.projectId);
-            return;
           case 'expandComponent':
             await this.handleComponentExpand(message.componentName, message.projectId);
             return;
@@ -242,7 +236,8 @@ export class ComponentBrowserProvider {
                       gitlabInstance: comp.gitlabInstance
                     }],
                     versionCount: 1,
-                    defaultVersion: comp.version
+                    defaultVersion: comp.version,
+                    availableVersions: [comp.version]
                   }))
                 }]
               });
@@ -2129,9 +2124,15 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
           gitlabInstance: comp.gitlabInstance || 'gitlab.com',
           documentationUrl: comp.url ? this.extractProjectUrl(comp.url) : '',
           versions: new Map<string, any>(),
-          defaultVersion: comp.version || 'latest' // Use first encountered as default
+          defaultVersion: comp.version || 'latest',
+          availableVersions: comp.availableVersions || []
         });
         sourceGroup.totalComponents++;
+      } else if (comp.availableVersions) {
+        // Merge availableVersions from subsequent cache entries
+        const existing = projectGroup.components.get(comp.name)!;
+        const merged = new Set([...existing.availableVersions, ...comp.availableVersions]);
+        existing.availableVersions = Array.from(merged);
       }
 
       const componentGroup = projectGroup.components.get(comp.name)!;
@@ -2158,8 +2159,12 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
       projects: Array.from(source.projects.values()).map((project: any) => ({
         ...project,
         components: Array.from(project.components.values()).map((component: any) => {
-          // Determine the best default version using available versions if present
-          const availableVersions = component.availableVersions || [component.version || 'latest'];
+          // Use cached availableVersions, fall back to versions Map keys, then default
+          const availableVersions = component.availableVersions && component.availableVersions.length > 0
+            ? component.availableVersions
+            : component.versions.size > 0
+              ? Array.from(component.versions.keys())
+              : [component.defaultVersion || 'latest'];
           const versions: any[] = availableVersions.filter(Boolean).map((version: string) => ({
             version: version,
             description: component.description || 'No description available',
