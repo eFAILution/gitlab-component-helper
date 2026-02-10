@@ -3,9 +3,8 @@ import { Component } from '../providers/componentDetector';
 import { GitLabCatalogComponent, GitLabCatalogVariable, GitLabCatalogData } from '../types/gitlab-catalog';
 import { HttpClient } from '../utils/httpClient';
 import { Logger } from '../utils/logger';
-
-// Regex patterns for parsing GitLab CI/CD component specs
-const SPEC_INPUTS_SECTION_REGEX = /spec:\s*\n\s*inputs:([\s\S]*?)(?=\n---|\ndescription:|\nvariables:|\n[a-zA-Z][a-zA-Z0-9_-]*:|$)/;
+import { GitLabSpecParser, ComponentVariable } from '../parsers/specParser';
+import { getPerformanceMonitor } from '../utils/performanceMonitor';
 
 // Helper: Prompt for token if needed and store it
 async function promptForTokenIfNeeded(
@@ -151,14 +150,6 @@ interface GitLabTreeItem {
   mode: string;
 }
 
-interface ComponentVariable {
-  name: string;
-  description: string;
-  required: boolean;
-  type: string;
-  default?: string;
-}
-
 export interface ComponentSource {
   getComponents(): Promise<Component[]>;
   getComponent(name: string): Promise<Component | undefined>;
@@ -176,6 +167,7 @@ let backgroundUpdateInProgress = false;
 export class ComponentService implements ComponentSource {
   public httpClient = new HttpClient();
   private logger = Logger.getInstance();
+  private performanceMonitor = getPerformanceMonitor();
   private componentCache = new Map<string, Component>();
   private catalogCache = new Map<string, any>();
   private secretStorage: vscode.SecretStorage | undefined;
@@ -247,6 +239,16 @@ export class ComponentService implements ComponentSource {
   }
 
   private async fetchComponentMetadata(url: string, context?: vscode.ExtensionContext): Promise<Component> {
+    return this.performanceMonitor.track(
+      'fetchComponentMetadata',
+      async () => {
+        return this.fetchComponentMetadataInternal(url, context);
+      },
+      { url }
+    );
+  }
+
+  private async fetchComponentMetadataInternal(url: string, context?: vscode.ExtensionContext): Promise<Component> {
     const startTime = Date.now();
 
     try {
@@ -432,134 +434,15 @@ export class ComponentService implements ComponentSource {
       const templateContent = await this.httpClient.fetchText(templateUrl, fetchOptions);
       this.logger.debug(`[ComponentService] Template content received, length: ${templateContent.length} chars`);
 
-      // Use the same sophisticated parameter extraction logic as fetchTemplateContent
-      let extractedDescription = '';
-      let extractedVariables: ComponentVariable[] = [];
+      // Use unified parser to extract parameters
+      const parsedSpec = GitLabSpecParser.parse(templateContent, componentName);
 
-      // Split content by the GitLab component spec separator '---'
-      const parts = templateContent.split(/^---\s*$/m);
-      const specSection = parts[0] || '';
-
-      this.logger.debug(`[ComponentService] Template ${componentName}: Found ${parts.length} sections (spec + jobs)`);
-      this.logger.debug(`[ComponentService] Template ${componentName}: Spec section length: ${specSection.length} chars`);
-
-      // Extract description from component spec
-      // // FIXED: GitLab component specs don't have spec.description - changed to never match
-      // const specDescMatch = specSection.match(/spec:\s*\n\s*NEVER_MATCH_description:\s*["']?(.*?)["']?\s*$/m);
-      // if (specDescMatch) {
-      //   extractedDescription = specDescMatch[1].trim();
-      //   this.logger.debug(`[ComponentService] Template ${componentName}: Found spec description: ${extractedDescription}`);
-      // }
-
-      // Extract variables from GitLab CI/CD component spec format - ONLY from spec section
-      const specMatches = specSection.match(SPEC_INPUTS_SECTION_REGEX);
-      if (specMatches) {
-        this.logger.debug(`[ComponentService] Template ${componentName}: Found spec inputs section`);
-
-        // Parse component spec format
-        const inputsSection = specMatches[1];
-        const inputLines = inputsSection.split('\n')
-          .filter(line => line.trim() && !line.trim().startsWith('#'));
-
-        let currentInput: any = null;
-
-        for (const line of inputLines) {
-          const trimmedLine = line.trim();
-          if (!trimmedLine) continue;
-
-          // Stop if we hit a top-level key (indicating we've left the inputs section)
-          if (line.match(/^[a-zA-Z][a-zA-Z0-9_-]*:/)) {
-            this.logger.debug(`[ComponentService] Template ${componentName}: Stopping at top-level key: ${trimmedLine}`);
-            break;
-          }
-
-          // New input parameter (indented under inputs) - handle both 2-space and 4-space indentation
-          // Match lines like "    name:" where the input name ends with ":" and has only whitespace after
-          if (line.match(/^\s{2,4}[a-zA-Z_][a-zA-Z0-9_]*:\s*$/)) {
-            // If we have a current input, finalize it before starting a new one
-            if (currentInput) {
-              // Mark as required if no default was specified (GitLab CI/CD component behavior)
-              if (currentInput.default === undefined) {
-                currentInput.required = true;
-              }
-              extractedVariables.push(currentInput);
-            }
-            const inputName = trimmedLine.split(':')[0];
-            currentInput = {
-              name: inputName,
-              description: `Parameter: ${inputName}`,
-              required: false, // Will be updated to true if no default found
-              type: 'string',
-              default: undefined
-            };
-            this.logger.debug(`[ComponentService] Template ${componentName}: Found input parameter: ${inputName}`);
-          }
-          // Property of current input (more deeply indented) - handle 4+ spaces of indentation
-          else if (currentInput && line.match(/^\s{4,}/)) {
-            if (trimmedLine.startsWith('description:')) {
-              currentInput.description = trimmedLine.substring(12).replace(/^["']|["']$/g, '').trim();
-            } else if (trimmedLine.startsWith('default:')) {
-              currentInput.default = trimmedLine.substring(8).replace(/^["']|["']$/g, '').trim();
-            } else if (trimmedLine.startsWith('type:')) {
-              currentInput.type = trimmedLine.substring(5).replace(/^["']|["']$/g, '').trim();
-            }
-          }
-        }
-
-        // Add the last input
-        if (currentInput) {
-          // Mark as required if no default was specified (GitLab CI/CD component behavior)
-          if (currentInput.default === undefined) {
-            currentInput.required = true;
-          }
-          extractedVariables.push(currentInput);
-        }
-
-        this.logger.debug(`[ComponentService] Template ${componentName}: Extracted ${extractedVariables.length} input parameters from spec`);
-      } else {
-        this.logger.debug(`[ComponentService] Template ${componentName}: No spec inputs found, trying fallback parsing`);
-
-        // Fallback to old format for backward compatibility - also only in spec section
-        const variableMatches = specSection.match(/spec:\s*[\s\S]*?variables:([\s\S]*?)(?=\n[a-zA-Z][a-zA-Z0-9_-]*:|$)/);
-        if (variableMatches) {
-          const variableSection = variableMatches[1];
-          const varLines = variableSection.split('\n').slice(0);
-
-          extractedVariables = varLines
-            .filter(line => {
-              const trimmed = line.trim();
-              return trimmed &&
-                     line.match(/^\s{2,}/) &&
-                     trimmed.includes(':') &&
-                     !trimmed.startsWith('#') &&
-                     !line.match(/^[a-zA-Z][a-zA-Z0-9_-]*:/);
-            })
-            .map(line => {
-              const parts = line.trim().split(':');
-              const varName = parts[0].trim();
-              const defaultValue = parts.slice(1).join(':').trim();
-
-              return {
-                name: varName,
-                description: `Parameter: ${varName}`,
-                required: false,
-                type: 'string',
-                default: defaultValue || undefined
-              };
-            });
-
-          this.logger.debug(`[ComponentService] Template ${componentName}: Extracted ${extractedVariables.length} variables from fallback parsing`);
-        } else {
-          this.logger.debug(`[ComponentService] Template ${componentName}: No variables found in fallback parsing`);
-        }
-      }
-
-      this.logger.debug(`[ComponentService] Template ${componentName}: Extracted ${extractedVariables.length} parameters`);
-      extractedVariables.forEach(param => {
+      this.logger.debug(`[ComponentService] Template ${componentName}: Extracted ${parsedSpec.variables.length} parameters`);
+      parsedSpec.variables.forEach(param => {
         this.logger.debug(`[ComponentService] Template ${componentName}: Parameter: ${param.name} (${param.type}, required: ${param.required})`);
       });
 
-      return { content: templateContent, parameters: extractedVariables };
+      return { content: templateContent, parameters: parsedSpec.variables };
     } catch (error) {
       this.logger.debug(`Could not fetch component template: ${error}`);
       return null;
@@ -669,6 +552,16 @@ export class ComponentService implements ComponentSource {
    * Fetch component catalog data from GitLab with optimizations
    */
   async fetchCatalogData(gitlabInstance: string, projectPath: string, forceRefresh: boolean = false, version?: string, context?: vscode.ExtensionContext): Promise<any> {
+    return this.performanceMonitor.track(
+      'fetchCatalogData',
+      async () => {
+        return this.fetchCatalogDataInternal(gitlabInstance, projectPath, forceRefresh, version, context);
+      },
+      { gitlabInstance, projectPath, forceRefresh, version }
+    );
+  }
+
+  private async fetchCatalogDataInternal(gitlabInstance: string, projectPath: string, forceRefresh: boolean = false, version?: string, context?: vscode.ExtensionContext): Promise<any> {
     const startTime = Date.now();
     const versionSuffix = version ? `@${version}` : '';
     const cacheKey = `catalog:${gitlabInstance}:${projectPath}${versionSuffix}`;
@@ -695,36 +588,50 @@ export class ComponentService implements ComponentSource {
     this.logger.info(`Fetching fresh catalog data from ${cleanGitlabInstance}`);
 
     try {
-      // **PARALLEL OPTIMIZATION** - Fetch project info and templates in parallel
+      // **PARALLEL OPTIMIZATION with GRACEFUL DEGRADATION** - Fetch project info and templates in parallel
       const apiBaseUrl = `https://${cleanGitlabInstance}/api/v4`;
       let ref = version || 'main';
       let token: string | undefined = await this.getTokenForProject(cleanGitlabInstance, projectPath);
       let fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
-      let projectInfo: any, templates: any;
-      try {
-        [projectInfo, templates] = await Promise.all([
-          this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`, fetchOptions),
-          this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`, fetchOptions)
-            .catch(() => [] as GitLabTreeItem[])
-        ]);
-      } catch (err: any) {
+
+      const [projectInfoResult, templatesResult] = await Promise.allSettled([
+        this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`, fetchOptions),
+        this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`, fetchOptions)
+      ]);
+
+      // Handle authentication errors and retry if needed
+      let projectInfo: any;
+      let templates: any;
+
+      if (projectInfoResult.status === 'rejected') {
+        const err = projectInfoResult.reason;
         if (err && (err.status === 401 || err.status === 403)) {
-          // Prompt for token and retry
+          // Prompt for token and retry both requests
           token = await promptForTokenIfNeeded(context, this, cleanGitlabInstance, projectPath);
           if (token) {
             fetchOptions = { headers: { 'PRIVATE-TOKEN': token } };
-            [projectInfo, templates] = await Promise.all([
+            const [retryProjectInfo, retryTemplates] = await Promise.allSettled([
               this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`, fetchOptions),
               this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`, fetchOptions)
-                .catch(() => [] as GitLabTreeItem[])
             ]);
+
+            if (retryProjectInfo.status === 'rejected') {
+              throw retryProjectInfo.reason;
+            }
+
+            projectInfo = retryProjectInfo.value;
+            templates = retryTemplates.status === 'fulfilled' ? retryTemplates.value : [] as GitLabTreeItem[];
           } else {
             throw err;
           }
         } else {
           throw err;
         }
+      } else {
+        projectInfo = projectInfoResult.value;
+        templates = templatesResult.status === 'fulfilled' ? templatesResult.value : [] as GitLabTreeItem[];
       }
+
       // --- Use the project's default branch if available ---
       if (projectInfo && projectInfo.default_branch) {
         ref = projectInfo.default_branch;
@@ -818,149 +725,15 @@ export class ComponentService implements ComponentSource {
       const contentUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent('templates/' + fileName)}/raw?ref=${ref}`;
       const content = await this.httpClient.fetchText(contentUrl, fetchOptions);
 
-      let extractedDescription = '';
-      let extractedVariables: ComponentVariable[] = [];
+      // Use unified parser to extract spec information
+      const parsedSpec = GitLabSpecParser.parse(content, fileName);
 
-      // Split content by the GitLab component spec separator '---'
-      // Everything before '---' is the spec section, everything after is the CI/CD job definitions
-      const parts = content.split(/^---\s*$/m);
-      const specSection = parts[0] || '';
-
-      this.logger.debug(`[ComponentService] Template ${fileName}: Found ${parts.length} sections (spec + jobs)`);
-      this.logger.debug(`[ComponentService] Template ${fileName}: Spec section length: ${specSection.length} chars`);
-
-      // Check if this file has a valid spec section - required for GitLab CI/CD components
-      // Files without a spec section are not components (e.g., YAML anchors/fragments)
-      const hasSpecSection = specSection.match(/^spec:\s*$/m) !== null;
-      
-      // Extract description from component spec
-      // FIXED: GitLab component specs don't have spec.description - changed to never match
-      // const specDescMatch = specSection.match(/spec:\s*\n\s*NEVER_MATCH_description:\s*["']?(.*?)["']?\s*$/m);
-      // if (specDescMatch) {
-      //   extractedDescription = specDescMatch[1].trim();
-      //   this.logger.debug(`[ComponentService] Template ${fileName}: Found spec description: ${extractedDescription}`);
-      // }
-
-      // If no spec description, try comment at top of file
-      if (!extractedDescription) {
-        const commentMatch = specSection.match(/^#\s*(.+?)$/m);
-        if (commentMatch && !commentMatch[1].toLowerCase().includes('gitlab') && !commentMatch[1].toLowerCase().includes('ci')) {
-          extractedDescription = commentMatch[1].trim();
-          this.logger.debug(`[ComponentService] Template ${fileName}: Found comment description: ${extractedDescription}`);
-        }
-      }
-
-      // Extract variables from GitLab CI/CD component spec format - ONLY from spec section
-      const specMatches = specSection.match(SPEC_INPUTS_SECTION_REGEX);
-      if (specMatches) {
-        this.logger.debug(`[ComponentService] Template ${fileName}: Found spec inputs section`);
-
-        // Parse component spec format
-        const inputsSection = specMatches[1];
-        const inputLines = inputsSection.split('\n')
-          .filter(line => line.trim() && !line.trim().startsWith('#'));
-
-        let currentInput: any = null;
-
-        for (const line of inputLines) {
-          const trimmedLine = line.trim();
-          if (!trimmedLine) continue;
-
-          // Stop if we hit a top-level key (indicating we've left the inputs section)
-          if (line.match(/^[a-zA-Z][a-zA-Z0-9_-]*:/)) {
-            this.logger.debug(`[ComponentService] Template ${fileName}: Stopping at top-level key: ${trimmedLine}`);
-            break;
-          }
-
-          // New input parameter (indented under inputs) - handle both 2-space and 4-space indentation
-          // Match lines like "    name:" where the input name ends with ":" and has only whitespace after
-          if (line.match(/^\s{2,4}[a-zA-Z_][a-zA-Z0-9_]*:\s*$/)) {
-            // If we have a current input, finalize it before starting a new one
-            if (currentInput) {
-              // Mark as required if no default was specified (GitLab CI/CD component behavior)
-              if (currentInput.default === undefined) {
-                currentInput.required = true;
-              }
-              extractedVariables.push(currentInput);
-            }
-            const inputName = trimmedLine.split(':')[0];
-            currentInput = {
-              name: inputName,
-              description: `Parameter: ${inputName}`,
-              required: false, // Will be updated to true if no default found
-              type: 'string',
-              default: undefined
-            };
-            this.logger.debug(`[ComponentService] Template ${fileName}: Found input parameter: ${inputName}`);
-          }
-          // Property of current input (more deeply indented) - handle 4+ spaces of indentation
-          else if (currentInput && line.match(/^\s{4,}/)) {
-            if (trimmedLine.startsWith('description:')) {
-              currentInput.description = trimmedLine.substring(12).replace(/^["']|["']$/g, '').trim();
-            } else if (trimmedLine.startsWith('default:')) {
-              currentInput.default = trimmedLine.substring(8).replace(/^["']|["']$/g, '').trim();
-            } else if (trimmedLine.startsWith('type:')) {
-              currentInput.type = trimmedLine.substring(5).replace(/^["']|["']$/g, '').trim();
-            }
-          }
-        }
-
-        // Add the last input
-        if (currentInput) {
-          // Mark as required if no default was specified (GitLab CI/CD component behavior)
-          if (currentInput.default === undefined) {
-            currentInput.required = true;
-          }
-          extractedVariables.push(currentInput);
-        }
-
-        this.logger.debug(`[ComponentService] Template ${fileName}: Extracted ${extractedVariables.length} input parameters from spec`);
-      } else {
-        this.logger.debug(`[ComponentService] Template ${fileName}: No spec inputs found, trying fallback parsing`);
-
-        // Fallback to old format for backward compatibility - also only in spec section
-        // Look for variables section that's ONLY within the spec section
-        const variableMatches = specSection.match(/spec:\s*[\s\S]*?variables:([\s\S]*?)(?=\n[a-zA-Z][a-zA-Z0-9_-]*:|$)/);
-        if (variableMatches) {
-          const variableSection = variableMatches[1];
-          const varLines = variableSection.split('\n').slice(0); // Don't skip first line since we captured just the content
-
-          extractedVariables = varLines
-            .filter(line => {
-              const trimmed = line.trim();
-              // Only include properly indented variable definitions
-              return trimmed &&
-                     line.match(/^\s{2,}/) && // Must be indented
-                     trimmed.includes(':') &&
-                     !trimmed.startsWith('#') &&
-                     !line.match(/^[a-zA-Z][a-zA-Z0-9_-]*:/); // Not a top-level key
-            })
-            .map(line => {
-              const parts = line.trim().split(':');
-              const varName = parts[0].trim();
-              const defaultValue = parts.slice(1).join(':').trim();
-
-              return {
-                name: varName,
-                description: `Parameter: ${varName}`,
-                required: false,
-                type: 'string',
-                default: defaultValue || undefined
-              };
-            });
-
-          this.logger.debug(`[ComponentService] Template ${fileName}: Extracted ${extractedVariables.length} variables from fallback parsing`);
-        } else {
-          this.logger.debug(`[ComponentService] Template ${fileName}: No variables found in fallback parsing`);
-        }
-      }
-
-      // Determine if this is a valid component - must have a spec section
-      // Files that only contain YAML anchors (like .options or .common templates) are not components
-      const isValidComponent = hasSpecSection;
-      this.logger.debug(`[ComponentService] Template ${fileName}: isValidComponent=${isValidComponent} (hasSpecSection=${hasSpecSection})`);
-
-      return { content, extractedVariables, extractedDescription, isValidComponent };
+      return {
+        content,
+        extractedVariables: parsedSpec.variables,
+        extractedDescription: parsedSpec.description,
+        isValidComponent: parsedSpec.isValidComponent
+      };
     } catch (error) {
       this.logger.debug(`Could not fetch template content: ${error}`);
       return null;

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { getComponentService } from '../services/componentService';
-import { ComponentCacheManager } from '../services/componentCacheManager';
+import { getComponentService } from '../services/component';
+import { ComponentCacheManager } from '../services/cache/componentCacheManager';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
 import { Component, ComponentParameter } from './componentDetector';
 import { containsGitLabVariables, expandGitLabVariables } from '../utils/gitlabVariables';
@@ -13,6 +13,11 @@ export class ComponentBrowserProvider {
   private panel: vscode.WebviewPanel | undefined;
   private originalEditor: vscode.TextEditor | undefined;
   private logger = Logger.getInstance();
+
+  // State tracking for lazy loading versions
+  private expandedComponents = new Set<string>();
+  private versionsLoading = new Set<string>();
+  private versionsFetched = new Set<string>();
 
   constructor(private context: vscode.ExtensionContext, private cacheManager: ComponentCacheManager) {
     // Remove this.outputChannel assignment, now using logger
@@ -101,6 +106,12 @@ export class ComponentBrowserProvider {
           case 'setAlwaysUseLatest':
             await this.setAlwaysUseLatest(message.componentName, message.projectId);
             return;
+          case 'expandComponent':
+            await this.handleComponentExpand(message.componentName, message.projectId);
+            return;
+          case 'fetchVersions':
+            await this.handleFetchVersions(message.componentName, message.sourcePath, message.gitlabInstance);
+            return;
         }
       },
       undefined,
@@ -134,17 +145,8 @@ export class ComponentBrowserProvider {
       const cachedComponents = await this.cacheManager.getComponents();
       const sourceErrors = this.cacheManager.getSourceErrors();
 
-      // Fetch versions for components that don't have them yet
-      this.logger.debug('[ComponentBrowser] Fetching available versions for components...', 'ComponentBrowser');
-      for (const component of cachedComponents) {
-        if (!component.availableVersions || component.availableVersions.length === 0) {
-          try {
-            await this.cacheManager.fetchComponentVersions(component);
-          } catch (error) {
-            this.logger.warn(`[ComponentBrowser] Error fetching versions for ${component.name}: ${error}`, 'ComponentBrowser');
-          }
-        }
-      }
+      // Skip upfront version fetching - will load lazily on expand
+      this.logger.debug('[ComponentBrowser] Components loaded, versions will be fetched on demand', 'ComponentBrowser');
 
       // Transform cached components to component groups format
       const allComponents = this.transformCachedComponentsToGroups(cachedComponents);
@@ -606,33 +608,43 @@ export class ComponentBrowserProvider {
           const components = project.components && Array.isArray(project.components) ? project.components : [];
           const componentsHtml = components.length === 0 ?
             '<p class="no-components">No components found in this project</p>' :
-            components.map((component: any) => `
-              <div class="component-card" data-name="${component.name}" data-description="${component.description}" data-component-name="${component.name}" data-project-id="${projectId}" data-source-path="${component.sourcePath}" data-gitlab-instance="${component.gitlabInstance}">
+            components.map((component: any) => {
+              const componentKey = `${component.name}-${component.sourcePath}`;
+              const hasVersions = component.availableVersions && component.availableVersions.length > 0;
+
+              return `
+              <div class="component-card" data-name="${component.name}" data-description="${component.description}" data-component-name="${component.name}" data-project-id="${projectId}" data-source-path="${component.sourcePath}" data-gitlab-instance="${component.gitlabInstance}" id="component-${componentKey}">
                 <div class="component-header">
                   <span class="component-title">
                     ${component.name}
-                    ${component.versionCount > 1 ? `<span class="version-badge">${component.versionCount} versions</span>` : ''}
+                    ${hasVersions && component.availableVersions.length > 1 ? `<span class="version-badge">${component.availableVersions.length} versions</span>` : ''}
                   </span>
-                  <div class="component-actions">
-                    ${component.availableVersions && component.availableVersions.length > 1 ? `
-                      <select class="version-dropdown" onchange="updateComponentVersion('${component.name}', this.value, '${projectId}')" oncontextmenu="showContextMenu(event, '${component.name}', this.value, '${projectId}')">
-                        ${component.availableVersions.map((version: string) => `
-                          <option value="${version}" ${version === component.defaultVersion ? 'selected' : ''}>${version}</option>
-                        `).join('')}
-                      </select>
-                    ` : `<span class="single-version">${component.defaultVersion}</span>`}
-                    <button onclick="viewDetailsById('${component.name}', '${component.defaultVersion}', '${projectId}')">Details</button>
-                    <button onclick="insertComponentById('${component.name}', '${component.defaultVersion}', '${projectId}')">Insert</button>
+                  <div class="component-actions" id="actions-${componentKey}">
+                    ${hasVersions ? `
+                      ${component.availableVersions.length > 1 ? `
+                        <select class="version-dropdown" onchange="updateComponentVersion('${component.name}', this.value, '${projectId}')" oncontextmenu="showContextMenu(event, '${component.name}', this.value, '${projectId}')">
+                          ${component.availableVersions.map((version: string) => `
+                            <option value="${version}" ${version === component.defaultVersion ? 'selected' : ''}>${version}</option>
+                          `).join('')}
+                        </select>
+                      ` : `<span class="single-version">${component.availableVersions[0] || 'latest'}</span>`}
+                      <button onclick="viewDetailsById('${component.name}', '${component.defaultVersion || component.availableVersions[0]}', '${projectId}')">Details</button>
+                      <button onclick="insertComponentById('${component.name}', '${component.defaultVersion || component.availableVersions[0]}', '${projectId}')">Insert</button>
+                    ` : `
+                      <button class="load-versions-btn" onclick="loadComponentVersions('${component.name}', '${component.sourcePath}', '${component.gitlabInstance}', '${projectId}')">Load Versions</button>
+                      <span class="loading-versions" id="loading-${componentKey}" style="display: none;">Loading...</span>
+                    `}
                   </div>
                 </div>
                 <div class="component-description" id="desc-${component.name}-${projectId}">${component.description}</div>
-                ${component.availableVersions && component.availableVersions.length > 1 ? `
+                ${hasVersions && component.availableVersions.length > 1 ? `
                   <div class="version-info" id="version-info-${component.name}-${projectId}">
                     <small>Default version: ${component.defaultVersion}</small>
                   </div>
                 ` : ''}
               </div>
-            `).join('');
+            `;
+            }).join('');
 
           return `
             <div class="project-group">
@@ -892,6 +904,22 @@ export class ComponentBrowserProvider {
           button:hover {
             background-color: var(--vscode-button-hoverBackground);
           }
+          .load-versions-btn {
+            background-color: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+          }
+          .load-versions-btn:hover {
+            background-color: var(--vscode-button-secondaryHoverBackground);
+          }
+          .loading-versions {
+            font-size: 0.85em;
+            color: var(--vscode-disabledForeground);
+            font-style: italic;
+          }
+          .error-message {
+            color: var(--vscode-errorForeground);
+            font-size: 0.85em;
+          }
           .component-description {
             color: var(--vscode-disabledForeground);
             font-size: 0.9em;
@@ -1008,6 +1036,62 @@ export class ComponentBrowserProvider {
               icon.textContent = '▶';
             }
           }
+
+          function loadComponentVersions(componentName, sourcePath, gitlabInstance, projectId) {
+            const componentKey = componentName + '-' + sourcePath;
+            const loadingElement = document.getElementById('loading-' + componentKey);
+            const loadButton = document.querySelector('#component-' + componentKey + ' .load-versions-btn');
+            if (loadingElement) { loadingElement.style.display = 'inline'; }
+            if (loadButton) { loadButton.style.display = 'none'; }
+            vscode.postMessage({ command: 'fetchVersions', componentName: componentName, sourcePath: sourcePath, gitlabInstance: gitlabInstance });
+          }
+
+          window.addEventListener('message', event => {
+            const message = event.data;
+            if (message.command === 'versionsLoaded') { handleVersionsLoaded(message); }
+            else if (message.command === 'versionsError') { handleVersionsError(message); }
+          });
+
+          function handleVersionsLoaded(message) {
+            const componentName = message.componentName, sourcePath = message.sourcePath, versions = message.versions, defaultVersion = message.defaultVersion, componentKey = componentName + '-' + sourcePath;
+            if (!window.componentVersionData[componentName]) { window.componentVersionData[componentName] = {}; }
+            versions.forEach(function(v) { window.componentVersionData[componentName][v] = { version: v, sourcePath: sourcePath, gitlabInstance: message.gitlabInstance || 'gitlab.com' }; });
+            const componentCard = document.getElementById('component-' + componentKey);
+            if (!componentCard) { return; }
+            const projectId = componentCard.getAttribute('data-project-id'), actionsDiv = document.getElementById('actions-' + componentKey);
+            if (actionsDiv) {
+              if (versions.length > 1) {
+                const opts = versions.map(function(v) { return '<option value="' + v + '" ' + (v === defaultVersion ? 'selected' : '') + '>' + v + '</option>'; }).join('');
+                actionsDiv.innerHTML = '<select class="version-dropdown" onchange="updateComponentVersion(\'' + componentName + '\', this.value, \'' + projectId + '\')">' + opts + '</select><button onclick="viewDetailsById(\'' + componentName + '\', \'' + defaultVersion + '\', \'' + projectId + '\')">Details</button><button onclick="insertComponentById(\'' + componentName + '\', \'' + defaultVersion + '\', \'' + projectId + '\')">Insert</button>';
+                const descElement = document.getElementById('desc-' + componentName + '-' + projectId);
+                if (descElement && !document.getElementById('version-info-' + componentName + '-' + projectId)) {
+                  const versionInfo = document.createElement('div');
+                  versionInfo.className = 'version-info'; versionInfo.id = 'version-info-' + componentName + '-' + projectId;
+                  versionInfo.innerHTML = '<small>Default version: ' + defaultVersion + '</small>';
+                  descElement.parentNode.insertBefore(versionInfo, descElement.nextSibling);
+                }
+              } else {
+                const singleVersion = versions[0] || 'latest';
+                actionsDiv.innerHTML = '<span class="single-version">' + singleVersion + '</span><button onclick="viewDetailsById(\'' + componentName + '\', \'' + singleVersion + '\', \'' + projectId + '\')">Details</button><button onclick="insertComponentById(\'' + componentName + '\', \'' + singleVersion + '\', \'' + projectId + '\')">Insert</button>';
+              }
+            }
+            const titleSpan = componentCard.querySelector('.component-title');
+            if (titleSpan && versions.length > 1 && !titleSpan.querySelector('.version-badge')) {
+              const badge = document.createElement('span'); badge.className = 'version-badge'; badge.textContent = versions.length + ' versions'; titleSpan.appendChild(badge);
+            }
+          }
+
+          function handleVersionsError(message) {
+            const componentKey = message.componentName + '-' + message.sourcePath;
+            const loadingElement = document.getElementById('loading-' + componentKey);
+            if (loadingElement) { loadingElement.style.display = 'none'; }
+            const actionsDiv = document.getElementById('actions-' + componentKey);
+            if (actionsDiv) {
+              actionsDiv.innerHTML = '<span class="error-message" style="color: red; font-size: 0.9em;">Failed to load versions</span><button class="load-versions-btn" onclick="loadComponentVersions(\'' + message.componentName + '\', \'' + message.sourcePath + '\', \'' + (message.gitlabInstance || 'gitlab.com') + '\', \'\')">Retry</button>';
+            }
+          }
+
+          function updateComponentVersion(componentName, selectedVersion, projectId) {
 
           function updateComponentVersion(componentName, selectedVersion, projectId) {
             const componentData = window.componentVersionData[componentName];
@@ -2308,6 +2392,121 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     } catch (error) {
       this.logger.error(`[ComponentBrowser] Error setting always use latest: ${error}`, 'ComponentBrowser');
       vscode.window.showErrorMessage(`Error setting always use latest: ${error}`);
+    }
+  }
+
+  private async handleComponentExpand(componentName: string, projectId: string) {
+    const componentKey = `${componentName}-${projectId}`;
+
+    // Track expanded state
+    this.expandedComponents.add(componentKey);
+
+    // Check if we already fetched versions for this component
+    if (this.versionsFetched.has(componentKey)) {
+      this.logger.debug(`[ComponentBrowser] Versions already fetched for ${componentName}`, 'ComponentBrowser');
+      return;
+    }
+
+    // Check if we're already loading versions for this component
+    if (this.versionsLoading.has(componentKey)) {
+      this.logger.debug(`[ComponentBrowser] Already loading versions for ${componentName}`, 'ComponentBrowser');
+      return;
+    }
+
+    // Mark as loading
+    this.versionsLoading.add(componentKey);
+
+    // Send loading state to webview
+    if (this.panel) {
+      this.panel.webview.postMessage({
+        command: 'versionsLoading',
+        componentName,
+        projectId
+      });
+    }
+
+    this.logger.debug(`[ComponentBrowser] Loading versions for ${componentName}`, 'ComponentBrowser');
+  }
+
+  private async handleFetchVersions(componentName: string, sourcePath: string, gitlabInstance: string) {
+    const componentKey = `${componentName}-${sourcePath}`;
+
+    try {
+      // Find the component in cache
+      const cachedComponents = await this.cacheManager.getComponents();
+      const component = cachedComponents.find(c =>
+        c.name === componentName &&
+        c.sourcePath === sourcePath &&
+        c.gitlabInstance === gitlabInstance
+      );
+
+      if (!component) {
+        throw new Error(`Component ${componentName} not found in cache`);
+      }
+
+      // Fetch versions from cache manager
+      await this.cacheManager.fetchComponentVersions(component);
+
+      // Get updated component with versions
+      const updatedComponents = await this.cacheManager.getComponents();
+      const updatedComponent = updatedComponents.find(c =>
+        c.name === componentName &&
+        c.sourcePath === sourcePath &&
+        c.gitlabInstance === gitlabInstance
+      );
+
+      if (!updatedComponent) {
+        throw new Error(`Updated component ${componentName} not found`);
+      }
+
+      // Mark as fetched
+      this.versionsFetched.add(componentKey);
+      this.versionsLoading.delete(componentKey);
+
+      // Calculate default version (prefer latest, main, master, or highest semantic version)
+      const availableVersions = updatedComponent.availableVersions || [];
+      let defaultVersion = updatedComponent.version || 'latest';
+
+      if (availableVersions.length > 0) {
+        if (availableVersions.includes('latest')) {
+          defaultVersion = 'latest';
+        } else if (availableVersions.includes('main')) {
+          defaultVersion = 'main';
+        } else if (availableVersions.includes('master')) {
+          defaultVersion = 'master';
+        } else {
+          defaultVersion = availableVersions[0];
+        }
+      }
+
+      // Send versions to webview
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: 'versionsLoaded',
+          componentName,
+          sourcePath,
+          versions: availableVersions,
+          defaultVersion
+        });
+      }
+
+      this.logger.debug(`[ComponentBrowser] Loaded ${availableVersions.length} versions for ${componentName}`, 'ComponentBrowser');
+
+    } catch (error) {
+      this.logger.error(`[ComponentBrowser] Error fetching versions for ${componentName}: ${error}`, 'ComponentBrowser');
+
+      // Mark as no longer loading
+      this.versionsLoading.delete(componentKey);
+
+      // Send error to webview
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: 'versionsError',
+          componentName,
+          sourcePath,
+          error: String(error)
+        });
+      }
     }
   }
 

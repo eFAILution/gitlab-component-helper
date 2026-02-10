@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { getComponentService } from '../services/componentService';
 import { Logger } from '../utils/logger';
+import { getPerformanceMonitor } from '../utils/performanceMonitor';
 
 interface CachedComponent {
   name: string;
@@ -22,6 +23,7 @@ interface CachedComponent {
 
 export class ComponentCacheManager {
   private logger = Logger.getInstance();
+  private performanceMonitor = getPerformanceMonitor();
   private components: CachedComponent[] = [];
   private lastRefreshTime = 0;
   private refreshInProgress = false;
@@ -127,6 +129,15 @@ export class ComponentCacheManager {
   }
 
   public async refreshComponents(): Promise<void> {
+    return this.performanceMonitor.track(
+      'refreshComponents',
+      async () => {
+        return this.refreshComponentsInternal();
+      }
+    );
+  }
+
+  private async refreshComponentsInternal(): Promise<void> {
     if (this.refreshInProgress) {
       this.logger.debug('[ComponentCache] Refresh already in progress, skipping...', 'ComponentCache');
       return;
@@ -238,12 +249,16 @@ export class ComponentCacheManager {
           }
         });
 
-        // Wait for all sources to complete
-        const results = await Promise.all(fetchPromises);
+        // **GRACEFUL DEGRADATION** - Use Promise.allSettled to handle partial failures
+        const results = await Promise.allSettled(fetchPromises);
 
-        // Flatten the results
-        for (const sourceComponents of results) {
-          newComponents.push(...sourceComponents);
+        // Flatten the results, handling both fulfilled and rejected promises
+        for (const result of results) {
+          if (result.status === 'fulfilled' && Array.isArray(result.value)) {
+            newComponents.push(...result.value);
+          } else if (result.status === 'rejected') {
+            this.logger.warn(`[ComponentCache] Source fetch rejected: ${result.reason}`, 'ComponentCache');
+          }
         }
       }
 
@@ -320,6 +335,16 @@ export class ComponentCacheManager {
    * Fetch and cache all available versions for a specific component
    */
   public async fetchComponentVersions(component: CachedComponent): Promise<string[]> {
+    return this.performanceMonitor.track(
+      'fetchComponentVersions',
+      async () => {
+        return this.fetchComponentVersionsInternal(component);
+      },
+      { componentName: component.name, sourcePath: component.sourcePath }
+    );
+  }
+
+  private async fetchComponentVersionsInternal(component: CachedComponent): Promise<string[]> {
     try {
       const cacheKey = `${component.gitlabInstance}|${component.sourcePath}`;
       let sortedVersions: string[] | undefined = this.projectVersionsCache.get(cacheKey);
@@ -562,13 +587,16 @@ export class ComponentCacheManager {
           }
         });
 
-        const batchResults = await Promise.all(batchPromises);
+        // **GRACEFUL DEGRADATION** - Use Promise.allSettled for partial failures
+        const batchResults = await Promise.allSettled(batchPromises);
 
         // Add successful components to the total
         for (const result of batchResults) {
-          if (result.components.length > 0) {
-            allComponents.push(...result.components);
+          if (result.status === 'fulfilled' && result.value.components.length > 0) {
+            allComponents.push(...result.value.components);
             projectsWithComponents++;
+          } else if (result.status === 'rejected') {
+            this.logger.warn(`[ComponentCache] Project check failed: ${result.reason}`, 'ComponentCache');
           }
         }
       }
@@ -598,7 +626,7 @@ export class ComponentCacheManager {
     const componentService = getComponentService();
 
     try {
-      // Use GitLab Groups API to get all projects in the group
+      // **PARALLEL OPTIMIZATION** - Fetch group info and projects in parallel
       const groupApiUrl = `https://${gitlabInstance}/api/v4/groups/${encodeURIComponent(groupPath)}/projects?per_page=100&include_subgroups=true`;
       this.logger.info(`[ComponentCache] Fetching group projects from: ${groupApiUrl}`, 'ComponentCache');
 

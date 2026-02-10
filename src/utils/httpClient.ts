@@ -2,6 +2,8 @@ import * as https from 'https';
 import * as http from 'http';
 import * as vscode from 'vscode';
 import { Logger } from './logger';
+import { getRequestDeduplicator, RequestDeduplicator } from './requestDeduplicator';
+import { getPerformanceMonitor } from './performanceMonitor';
 
 interface RequestOptions {
   timeout?: number;
@@ -12,8 +14,12 @@ interface RequestOptions {
 
 export class HttpClient {
   private logger = Logger.getInstance();
+  private performanceMonitor = getPerformanceMonitor();
+  private deduplicator: RequestDeduplicator;
 
-  constructor() {}
+  constructor() {
+    this.deduplicator = getRequestDeduplicator();
+  }
 
   private getConfig() {
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
@@ -32,7 +38,23 @@ export class HttpClient {
     return statusCode >= 500 || statusCode === 429; // Include rate limiting
   }
 
+  private buildCacheKey(url: string, headers: Record<string, string>): string {
+    // Include auth tokens in cache key to avoid mixing authenticated/unauthenticated responses
+    const authToken = headers['Authorization'] || headers['PRIVATE-TOKEN'] || '';
+    return `${url}|${authToken}`;
+  }
+
   async fetchJson(url: string, options: RequestOptions = {}): Promise<any> {
+    return this.performanceMonitor.track(
+      'httpClient.fetchJson',
+      async () => {
+        return this.fetchJsonInternal(url, options);
+      },
+      { url: new URL(url).hostname + new URL(url).pathname }
+    );
+  }
+
+  private async fetchJsonInternal(url: string, options: RequestOptions = {}): Promise<any> {
     const config = this.getConfig();
     const timeout = options.timeout || config.timeout;
     const retryAttempts = options.retryAttempts || config.retryAttempts;
@@ -41,41 +63,55 @@ export class HttpClient {
       ...options.headers
     };
 
-    for (let attempt = 0; attempt <= retryAttempts; attempt++) {
-      try {
-        this.logger.debug(`HTTP Request attempt ${attempt + 1}/${retryAttempts + 1}: ${url}`);
+    const cacheKey = this.buildCacheKey(url, headers);
 
-        const data = await this.makeRequest(url, { timeout, headers });
-        const jsonData = JSON.parse(data);
+    return this.deduplicator.fetch(cacheKey, async () => {
+      for (let attempt = 0; attempt <= retryAttempts; attempt++) {
+        try {
+          this.logger.debug(`HTTP Request attempt ${attempt + 1}/${retryAttempts + 1}: ${url}`);
 
-        this.logger.debug(`HTTP Request successful: ${url} (${data.length} chars)`);
-        return jsonData;
-      } catch (error: any) {
-        const isLastAttempt = attempt === retryAttempts;
+          const data = await this.makeRequest(url, { timeout, headers });
+          const jsonData = JSON.parse(data);
 
-        if (error.statusCode && !this.shouldRetry(error.statusCode)) {
-          this.logger.warn(`HTTP Request failed with client error ${error.statusCode}: ${url}`);
-          throw error;
+          this.logger.debug(`HTTP Request successful: ${url} (${data.length} chars)`);
+          return jsonData;
+        } catch (error: any) {
+          const isLastAttempt = attempt === retryAttempts;
+
+          if (error.statusCode && !this.shouldRetry(error.statusCode)) {
+            this.logger.warn(`HTTP Request failed with client error ${error.statusCode}: ${url}`);
+            throw error;
+          }
+
+          if (isLastAttempt) {
+            this.logger.error(`HTTP Request failed after ${retryAttempts + 1} attempts: ${url} - ${error.message}`);
+            throw error;
+          }
+
+          // Exponential backoff with jitter
+          const baseDelay = options.retryDelay || 1000;
+          const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
+
+          this.logger.warn(`HTTP Request failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${url} - ${error.message}`);
+          await this.delay(delay);
         }
-
-        if (isLastAttempt) {
-          this.logger.error(`HTTP Request failed after ${retryAttempts + 1} attempts: ${url} - ${error.message}`);
-          throw error;
-        }
-
-        // Exponential backoff with jitter
-        const baseDelay = options.retryDelay || 1000;
-        const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
-
-        this.logger.warn(`HTTP Request failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${url} - ${error.message}`);
-        await this.delay(delay);
       }
-    }
 
-    throw new Error('Unexpected error in retry loop');
+      throw new Error('Unexpected error in retry loop');
+    });
   }
 
   async fetchText(url: string, options: RequestOptions = {}): Promise<string> {
+    return this.performanceMonitor.track(
+      'httpClient.fetchText',
+      async () => {
+        return this.fetchTextInternal(url, options);
+      },
+      { url: new URL(url).hostname + new URL(url).pathname }
+    );
+  }
+
+  private async fetchTextInternal(url: string, options: RequestOptions = {}): Promise<string> {
     const config = this.getConfig();
     const timeout = options.timeout || config.timeout;
     const retryAttempts = options.retryAttempts || config.retryAttempts;
@@ -84,37 +120,41 @@ export class HttpClient {
       ...options.headers
     };
 
-    for (let attempt = 0; attempt <= retryAttempts; attempt++) {
-      try {
-        this.logger.debug(`HTTP Text Request attempt ${attempt + 1}/${retryAttempts + 1}: ${url}`);
+    const cacheKey = this.buildCacheKey(url, headers);
 
-        const data = await this.makeRequest(url, { timeout, headers });
+    return this.deduplicator.fetch(cacheKey, async () => {
+      for (let attempt = 0; attempt <= retryAttempts; attempt++) {
+        try {
+          this.logger.debug(`HTTP Text Request attempt ${attempt + 1}/${retryAttempts + 1}: ${url}`);
 
-        this.logger.debug(`HTTP Text Request successful: ${url} (${data.length} chars)`);
-        return data;
-      } catch (error: any) {
-        const isLastAttempt = attempt === retryAttempts;
+          const data = await this.makeRequest(url, { timeout, headers });
 
-        if (error.statusCode && !this.shouldRetry(error.statusCode)) {
-          this.logger.warn(`HTTP Text Request failed with client error ${error.statusCode}: ${url}`);
-          throw error;
+          this.logger.debug(`HTTP Text Request successful: ${url} (${data.length} chars)`);
+          return data;
+        } catch (error: any) {
+          const isLastAttempt = attempt === retryAttempts;
+
+          if (error.statusCode && !this.shouldRetry(error.statusCode)) {
+            this.logger.warn(`HTTP Text Request failed with client error ${error.statusCode}: ${url}`);
+            throw error;
+          }
+
+          if (isLastAttempt) {
+            this.logger.error(`HTTP Text Request failed after ${retryAttempts + 1} attempts: ${url} - ${error.message}`);
+            throw error;
+          }
+
+          // Exponential backoff with jitter
+          const baseDelay = options.retryDelay || 1000;
+          const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
+
+          this.logger.warn(`HTTP Text Request failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${url} - ${error.message}`);
+          await this.delay(delay);
         }
-
-        if (isLastAttempt) {
-          this.logger.error(`HTTP Text Request failed after ${retryAttempts + 1} attempts: ${url} - ${error.message}`);
-          throw error;
-        }
-
-        // Exponential backoff with jitter
-        const baseDelay = options.retryDelay || 1000;
-        const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
-
-        this.logger.warn(`HTTP Text Request failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${url} - ${error.message}`);
-        await this.delay(delay);
       }
-    }
 
-    throw new Error('Unexpected error in retry loop');
+      throw new Error('Unexpected error in retry loop');
+    });
   }
 
   private makeRequest(url: string, options: { timeout: number; headers: Record<string, string> }): Promise<string> {
@@ -207,5 +247,15 @@ export class HttpClient {
     }
 
     return results;
+  }
+
+  // Get request deduplication statistics
+  getDeduplicationStats(): { pendingCount: number; pendingKeys: string[] } {
+    return this.deduplicator.getStats();
+  }
+
+  // Clear all pending deduplicated requests
+  clearDeduplicatedRequests(): void {
+    this.deduplicator.clear();
   }
 }

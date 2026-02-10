@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { getComponentService } from '../services/componentService';
-import { getComponentCacheManager } from '../services/componentCacheManager';
+import { getComponentService } from '../services/component';
+import { getComponentCacheManager } from '../services/cache/componentCacheManager';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
 import { expandGitLabVariables, containsGitLabVariables, detectGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
