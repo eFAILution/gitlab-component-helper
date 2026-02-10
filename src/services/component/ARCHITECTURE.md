@@ -40,7 +40,7 @@
 
 **Dependencies:**
 - TokenManager
-- UrlParser  
+- UrlParser
 - VersionManager
 - ComponentFetcher
 - HttpClient

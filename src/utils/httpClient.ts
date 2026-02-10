@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { Logger } from './logger';
 import { getRequestDeduplicator, RequestDeduplicator } from './requestDeduplicator';
 import { getPerformanceMonitor } from './performanceMonitor';
+import { NetworkError, getErrorHandler } from '../errors';
 
 interface RequestOptions {
   timeout?: number;
@@ -71,15 +72,28 @@ export class HttpClient {
           this.logger.debug(`HTTP Request attempt ${attempt + 1}/${retryAttempts + 1}: ${url}`);
 
           const data = await this.makeRequest(url, { timeout, headers });
-          const jsonData = JSON.parse(data);
 
-          this.logger.debug(`HTTP Request successful: ${url} (${data.length} chars)`);
-          return jsonData;
+          try {
+            const jsonData = JSON.parse(data);
+            this.logger.debug(`HTTP Request successful: ${url} (${data.length} chars)`);
+            return jsonData;
+          } catch (parseError) {
+            // JSON parse error - don't retry
+            throw new NetworkError(
+              `Invalid JSON response from ${url}`,
+              { statusCode: 0, cause: parseError as Error }
+            );
+          }
         } catch (error: any) {
           const isLastAttempt = attempt === retryAttempts;
 
-          if (error.statusCode && !this.shouldRetry(error.statusCode)) {
-            this.logger.warn(`HTTP Request failed with client error ${error.statusCode}: ${url}`);
+          // Check if error is NetworkError with statusCode
+          const statusCode = error instanceof NetworkError && error.details?.statusCode
+            ? error.details.statusCode
+            : error.statusCode;
+
+          if (statusCode && !this.shouldRetry(statusCode)) {
+            this.logger.warn(`HTTP Request failed with client error ${statusCode}: ${url}`);
             throw error;
           }
 
@@ -97,7 +111,7 @@ export class HttpClient {
         }
       }
 
-      throw new Error('Unexpected error in retry loop');
+      throw new NetworkError('Unexpected error in retry loop');
     });
   }
 
@@ -134,8 +148,13 @@ export class HttpClient {
         } catch (error: any) {
           const isLastAttempt = attempt === retryAttempts;
 
-          if (error.statusCode && !this.shouldRetry(error.statusCode)) {
-            this.logger.warn(`HTTP Text Request failed with client error ${error.statusCode}: ${url}`);
+          // Check if error is NetworkError with statusCode
+          const statusCode = error instanceof NetworkError && error.details?.statusCode
+            ? error.details.statusCode
+            : error.statusCode;
+
+          if (statusCode && !this.shouldRetry(statusCode)) {
+            this.logger.warn(`HTTP Text Request failed with client error ${statusCode}: ${url}`);
             throw error;
           }
 
@@ -153,53 +172,60 @@ export class HttpClient {
         }
       }
 
-      throw new Error('Unexpected error in retry loop');
+      throw new NetworkError('Unexpected error in retry loop');
     });
   }
 
   private makeRequest(url: string, options: { timeout: number; headers: Record<string, string> }): Promise<string> {
     return new Promise((resolve, reject) => {
-      const urlObj = new URL(url);
-      const isHttps = urlObj.protocol === 'https:';
-      const client = isHttps ? https : http;
+      try {
+        const urlObj = new URL(url);
+        const isHttps = urlObj.protocol === 'https:';
+        const client = isHttps ? https : http;
 
-      const requestOptions = {
-        hostname: urlObj.hostname,
-        port: urlObj.port || (isHttps ? 443 : 80),
-        path: urlObj.pathname + urlObj.search,
-        method: 'GET',
-        headers: options.headers,
-        timeout: options.timeout
-      };
+        const requestOptions = {
+          hostname: urlObj.hostname,
+          port: urlObj.port || (isHttps ? 443 : 80),
+          path: urlObj.pathname + urlObj.search,
+          method: 'GET',
+          headers: options.headers,
+          timeout: options.timeout
+        };
 
-      const req = client.request(requestOptions, (res) => {
-        let data = '';
+        const req = client.request(requestOptions, (res) => {
+          let data = '';
 
-        res.on('data', (chunk) => {
-          data += chunk;
+          res.on('data', (chunk) => {
+            data += chunk;
+          });
+
+          res.on('end', () => {
+            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+              resolve(data);
+            } else {
+              const message = `HTTP ${res.statusCode}: ${data.substring(0, 200)}`;
+              reject(new NetworkError(message, { statusCode: res.statusCode }));
+            }
+          });
         });
 
-        res.on('end', () => {
-          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(data);
-          } else {
-            const error = new Error(`HTTP ${res.statusCode}: ${data}`);
-            (error as any).statusCode = res.statusCode;
-            reject(error);
-          }
+        req.on('timeout', () => {
+          req.destroy();
+          const handler = getErrorHandler();
+          reject(handler.createHttpError(408, `Request timeout after ${options.timeout}ms for ${url}`));
         });
-      });
 
-      req.on('timeout', () => {
-        req.destroy();
-        reject(new Error(`Request timeout after ${options.timeout}ms`));
-      });
+        req.on('error', (error) => {
+          reject(new NetworkError(error.message, { cause: error }));
+        });
 
-      req.on('error', (error) => {
-        reject(error);
-      });
-
-      req.end();
+        req.end();
+      } catch (error) {
+        reject(new NetworkError(
+          error instanceof Error ? error.message : String(error),
+          { cause: error as Error }
+        ));
+      }
     });
   }
 

@@ -11,7 +11,7 @@ Successfully split the monolithic `componentService.ts` (932 lines) into focused
 src/services/component/
 ├── index.ts (11 lines)                      - Barrel exports
 ├── componentService.ts (294 lines)          - Main orchestrator
-├── componentFetcher.ts (565 lines)          - HTTP fetch operations  
+├── componentFetcher.ts (565 lines)          - HTTP fetch operations
 ├── versionManager.ts (202 lines)            - Version handling
 ├── tokenManager.ts (68 lines)               - Token storage/retrieval
 ├── urlParser.ts (74 lines)                  - URL parsing

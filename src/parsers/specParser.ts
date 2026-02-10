@@ -1,7 +1,9 @@
 import { SPEC_INPUTS_SECTION_REGEX } from '../constants/regex';
 import { Logger } from '../utils/logger';
+import { ParseError, ErrorCode, getErrorHandler } from '../errors';
 
 const logger = Logger.getInstance();
+const errorHandler = getErrorHandler();
 
 export interface ComponentVariable {
   name: string;
@@ -27,53 +29,88 @@ export class GitLabSpecParser {
    * @param content Full template content (YAML)
    * @param fileName Optional filename for logging purposes
    * @returns Parsed spec with description, variables, and validity flag
+   * @throws ParseError if content is invalid or parsing fails
    */
   static parse(content: string, fileName?: string): ParsedSpec {
     const logPrefix = fileName ? `[SpecParser] Template ${fileName}:` : '[SpecParser]';
 
-    let extractedDescription = '';
-    let extractedVariables: ComponentVariable[] = [];
+    try {
+      // Validate input
+      if (typeof content !== 'string') {
+        throw new ParseError('Content must be a string', {
+          yaml: String(content).substring(0, 100)
+        });
+      }
 
-    // Split content by the GitLab component spec separator '---'
-    // Everything before '---' is the spec section, everything after is the CI/CD job definitions
-    const parts = content.split(/^---\s*$/m);
-    const specSection = parts[0] || '';
+      if (content.trim().length === 0) {
+        throw new ParseError('Content is empty', { yaml: content });
+      }
 
-    logger.debug(`${logPrefix} Found ${parts.length} sections (spec + jobs)`, 'SpecParser');
-    logger.debug(`${logPrefix} Spec section length: ${specSection.length} chars`, 'SpecParser');
+      let extractedDescription = '';
+      let extractedVariables: ComponentVariable[] = [];
 
-    // Check if this file has a valid spec section - required for GitLab CI/CD components
-    // Files without a spec section are not components (e.g., YAML anchors/fragments)
-    const hasSpecSection = specSection.match(/^spec:\s*$/m) !== null;
+      // Split content by the GitLab component spec separator '---'
+      // Everything before '---' is the spec section, everything after is the CI/CD job definitions
+      const parts = content.split(/^---\s*$/m);
+      const specSection = parts[0] || '';
 
-    // Extract description from comment at top of file
-    // Note: GitLab component specs don't have spec.description field
-    const commentMatch = specSection.match(/^#\s*(.+?)$/m);
-    if (commentMatch && !commentMatch[1].toLowerCase().includes('gitlab') && !commentMatch[1].toLowerCase().includes('ci')) {
-      extractedDescription = commentMatch[1].trim();
-      logger.debug(`${logPrefix} Found comment description: ${extractedDescription}`, 'SpecParser');
+      logger.debug(`${logPrefix} Found ${parts.length} sections (spec + jobs)`, 'SpecParser');
+      logger.debug(`${logPrefix} Spec section length: ${specSection.length} chars`, 'SpecParser');
+
+      // Check if this file has a valid spec section - required for GitLab CI/CD components
+      // Files without a spec section are not components (e.g., YAML anchors/fragments)
+      const hasSpecSection = specSection.match(/^spec:\s*$/m) !== null;
+
+      // Extract description from comment at top of file
+      // Note: GitLab component specs don't have spec.description field
+      const commentMatch = specSection.match(/^#\s*(.+?)$/m);
+      if (commentMatch && !commentMatch[1].toLowerCase().includes('gitlab') && !commentMatch[1].toLowerCase().includes('ci')) {
+        extractedDescription = commentMatch[1].trim();
+        logger.debug(`${logPrefix} Found comment description: ${extractedDescription}`, 'SpecParser');
+      }
+
+      // Extract variables from GitLab CI/CD component spec format - ONLY from spec section
+      try {
+        const specMatches = specSection.match(SPEC_INPUTS_SECTION_REGEX);
+        if (specMatches) {
+          logger.debug(`${logPrefix} Found spec inputs section`, 'SpecParser');
+          extractedVariables = this.parseInputsSection(specMatches[1], logPrefix);
+        } else {
+          logger.debug(`${logPrefix} No spec inputs found, trying fallback parsing`, 'SpecParser');
+          extractedVariables = this.parseLegacyVariablesSection(specSection, logPrefix);
+        }
+      } catch (error) {
+        throw new ParseError('Failed to parse spec inputs/variables', {
+          cause: error as Error,
+          yaml: specSection.substring(0, 500)
+        });
+      }
+
+      // Determine if this is a valid component - must have a spec section
+      // Files that only contain YAML anchors (like .options or .common templates) are not components
+      const isValidComponent = hasSpecSection;
+      logger.debug(`${logPrefix} isValidComponent=${isValidComponent} (hasSpecSection=${hasSpecSection})`, 'SpecParser');
+
+      return {
+        description: extractedDescription,
+        variables: extractedVariables,
+        isValidComponent
+      };
+    } catch (error) {
+      // If already a ParseError, re-throw
+      if (error instanceof ParseError) {
+        throw error;
+      }
+
+      // Wrap unknown errors
+      throw new ParseError(
+        `Failed to parse GitLab component spec: ${error instanceof Error ? error.message : String(error)}`,
+        {
+          cause: error as Error,
+          yaml: content.substring(0, 500)
+        }
+      );
     }
-
-    // Extract variables from GitLab CI/CD component spec format - ONLY from spec section
-    const specMatches = specSection.match(SPEC_INPUTS_SECTION_REGEX);
-    if (specMatches) {
-      logger.debug(`${logPrefix} Found spec inputs section`, 'SpecParser');
-      extractedVariables = this.parseInputsSection(specMatches[1], logPrefix);
-    } else {
-      logger.debug(`${logPrefix} No spec inputs found, trying fallback parsing`, 'SpecParser');
-      extractedVariables = this.parseLegacyVariablesSection(specSection, logPrefix);
-    }
-
-    // Determine if this is a valid component - must have a spec section
-    // Files that only contain YAML anchors (like .options or .common templates) are not components
-    const isValidComponent = hasSpecSection;
-    logger.debug(`${logPrefix} isValidComponent=${isValidComponent} (hasSpecSection=${hasSpecSection})`, 'SpecParser');
-
-    return {
-      description: extractedDescription,
-      variables: extractedVariables,
-      isValidComponent
-    };
   }
 
   /**
@@ -140,6 +177,32 @@ export class GitLabSpecParser {
 
     logger.debug(`${logPrefix} Extracted ${extractedVariables.length} input parameters from spec`, 'SpecParser');
     return extractedVariables;
+  }
+
+  /**
+   * Safe parse that returns either the result or error without throwing
+   * Useful for batch operations where one failure shouldn't stop processing
+   * @param content Full template content (YAML)
+   * @param fileName Optional filename for logging purposes
+   * @returns Object with either parsed data or error
+   */
+  static safeParse(
+    content: string,
+    fileName?: string
+  ): { success: true; data: ParsedSpec } | { success: false; error: ParseError } {
+    try {
+      const data = this.parse(content, fileName);
+      return { success: true, data };
+    } catch (error) {
+      const parseError = error instanceof ParseError
+        ? error
+        : new ParseError(
+            error instanceof Error ? error.message : String(error),
+            { cause: error as Error, yaml: content.substring(0, 500) }
+          );
+
+      return { success: false, error: parseError };
+    }
   }
 
   /**

@@ -669,13 +669,13 @@ export class ComponentService implements ComponentSource {
           // Process template content - skip files that don't have a spec section (not real components)
           if (templateResult) {
             const { content, extractedVariables, extractedDescription, isValidComponent } = templateResult;
-            
+
             // Skip non-component templates (e.g., YAML fragments with anchors only, no spec section)
             if (!isValidComponent) {
               this.logger.debug(`[ComponentService] Skipping ${name}: not a valid GitLab CI/CD component (no spec section)`);
               return null; // Will be filtered out
             }
-            
+
             variables = extractedVariables;
             description = extractedDescription || `${name} component`;
           } else {
@@ -693,11 +693,11 @@ export class ComponentService implements ComponentSource {
         },
         batchSize
       );
-      
+
       // Filter out null results (non-component templates)
       const components = componentResults.filter((c: any) => c !== null);
       this.logger.debug(`[ComponentService] ${components.length} of ${yamlFiles.length} templates are valid components`);
-      
+
       const catalogData = { components };
       // Cache the result
       this.catalogCache.set(cacheKey, catalogData);
