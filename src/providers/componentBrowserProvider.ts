@@ -1062,7 +1062,7 @@ export class ComponentBrowserProvider {
             if (actionsDiv) {
               if (versions.length > 1) {
                 const opts = versions.map(function(v) { return '<option value="' + v + '" ' + (v === defaultVersion ? 'selected' : '') + '>' + v + '</option>'; }).join('');
-                actionsDiv.innerHTML = '<select class="version-dropdown" onchange="updateComponentVersion(\'' + componentName + '\', this.value, \'' + projectId + '\')">' + opts + '</select><button onclick="viewDetailsById(\'' + componentName + '\', \'' + defaultVersion + '\', \'' + projectId + '\')">Details</button><button onclick="insertComponentById(\'' + componentName + '\', \'' + defaultVersion + '\', \'' + projectId + '\')">Insert</button>';
+                actionsDiv.innerHTML = '<select class="version-dropdown" onchange="updateComponentVersion(&#39;' + componentName + '&#39;, this.value, &#39;' + projectId + '&#39;)">' + opts + '</select><button onclick="viewDetailsById(&#39;' + componentName + '&#39;, &#39;' + defaultVersion + '&#39;, &#39;' + projectId + '&#39;)">Details</button><button onclick="insertComponentById(&#39;' + componentName + '&#39;, &#39;' + defaultVersion + '&#39;, &#39;' + projectId + '&#39;)">Insert</button>';
                 const descElement = document.getElementById('desc-' + componentName + '-' + projectId);
                 if (descElement && !document.getElementById('version-info-' + componentName + '-' + projectId)) {
                   const versionInfo = document.createElement('div');
@@ -1072,7 +1072,7 @@ export class ComponentBrowserProvider {
                 }
               } else {
                 const singleVersion = versions[0] || 'latest';
-                actionsDiv.innerHTML = '<span class="single-version">' + singleVersion + '</span><button onclick="viewDetailsById(\'' + componentName + '\', \'' + singleVersion + '\', \'' + projectId + '\')">Details</button><button onclick="insertComponentById(\'' + componentName + '\', \'' + singleVersion + '\', \'' + projectId + '\')">Insert</button>';
+                actionsDiv.innerHTML = '<span class="single-version">' + singleVersion + '</span><button onclick="viewDetailsById(&#39;' + componentName + '&#39;, &#39;' + singleVersion + '&#39;, &#39;' + projectId + '&#39;)">Details</button><button onclick="insertComponentById(&#39;' + componentName + '&#39;, &#39;' + singleVersion + '&#39;, &#39;' + projectId + '&#39;)">Insert</button>';
               }
             }
             const titleSpan = componentCard.querySelector('.component-title');
@@ -1087,11 +1087,9 @@ export class ComponentBrowserProvider {
             if (loadingElement) { loadingElement.style.display = 'none'; }
             const actionsDiv = document.getElementById('actions-' + componentKey);
             if (actionsDiv) {
-              actionsDiv.innerHTML = '<span class="error-message" style="color: red; font-size: 0.9em;">Failed to load versions</span><button class="load-versions-btn" onclick="loadComponentVersions(\'' + message.componentName + '\', \'' + message.sourcePath + '\', \'' + (message.gitlabInstance || 'gitlab.com') + '\', \'\')">Retry</button>';
+              actionsDiv.innerHTML = '<span class="error-message" style="color: red; font-size: 0.9em;">Failed to load versions</span><button class="load-versions-btn" onclick="loadComponentVersions(&#39;' + message.componentName + '&#39;, &#39;' + message.sourcePath + '&#39;, &#39;' + (message.gitlabInstance || 'gitlab.com') + '&#39;, &#39;&#39;)">Retry</button>';
             }
           }
-
-          function updateComponentVersion(componentName, selectedVersion, projectId) {
 
           function updateComponentVersion(componentName, selectedVersion, projectId) {
             const componentData = window.componentVersionData[componentName];
