@@ -28,4 +28,7 @@ for ext in $extensions_to_check; do
 done
 
 npm run commitizen || true
-exec </dev/tty && npx git-cz --hook || true
+# Only launch interactive git-cz when a TTY is available (skip in CI / automated environments)
+if [ -t 0 ] && [ -t 1 ]; then
+  exec </dev/tty && npx git-cz --hook || true
+fi
