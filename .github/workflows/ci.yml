@@ -79,22 +79,6 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Setup GPG (optional)
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-        run: |
-          if [ -n "$GPG_PRIVATE_KEY" ]; then
-            echo "Importing GPG key..."
-            echo "$GPG_PRIVATE_KEY" | gpg --batch --import
-            GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format=long | grep sec | awk '{print $2}' | cut -d'/' -f2 | head -n1)
-            git config --global user.signingkey "$GPG_KEY_ID"
-            git config --global commit.gpgsign true
-            git config --global tag.gpgsign true
-            echo "✅ GPG signing enabled"
-          else
-            echo "⚠️  GPG signing disabled (no key provided)"
-          fi
-
       - name: Release (Beta)
         if: github.ref_name == 'beta'
         env:
