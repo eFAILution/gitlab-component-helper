@@ -1,11 +1,10 @@
 name: Release
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    branches: [main, beta]
-    types:
-      - completed
+  push:
+    branches:
+      - main
+      - beta
 
 permissions:
   contents: write
@@ -15,7 +14,6 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,7 +21,22 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
           token: ${{ secrets.GITHUB_TOKEN }}
-          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Verify CI passed for this commit
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Checking CI status for $COMMIT_SHA..."
+          STATUS=$(gh api "repos/$REPO/commits/$COMMIT_SHA/check-runs" \
+            --jq '[.check_runs[] | select(.name == "test")] | .[0].conclusion' 2>/dev/null || echo "unknown")
+          echo "CI conclusion: $STATUS"
+          if [ "$STATUS" != "success" ]; then
+            echo "❌ CI has not passed for this commit (status: $STATUS). Aborting release."
+            exit 1
+          fi
+          echo "✅ CI passed"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -59,14 +72,14 @@ jobs:
           fi
 
       - name: Release (Beta)
-        if: github.event.workflow_run.head_branch == 'beta'
+        if: github.ref_name == 'beta'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HUSKY: 0
         run: npx release-it --config .release-it.beta.json --ci
 
       - name: Release (Main)
-        if: github.event.workflow_run.head_branch == 'main'
+        if: github.ref_name == 'main'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HUSKY: 0
