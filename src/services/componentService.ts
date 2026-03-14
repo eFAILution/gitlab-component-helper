@@ -473,35 +473,45 @@ export class ComponentService implements ComponentSource {
             break;
           }
 
-          // New input parameter (indented under inputs)
-          if (line.match(/^\s{4}[a-zA-Z_][a-zA-Z0-9_]*:/) || line.match(/^\s{2}[a-zA-Z_][a-zA-Z0-9_]*:/)) {
+          // New input parameter (indented under inputs) - handle 2 to 4 spaces of indentation
+          // Match lines like "    name:" where the input name ends with ":" and has only whitespace after
+          if (line.match(/^\s{2,4}[a-zA-Z_][a-zA-Z0-9_]*:\s*$/)) {
+            // If we have a current input, finalize it before starting a new one
             if (currentInput) {
+              // Mark as required if no default was specified (GitLab CI/CD component behavior)
+              if (currentInput.default === undefined) {
+                currentInput.required = true;
+              }
               extractedVariables.push(currentInput);
             }
             const inputName = trimmedLine.split(':')[0];
             currentInput = {
               name: inputName,
               description: `Parameter: ${inputName}`,
-              required: false,
+              required: false, // Will be updated to true if no default found
               type: 'string',
               default: undefined
             };
             this.logger.debug(`[ComponentService] Template ${componentName}: Found input parameter: ${inputName}`);
           }
-          // Property of current input (more deeply indented)
-          else if (currentInput && line.match(/^\s{6,}/)) {
+          // Property of current input (more deeply indented) - handle 4+ spaces of indentation
+          else if (currentInput && line.match(/^\s{4,}/)) {
             if (trimmedLine.startsWith('description:')) {
-              currentInput.description = trimmedLine.substring(12).replace(/['"]/g, '').trim();
+              currentInput.description = trimmedLine.substring(12).replace(/^["']|["']$/g, '').trim();
             } else if (trimmedLine.startsWith('default:')) {
-              currentInput.default = trimmedLine.substring(8).replace(/['"]/g, '').trim();
+              currentInput.default = trimmedLine.substring(8).replace(/^["']|["']$/g, '').trim();
             } else if (trimmedLine.startsWith('type:')) {
-              currentInput.type = trimmedLine.substring(5).replace(/['"]/g, '').trim();
+              currentInput.type = trimmedLine.substring(5).replace(/^["']|["']$/g, '').trim();
             }
           }
         }
 
         // Add the last input
         if (currentInput) {
+          // Mark as required if no default was specified (GitLab CI/CD component behavior)
+          if (currentInput.default === undefined) {
+            currentInput.required = true;
+          }
           extractedVariables.push(currentInput);
         }
 
@@ -732,7 +742,7 @@ export class ComponentService implements ComponentSource {
       // **BATCH PROCESSING OPTIMIZATION** - Process components in batches
       const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
       const batchSize = config.get<number>('batchSize', 5);
-      const components = await this.httpClient.processBatch(
+      const componentResults = await this.httpClient.processBatch(
         yamlFiles,
         async (file: GitLabTreeItem) => {
           // file.path is e.g. "templates/component.yml" or "templates/subdir/component.yml"
@@ -745,13 +755,22 @@ export class ComponentService implements ComponentSource {
           let description = '';
           let variables: ComponentVariable[] = [];
 
-          // Process template content
+          // Process template content - skip files that don't have a spec section (not real components)
           if (templateResult) {
-            const { content, extractedVariables, extractedDescription } = templateResult;
+            const { content, extractedVariables, extractedDescription, isValidComponent } = templateResult;
+
+            // Skip non-component templates (e.g., YAML fragments with anchors only, no spec section)
+            if (!isValidComponent) {
+              this.logger.debug(`[ComponentService] Skipping ${name}: not a valid GitLab CI/CD component (no spec section)`);
+              return null; // Will be filtered out
+            }
+
             variables = extractedVariables;
             description = extractedDescription || `${name} component`;
           } else {
-            description = `${name} component`;
+            // If we couldn't fetch the template, skip it
+            this.logger.debug(`[ComponentService] Skipping ${name}: could not fetch template content`);
+            return null;
           }
 
           return {
@@ -763,6 +782,11 @@ export class ComponentService implements ComponentSource {
         },
         batchSize
       );
+
+      // Filter out null results (non-component templates)
+      const components = componentResults.filter((c: any) => c !== null);
+      this.logger.debug(`[ComponentService] ${components.length} of ${yamlFiles.length} templates are valid components`);
+
       const catalogData = { components };
       // Cache the result
       this.catalogCache.set(cacheKey, catalogData);
@@ -806,6 +830,7 @@ export class ComponentService implements ComponentSource {
     content: string;
     extractedVariables: ComponentVariable[];
     extractedDescription?: string;
+    isValidComponent: boolean;
   } | null> {
     try {
       const contentUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent('templates/' + relativePath)}/raw?ref=${ref}`;
@@ -821,6 +846,10 @@ export class ComponentService implements ComponentSource {
 
       this.logger.debug(`[ComponentService] Template ${relativePath}: Found ${parts.length} sections (spec + jobs)`);
       this.logger.debug(`[ComponentService] Template ${relativePath}: Spec section length: ${specSection.length} chars`);
+
+      // Check if this file has a valid spec section - required for GitLab CI/CD components
+      // Files without a spec section are not components (e.g., YAML anchors/fragments)
+      const hasSpecSection = specSection.match(/^spec:\s*$/m) !== null;
 
       // Extract description from component spec
       // FIXED: GitLab component specs don't have spec.description - changed to never match
@@ -861,35 +890,45 @@ export class ComponentService implements ComponentSource {
             break;
           }
 
-          // New input parameter (indented under inputs)
-          if (line.match(/^\s{4}[a-zA-Z_][a-zA-Z0-9_]*:/) || line.match(/^\s{2}[a-zA-Z_][a-zA-Z0-9_]*:/)) {
+          // New input parameter (indented under inputs) - handle 2 to 4 spaces of indentation
+          // Match lines like "    name:" where the input name ends with ":" and has only whitespace after
+          if (line.match(/^\s{2,4}[a-zA-Z_][a-zA-Z0-9_]*:\s*$/)) {
+            // If we have a current input, finalize it before starting a new one
             if (currentInput) {
+              // Mark as required if no default was specified (GitLab CI/CD component behavior)
+              if (currentInput.default === undefined) {
+                currentInput.required = true;
+              }
               extractedVariables.push(currentInput);
             }
             const inputName = trimmedLine.split(':')[0];
             currentInput = {
               name: inputName,
               description: `Parameter: ${inputName}`,
-              required: false,
+              required: false, // Will be updated to true if no default found
               type: 'string',
               default: undefined
             };
             this.logger.debug(`[ComponentService] Template ${relativePath}: Found input parameter: ${inputName}`);
           }
-          // Property of current input (more deeply indented)
-          else if (currentInput && line.match(/^\s{6,}/)) {
+          // Property of current input (more deeply indented) - handle 4+ spaces of indentation
+          else if (currentInput && line.match(/^\s{4,}/)) {
             if (trimmedLine.startsWith('description:')) {
-              currentInput.description = trimmedLine.substring(12).replace(/['"]/g, '').trim();
+              currentInput.description = trimmedLine.substring(12).replace(/^["']|["']$/g, '').trim();
             } else if (trimmedLine.startsWith('default:')) {
-              currentInput.default = trimmedLine.substring(8).replace(/['"]/g, '').trim();
+              currentInput.default = trimmedLine.substring(8).replace(/^["']|["']$/g, '').trim();
             } else if (trimmedLine.startsWith('type:')) {
-              currentInput.type = trimmedLine.substring(5).replace(/['"]/g, '').trim();
+              currentInput.type = trimmedLine.substring(5).replace(/^["']|["']$/g, '').trim();
             }
           }
         }
 
         // Add the last input
         if (currentInput) {
+          // Mark as required if no default was specified (GitLab CI/CD component behavior)
+          if (currentInput.default === undefined) {
+            currentInput.required = true;
+          }
           extractedVariables.push(currentInput);
         }
 
@@ -934,7 +973,7 @@ export class ComponentService implements ComponentSource {
         }
       }
 
-      return { content, extractedVariables, extractedDescription };
+      return { content, extractedVariables, extractedDescription, isValidComponent: hasSpecSection };
     } catch (error) {
       this.logger.debug(`Could not fetch template content: ${error}`);
       return null;
