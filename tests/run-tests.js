@@ -78,7 +78,7 @@ async function runTests() {
 
     try {
       await new Promise((resolve, reject) => {
-        const child = spawn('node', [testFile], {
+        const child = spawn(process.execPath, [testFile], {
           stdio: 'inherit',
           cwd: path.dirname(testFile)
         });

@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        node-version: [16.x, 18.x, 20.x]
+        node-version: [22.x]
 
     steps:
     - name: Checkout code
@@ -32,14 +32,14 @@ jobs:
       run: npm run lint
 
     - name: Run compile
-      run: npm run compile
+      run: node esbuild.js
 
     - name: Run tests
       run: npm run test
 
     - name: Upload test artifacts on failure
       if: failure()
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: test-results-node-${{ matrix.node-version }}
         path: |
