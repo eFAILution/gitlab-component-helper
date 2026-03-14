@@ -759,11 +759,13 @@ export class ComponentService implements ComponentSource {
           if (templateResult) {
             const { content, extractedVariables, extractedDescription, isValidComponent } = templateResult;
 
+
             // Skip non-component templates (e.g., YAML fragments with anchors only, no spec section)
             if (!isValidComponent) {
               this.logger.debug(`[ComponentService] Skipping ${name}: not a valid GitLab CI/CD component (no spec section)`);
               return null; // Will be filtered out
             }
+
 
             variables = extractedVariables;
             description = extractedDescription || `${name} component`;
@@ -786,6 +788,7 @@ export class ComponentService implements ComponentSource {
       // Filter out null results (non-component templates)
       const components = componentResults.filter((c: any) => c !== null);
       this.logger.debug(`[ComponentService] ${components.length} of ${yamlFiles.length} templates are valid components`);
+
 
       const catalogData = { components };
       // Cache the result
@@ -973,7 +976,12 @@ export class ComponentService implements ComponentSource {
         }
       }
 
-      return { content, extractedVariables, extractedDescription, isValidComponent: hasSpecSection };
+      // Determine if this is a valid component - must have a spec section
+      // Files that only contain YAML anchors (like .options or .common templates) are not components
+      const isValidComponent = hasSpecSection;
+      this.logger.debug(`[ComponentService] Template ${relativePath}: isValidComponent=${isValidComponent} (hasSpecSection=${hasSpecSection})`);
+
+      return { content, extractedVariables, extractedDescription, isValidComponent };
     } catch (error) {
       this.logger.debug(`Could not fetch template content: ${error}`);
       return null;
