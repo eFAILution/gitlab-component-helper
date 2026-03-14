@@ -720,14 +720,8 @@ export class ComponentService implements ComponentSource {
         ref = projectInfo.default_branch;
       }
       this.logger.debug(`Found project: ${projectInfo.name} (ID: ${projectInfo.id}), using ref: ${ref}`);
-      // Re-fetch templates with correct ref if needed
-      templates = await this.httpClient.fetchJson(`${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`, fetchOptions)
-        .catch(() => [] as GitLabTreeItem[]);
-
-      // Filter YAML files
-      const yamlFiles = templates.filter((file: GitLabTreeItem) =>
-        file.name.endsWith('.yml') || file.name.endsWith('.yaml')
-      );
+      // Fetch all YAML template files, including one level of subdirectories per GitLab spec
+      const yamlFiles = await this.fetchAllTemplateFiles(apiBaseUrl, projectPath, ref, fetchOptions);
       this.logger.debug(`Found ${yamlFiles.length} YAML template files`);
       if (yamlFiles.length === 0) {
         this.logger.info(`No YAML templates found in ${projectPath}`);
@@ -741,10 +735,12 @@ export class ComponentService implements ComponentSource {
       const components = await this.httpClient.processBatch(
         yamlFiles,
         async (file: GitLabTreeItem) => {
-          const name = file.name.replace(/\.ya?ml$/, '');
-          this.logger.debug(`Processing component: ${name} (${file.name})`);
+          // file.path is e.g. "templates/component.yml" or "templates/subdir/component.yml"
+          const relativePath = file.path.replace(/^templates\//, '');
+          const name = relativePath.replace(/\.ya?ml$/, '');
+          this.logger.debug(`Processing component: ${name} (${file.path})`);
           // Fetch template content
-          const templateResult = await this.fetchTemplateContent(apiBaseUrl, projectInfo.id, file.name, ref, fetchOptions);
+          const templateResult = await this.fetchTemplateContent(apiBaseUrl, projectInfo.id, relativePath, ref, fetchOptions);
 
           let description = '';
           let variables: ComponentVariable[] = [];
@@ -783,14 +779,36 @@ export class ComponentService implements ComponentSource {
     }
   }
 
+  // Helper method to fetch all YAML template files, including one level of subdirectories per GitLab spec
+  private async fetchAllTemplateFiles(apiBaseUrl: string, projectPath: string, ref: string, fetchOptions?: any): Promise<GitLabTreeItem[]> {
+    const treeUrl = `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`;
+    const topLevel: GitLabTreeItem[] = await this.httpClient.fetchJson(treeUrl, fetchOptions).catch(() => [] as GitLabTreeItem[]);
+
+    const yamlFiles: GitLabTreeItem[] = topLevel.filter((item: GitLabTreeItem) =>
+      item.type === 'blob' && (item.name.endsWith('.yml') || item.name.endsWith('.yaml'))
+    );
+
+    const subdirs = topLevel.filter((item: GitLabTreeItem) => item.type === 'tree');
+    for (const subdir of subdirs) {
+      const subdirUrl = `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=${encodeURIComponent('templates/' + subdir.name)}&ref=${ref}`;
+      const subdirContents: GitLabTreeItem[] = await this.httpClient.fetchJson(subdirUrl, fetchOptions).catch(() => [] as GitLabTreeItem[]);
+      const subdirYaml = subdirContents.filter((item: GitLabTreeItem) =>
+        item.type === 'blob' && (item.name.endsWith('.yml') || item.name.endsWith('.yaml'))
+      );
+      yamlFiles.push(...subdirYaml);
+    }
+
+    return yamlFiles;
+  }
+
   // Helper method for parallel template content fetching
-  private async fetchTemplateContent(apiBaseUrl: string, projectId: string, fileName: string, ref: string, fetchOptions?: any): Promise<{
+  private async fetchTemplateContent(apiBaseUrl: string, projectId: string, relativePath: string, ref: string, fetchOptions?: any): Promise<{
     content: string;
     extractedVariables: ComponentVariable[];
     extractedDescription?: string;
   } | null> {
     try {
-      const contentUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent('templates/' + fileName)}/raw?ref=${ref}`;
+      const contentUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent('templates/' + relativePath)}/raw?ref=${ref}`;
       const content = await this.httpClient.fetchText(contentUrl, fetchOptions);
 
       let extractedDescription = '';
@@ -801,15 +819,15 @@ export class ComponentService implements ComponentSource {
       const parts = content.split(/^---\s*$/m);
       const specSection = parts[0] || '';
 
-      this.logger.debug(`[ComponentService] Template ${fileName}: Found ${parts.length} sections (spec + jobs)`);
-      this.logger.debug(`[ComponentService] Template ${fileName}: Spec section length: ${specSection.length} chars`);
+      this.logger.debug(`[ComponentService] Template ${relativePath}: Found ${parts.length} sections (spec + jobs)`);
+      this.logger.debug(`[ComponentService] Template ${relativePath}: Spec section length: ${specSection.length} chars`);
 
       // Extract description from component spec
       // FIXED: GitLab component specs don't have spec.description - changed to never match
       // const specDescMatch = specSection.match(/spec:\s*\n\s*NEVER_MATCH_description:\s*["']?(.*?)["']?\s*$/m);
       // if (specDescMatch) {
       //   extractedDescription = specDescMatch[1].trim();
-      //   this.logger.debug(`[ComponentService] Template ${fileName}: Found spec description: ${extractedDescription}`);
+      //   this.logger.debug(`[ComponentService] Template ${relativePath}: Found spec description: ${extractedDescription}`);
       // }
 
       // If no spec description, try comment at top of file
@@ -817,14 +835,14 @@ export class ComponentService implements ComponentSource {
         const commentMatch = specSection.match(/^#\s*(.+?)$/m);
         if (commentMatch && !commentMatch[1].toLowerCase().includes('gitlab') && !commentMatch[1].toLowerCase().includes('ci')) {
           extractedDescription = commentMatch[1].trim();
-          this.logger.debug(`[ComponentService] Template ${fileName}: Found comment description: ${extractedDescription}`);
+          this.logger.debug(`[ComponentService] Template ${relativePath}: Found comment description: ${extractedDescription}`);
         }
       }
 
       // Extract variables from GitLab CI/CD component spec format - ONLY from spec section
       const specMatches = specSection.match(SPEC_INPUTS_SECTION_REGEX);
       if (specMatches) {
-        this.logger.debug(`[ComponentService] Template ${fileName}: Found spec inputs section`);
+        this.logger.debug(`[ComponentService] Template ${relativePath}: Found spec inputs section`);
 
         // Parse component spec format
         const inputsSection = specMatches[1];
@@ -839,7 +857,7 @@ export class ComponentService implements ComponentSource {
 
           // Stop if we hit a top-level key (indicating we've left the inputs section)
           if (line.match(/^[a-zA-Z][a-zA-Z0-9_-]*:/)) {
-            this.logger.debug(`[ComponentService] Template ${fileName}: Stopping at top-level key: ${trimmedLine}`);
+            this.logger.debug(`[ComponentService] Template ${relativePath}: Stopping at top-level key: ${trimmedLine}`);
             break;
           }
 
@@ -856,7 +874,7 @@ export class ComponentService implements ComponentSource {
               type: 'string',
               default: undefined
             };
-            this.logger.debug(`[ComponentService] Template ${fileName}: Found input parameter: ${inputName}`);
+            this.logger.debug(`[ComponentService] Template ${relativePath}: Found input parameter: ${inputName}`);
           }
           // Property of current input (more deeply indented)
           else if (currentInput && line.match(/^\s{6,}/)) {
@@ -875,9 +893,9 @@ export class ComponentService implements ComponentSource {
           extractedVariables.push(currentInput);
         }
 
-        this.logger.debug(`[ComponentService] Template ${fileName}: Extracted ${extractedVariables.length} input parameters from spec`);
+        this.logger.debug(`[ComponentService] Template ${relativePath}: Extracted ${extractedVariables.length} input parameters from spec`);
       } else {
-        this.logger.debug(`[ComponentService] Template ${fileName}: No spec inputs found, trying fallback parsing`);
+        this.logger.debug(`[ComponentService] Template ${relativePath}: No spec inputs found, trying fallback parsing`);
 
         // Fallback to old format for backward compatibility - also only in spec section
         // Look for variables section that's ONLY within the spec section
@@ -910,9 +928,9 @@ export class ComponentService implements ComponentSource {
               };
             });
 
-          this.logger.debug(`[ComponentService] Template ${fileName}: Extracted ${extractedVariables.length} variables from fallback parsing`);
+          this.logger.debug(`[ComponentService] Template ${relativePath}: Extracted ${extractedVariables.length} variables from fallback parsing`);
         } else {
-          this.logger.debug(`[ComponentService] Template ${fileName}: No variables found in fallback parsing`);
+          this.logger.debug(`[ComponentService] Template ${relativePath}: No variables found in fallback parsing`);
         }
       }
 
