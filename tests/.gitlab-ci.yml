@@ -8,6 +8,10 @@ include:
     inputs:
       invalid_input: "test"  # This should show as unknown input
       another_wrong_input: "value"  # This should also show as unknown
+  - component: https://gitlab.com/components/dependency-scanning/main@main
+    inputs:
+      log_level: "debug"
+      stage: "security-scanning"
   - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/fake_component@$CI_COMMIT_SHA
     inputs:
       some_input: "value"

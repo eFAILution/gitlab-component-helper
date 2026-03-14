@@ -297,21 +297,24 @@ export class ComponentBrowserProvider {
   }
 
   private async insertComponent(component: any, includeInputs: boolean = false, selectedInputs?: string[]) {
-    // Get the active text editor
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) {
+    // Check if we have the original editor stored
+    if (!this.originalEditor) {
       vscode.window.showErrorMessage("No active editor to insert component into");
       return;
     }
 
-    // Make sure the editor is visible and has focus
-    await vscode.window.showTextDocument(editor.document, {
-      viewColumn: editor.viewColumn,
-      preserveFocus: false
-    });
+    // Refocus the original editor to restore context
+    await vscode.window.showTextDocument(this.originalEditor.document, this.originalEditor.viewColumn);
 
     // Brief wait to ensure editor is fully activated
     await new Promise(resolve => setTimeout(resolve, EDITOR_ACTIVATION_DELAY_MS));
+
+    // Verify we have the correct active editor now
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.uri.toString() !== this.originalEditor.document.uri.toString()) {
+      vscode.window.showErrorMessage("Could not activate the original editor");
+      return;
+    }
 
     // Use the GitLab instance from the component or default to gitlab.com
     const gitlabInstance = component.gitlabInstance || 'gitlab.com';
