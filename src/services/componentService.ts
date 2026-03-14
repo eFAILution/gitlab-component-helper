@@ -425,11 +425,21 @@ export class ComponentService implements ComponentSource {
   // Helper method for parallel template fetching
   private async fetchTemplate(apiBaseUrl: string, projectId: string, componentName: string, version: string, fetchOptions?: any): Promise<{ content: string; parameters: any[] } | null> {
     try {
-      const templatePath = `templates/${componentName}.yml`;
-      const templateUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(templatePath)}/raw?ref=${version}`;
+      // Try flat structure first: templates/componentName.yml
+      // Then fall back to subdirectory structure: templates/componentName/template.yml
+      let templateContent: string;
+      const flatPath = `templates/${componentName}.yml`;
+      const subdirPath = `templates/${componentName}/template.yml`;
 
-      this.logger.debug(`[ComponentService] Fetching template from: ${templateUrl}`);
-      const templateContent = await this.httpClient.fetchText(templateUrl, fetchOptions);
+      try {
+        const flatUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(flatPath)}/raw?ref=${version}`;
+        this.logger.debug(`[ComponentService] Fetching template from: ${flatUrl}`);
+        templateContent = await this.httpClient.fetchText(flatUrl, fetchOptions);
+      } catch {
+        const subdirUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(subdirPath)}/raw?ref=${version}`;
+        this.logger.debug(`[ComponentService] Flat path not found, trying subdirectory path: ${subdirUrl}`);
+        templateContent = await this.httpClient.fetchText(subdirUrl, fetchOptions);
+      }
       this.logger.debug(`[ComponentService] Template content received, length: ${templateContent.length} chars`);
 
       // Use the same sophisticated parameter extraction logic as fetchTemplateContent
@@ -745,9 +755,13 @@ export class ComponentService implements ComponentSource {
       const componentResults = await this.httpClient.processBatch(
         yamlFiles,
         async (file: GitLabTreeItem) => {
-          // file.path is e.g. "templates/component.yml" or "templates/subdir/component.yml"
+          // file.path is e.g. "templates/component.yml" or "templates/subdir/template.yml"
           const relativePath = file.path.replace(/^templates\//, '');
-          const name = relativePath.replace(/\.ya?ml$/, '');
+          // For subdirectory components (e.g. "main/template.yml"), the component name is the directory.
+          // For flat components (e.g. "component.yml"), the component name is the filename without extension.
+          const name = relativePath.includes('/')
+            ? relativePath.split('/')[0]
+            : relativePath.replace(/\.ya?ml$/, '');
           this.logger.debug(`Processing component: ${name} (${file.path})`);
           // Fetch template content
           const templateResult = await this.fetchTemplateContent(apiBaseUrl, projectInfo.id, relativePath, ref, fetchOptions);
