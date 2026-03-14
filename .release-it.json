@@ -28,8 +28,7 @@
   },
   "hooks": {
     "before:init": [],
-    "after:bump": "npm run package && vsce package ${version}",
-    "after:git:release": "vsce publish ${version}"
+    "after:bump": "npm run package && vsce package ${version}"
   },
   "plugins": {
     "./.release-it/vscode-version.js": {

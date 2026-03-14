@@ -1,0 +1,110 @@
+name: Publish Beta
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (must match package.json, e.g. 0.7.3)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: publish-beta
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Guardrail 1: Must be run against the beta branch
+      - name: Verify branch
+        env:
+          GITHUB_REF: ${{ github.ref }}
+        run: |
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          if [ "$BRANCH" != "beta" ]; then
+            echo "❌ This workflow must be run against the 'beta' branch (got: $BRANCH)"
+            exit 1
+          fi
+          echo "✅ Branch verified: $BRANCH"
+
+      # Guardrail 2: Input version must match package.json
+      - name: Verify version input
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$INPUT_VERSION" != "$PKG_VERSION" ]; then
+            echo "❌ Input version ($INPUT_VERSION) does not match package.json ($PKG_VERSION)"
+            exit 1
+          fi
+          echo "✅ Version confirmed: $INPUT_VERSION"
+
+      # Guardrail 3: HEAD must be a release commit
+      - name: Verify release commit
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=%s)
+          echo "HEAD commit: $COMMIT_MSG"
+          if [[ ! "$COMMIT_MSG" =~ ^chore\(release\): ]]; then
+            echo "❌ HEAD is not a release commit. Run the Release workflow first."
+            exit 1
+          fi
+          echo "✅ Release commit verified"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Guardrail 4: Full test suite
+      - name: Run tests
+        run: npm test
+
+      # Guardrail 5: Dependency audit
+      - name: Security audit
+        run: npm audit --audit-level=high
+
+      # Guardrail 6: Secret scanning
+      - name: Scan for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Guardrail 7: Verify odd minor (pre-release version convention)
+      - name: Verify pre-release version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          if (( MINOR % 2 == 0 )); then
+            echo "❌ Version $VERSION has even minor ($MINOR) — not a pre-release version"
+            exit 1
+          fi
+          echo "✅ Version $VERSION is valid for pre-release (odd minor: $MINOR)"
+
+      - name: Install vsce
+        run: npm install -g @vscode/vsce
+
+      - name: Build VSIX
+        run: npm run package && vsce package --pre-release
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: vsce publish --pre-release --pat "$VSCE_PAT"
+
+      - name: Upload VSIX artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-beta-${{ github.sha }}
+          path: '*.vsix'
+          retention-days: 90
