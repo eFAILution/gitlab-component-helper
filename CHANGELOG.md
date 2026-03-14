@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+# [0.8.0](https://github.com/eFAILution/gitlab-component-helper/compare/0.7.0...0.8.0) (2026-03-14)
+
+
+### Bug Fixes
+
+* **ci:** revert release trigger to push with explicit CI status check ([1302f0e](https://github.com/eFAILution/gitlab-component-helper/commit/1302f0e73448b6e355097c962cf61f9b470d2d6f))
+* **ci:** scope npm audit to production deps in publish workflows ([2b48ebf](https://github.com/eFAILution/gitlab-component-helper/commit/2b48ebf02588730e1075b1d2a75cbdcc8c580dbf))
+* **component-browser:** restore editor context before component insertion ([28a07c1](https://github.com/eFAILution/gitlab-component-helper/commit/28a07c128e805215d7c778f116a3ee7e58e6519e)), closes [#40](https://github.com/eFAILution/gitlab-component-helper/issues/40)
+* **componentService:** complex components in templates/ not parsing correctly ([3368b9e](https://github.com/eFAILution/gitlab-component-helper/commit/3368b9e25cc48666d429074f6a551e12fbfc03b6))
+* **componentService:** resolve missing inputs for subdirectory template components ([d24af82](https://github.com/eFAILution/gitlab-component-helper/commit/d24af8296f4ce8d7a5dac43f5ad94e9abd30f33b))
+* detect component templates in subdirectories (templates/*/*.yaml) ([9ec311b](https://github.com/eFAILution/gitlab-component-helper/commit/9ec311b2d14af13d3022feb0d8811f28acaed51e))
+* **pre-commit:** run tests after compilation in pre-commit hook ([d98b099](https://github.com/eFAILution/gitlab-component-helper/commit/d98b099a196dae63082047eba06d4f53f9f8ac9d))
+
+
+### Features
+
+* **tests:** add comprehensive e2e catalog pipeline tests; fix CI workflow ([4ccfec9](https://github.com/eFAILution/gitlab-component-helper/commit/4ccfec9f9c53d1400ccc766ce1dcf33f9fd6753b))
+
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
