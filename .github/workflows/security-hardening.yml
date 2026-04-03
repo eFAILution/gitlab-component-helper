@@ -11,8 +11,10 @@ permissions:
   contents: read
   security-events: write
   actions: read
+  packages: read
   pull-requests: write
   checks: write
+  id-token: write
 
 jobs:
   argus-hardening:
