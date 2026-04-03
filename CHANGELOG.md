@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.6](https://github.com/eFAILution/gitlab-component-helper/compare/0.8.5...0.8.6) (2026-04-03)
+
+
+### Bug Fixes
+
+* **ci:** add issues:write permission to AICaC workflow ([4457c0e](https://github.com/eFAILution/gitlab-component-helper/commit/4457c0e1a9c38e1acb9b9b4f3a52872c5bc2e379))
+
 ## [0.8.5](https://github.com/eFAILution/gitlab-component-helper/compare/0.8.4...0.8.5) (2026-04-03)
 
 ## [0.8.4](https://github.com/eFAILution/gitlab-component-helper/compare/0.8.3...0.8.4) (2026-03-21)
