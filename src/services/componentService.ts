@@ -391,13 +391,20 @@ export class ComponentService implements ComponentSource {
         cleanDescription = `Component/Project does not have a description`;
       }
 
+      // Extract header metadata if we have template content
+      const headerMetadata = templateContent ? this.parseHeaderMetadata(templateContent) : { summary: undefined, usage: undefined, notes: undefined };
+
       // Construct the component
       const component: Component = {
         name: componentName,
         description: cleanDescription,
+        summary: headerMetadata.summary,
+        usage: headerMetadata.usage,
+        notes: headerMetadata.notes,
         parameters,
         version,
-        source: `${gitlabInstance}/${projectPath}`
+        source: `${gitlabInstance}/${projectPath}`,
+        rawYaml: templateContent || undefined
       };
 
       this.logger.logPerformance('fetchComponentMetadata (full)', Date.now() - startTime, {
@@ -425,21 +432,11 @@ export class ComponentService implements ComponentSource {
   // Helper method for parallel template fetching
   private async fetchTemplate(apiBaseUrl: string, projectId: string, componentName: string, version: string, fetchOptions?: any): Promise<{ content: string; parameters: any[] } | null> {
     try {
-      // Try flat structure first: templates/componentName.yml
-      // Then fall back to subdirectory structure: templates/componentName/template.yml
-      let templateContent: string;
-      const flatPath = `templates/${componentName}.yml`;
-      const subdirPath = `templates/${componentName}/template.yml`;
+      const templatePath = `templates/${componentName}.yml`;
+      const templateUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(templatePath)}/raw?ref=${version}`;
 
-      try {
-        const flatUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(flatPath)}/raw?ref=${version}`;
-        this.logger.debug(`[ComponentService] Fetching template from: ${flatUrl}`);
-        templateContent = await this.httpClient.fetchText(flatUrl, fetchOptions);
-      } catch {
-        const subdirUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(subdirPath)}/raw?ref=${version}`;
-        this.logger.debug(`[ComponentService] Flat path not found, trying subdirectory path: ${subdirUrl}`);
-        templateContent = await this.httpClient.fetchText(subdirUrl, fetchOptions);
-      }
+      this.logger.debug(`[ComponentService] Fetching template from: ${templateUrl}`);
+      const templateContent = await this.httpClient.fetchText(templateUrl, fetchOptions);
       this.logger.debug(`[ComponentService] Template content received, length: ${templateContent.length} chars`);
 
       // Use the same sophisticated parameter extraction logic as fetchTemplateContent
@@ -483,7 +480,7 @@ export class ComponentService implements ComponentSource {
             break;
           }
 
-          // New input parameter (indented under inputs) - handle 2 to 4 spaces of indentation
+          // New input parameter (indented under inputs) - handle both 2-space and 4-space indentation
           // Match lines like "    name:" where the input name ends with ":" and has only whitespace after
           if (line.match(/^\s{2,4}[a-zA-Z_][a-zA-Z0-9_]*:\s*$/)) {
             // If we have a current input, finalize it before starting a new one
@@ -740,7 +737,7 @@ export class ComponentService implements ComponentSource {
         ref = projectInfo.default_branch;
       }
       this.logger.debug(`Found project: ${projectInfo.name} (ID: ${projectInfo.id}), using ref: ${ref}`);
-      // Fetch all YAML template files, including one level of subdirectories per GitLab spec
+      // Fetch all YAML template files including one level of subdirectories.
       const yamlFiles = await this.fetchAllTemplateFiles(apiBaseUrl, projectPath, ref, fetchOptions);
       this.logger.debug(`Found ${yamlFiles.length} YAML template files`);
       if (yamlFiles.length === 0) {
@@ -752,64 +749,80 @@ export class ComponentService implements ComponentSource {
       // **BATCH PROCESSING OPTIMIZATION** - Process components in batches
       const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
       const batchSize = config.get<number>('batchSize', 5);
-      const componentResults = await this.httpClient.processBatch(
+      const allResults = await this.httpClient.processBatch(
         yamlFiles,
         async (file: GitLabTreeItem) => {
-          // file.path is e.g. "templates/component.yml" or "templates/subdir/template.yml"
+          // file.path is e.g. templates/component.yml or templates/subdir/template.yml
           const relativePath = file.path.replace(/^templates\//, '');
-          // For subdirectory components (e.g. "main/template.yml"), the component name is the directory.
-          // For flat components (e.g. "component.yml"), the component name is the filename without extension.
+          // For subdirectory components, use the folder name as the component name.
           const name = relativePath.includes('/')
             ? relativePath.split('/')[0]
             : relativePath.replace(/\.ya?ml$/, '');
-          this.logger.debug(`Processing component: ${name} (${file.path})`);
+          this.logger.debug(`Processing template: ${name} (${relativePath})`);
           // Fetch template content
           const templateResult = await this.fetchTemplateContent(apiBaseUrl, projectInfo.id, relativePath, ref, fetchOptions);
 
-          let description = '';
-          let variables: ComponentVariable[] = [];
-
-          // Process template content - skip files that don't have a spec section (not real components)
-          if (templateResult) {
-            const { content, extractedVariables, extractedDescription, isValidComponent } = templateResult;
-
-
-            // Skip non-component templates (e.g., YAML fragments with anchors only, no spec section)
-            if (!isValidComponent) {
-              this.logger.debug(`[ComponentService] Skipping ${name}: not a valid GitLab CI/CD component (no spec section)`);
-              return null; // Will be filtered out
-            }
-
-
-            variables = extractedVariables;
-            description = extractedDescription || `${name} component`;
-          } else {
+          if (!templateResult) {
             // If we couldn't fetch the template, skip it
             this.logger.debug(`[ComponentService] Skipping ${name}: could not fetch template content`);
             return null;
           }
 
-          return {
-            name,
-            description,
-            variables,
-            latest_version: ref
-          };
+          const { content, extractedVariables, extractedDescription, headerSummary, headerUsage, headerNotes, isValidComponent, isYamlFragment, fragmentAnchors } = templateResult;
+
+          // Return different result types based on what we found
+          if (isValidComponent) {
+            // This is a proper GitLab CI/CD component with spec section
+            return {
+              type: 'component' as const,
+              name,
+              description: extractedDescription || `${name} component`,
+              summary: headerSummary,
+              usage: headerUsage,
+              notes: headerNotes,
+              rawYaml: content,
+              variables: extractedVariables,
+              latest_version: ref
+            };
+          } else if (isYamlFragment && fragmentAnchors && fragmentAnchors.length > 0) {
+            // This is a YAML fragment with reusable anchors
+            return {
+              type: 'fragment' as const,
+              name,
+              fileName: relativePath,
+              description: extractedDescription || `Reusable YAML fragment with ${fragmentAnchors.length} anchor${fragmentAnchors.length > 1 ? 's' : ''}`,
+              summary: headerSummary,
+              usage: headerUsage,
+              notes: headerNotes,
+              rawYaml: content,
+              anchors: fragmentAnchors,
+              latest_version: ref
+            };
+          } else {
+            // Neither a component nor a useful fragment - skip
+            this.logger.debug(`[ComponentService] Skipping ${name}: not a component and no reusable anchors found`);
+            return null;
+          }
         },
         batchSize
       );
 
-      // Filter out null results (non-component templates)
-      const components = componentResults.filter((c: any) => c !== null);
-      this.logger.debug(`[ComponentService] ${components.length} of ${yamlFiles.length} templates are valid components`);
+      // Separate components and fragments
+      const components = allResults.filter((c: any) => c !== null && c.type === 'component');
+      const fragments = allResults.filter((c: any) => c !== null && c.type === 'fragment');
 
+      this.logger.debug(`[ComponentService] ${components.length} components and ${fragments.length} fragments found in ${yamlFiles.length} templates`);
 
-      const catalogData = { components };
+      const catalogData = {
+        components,
+        fragments // Include fragments in the catalog data
+      };
       // Cache the result
       this.catalogCache.set(cacheKey, catalogData);
-      this.logger.info(`Successfully processed ${components.length} components`);
+      this.logger.info(`Successfully processed ${components.length} components and ${fragments.length} fragments`);
       this.logger.logPerformance('fetchCatalogData (fresh)', Date.now() - startTime, {
         componentCount: components.length,
+        fragmentCount: fragments.length,
         batchSize,
         projectPath
       });
@@ -820,7 +833,7 @@ export class ComponentService implements ComponentSource {
     }
   }
 
-  // Helper method to fetch all YAML template files, including one level of subdirectories per GitLab spec
+  // Helper method to fetch all YAML template files, including one level of subdirectories.
   private async fetchAllTemplateFiles(apiBaseUrl: string, projectPath: string, ref: string, fetchOptions?: any): Promise<GitLabTreeItem[]> {
     const treeUrl = `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`;
     const topLevel: GitLabTreeItem[] = await this.httpClient.fetchJson(treeUrl, fetchOptions).catch(() => [] as GitLabTreeItem[]);
@@ -843,11 +856,21 @@ export class ComponentService implements ComponentSource {
   }
 
   // Helper method for parallel template content fetching
+  // Returns information about either a GitLab CI/CD component OR a YAML fragment with anchors
   private async fetchTemplateContent(apiBaseUrl: string, projectId: string, relativePath: string, ref: string, fetchOptions?: any): Promise<{
     content: string;
     extractedVariables: ComponentVariable[];
     extractedDescription?: string;
+    headerSummary?: string;
+    headerUsage?: string;
+    headerNotes?: string[];
     isValidComponent: boolean;
+    isYamlFragment: boolean;
+    fragmentAnchors?: Array<{
+      name: string;
+      description?: string;
+      type: 'job' | 'variables' | 'before_script' | 'after_script' | 'rules' | 'generic';
+    }>;
   } | null> {
     try {
       const contentUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent('templates/' + relativePath)}/raw?ref=${ref}`;
@@ -864,25 +887,81 @@ export class ComponentService implements ComponentSource {
       this.logger.debug(`[ComponentService] Template ${relativePath}: Found ${parts.length} sections (spec + jobs)`);
       this.logger.debug(`[ComponentService] Template ${relativePath}: Spec section length: ${specSection.length} chars`);
 
-      // Check if this file has a valid spec section - required for GitLab CI/CD components
-      // Files without a spec section are not components (e.g., YAML anchors/fragments)
-      const hasSpecSection = specSection.match(/^spec:\s*$/m) !== null;
-
-      // Extract description from component spec
-      // FIXED: GitLab component specs don't have spec.description - changed to never match
-      // const specDescMatch = specSection.match(/spec:\s*\n\s*NEVER_MATCH_description:\s*["']?(.*?)["']?\s*$/m);
-      // if (specDescMatch) {
-      //   extractedDescription = specDescMatch[1].trim();
-      //   this.logger.debug(`[ComponentService] Template ${relativePath}: Found spec description: ${extractedDescription}`);
-      // }
-
-      // If no spec description, try comment at top of file
+      // If no spec description, try top-of-spec comment.
       if (!extractedDescription) {
         const commentMatch = specSection.match(/^#\s*(.+?)$/m);
         if (commentMatch && !commentMatch[1].toLowerCase().includes('gitlab') && !commentMatch[1].toLowerCase().includes('ci')) {
           extractedDescription = commentMatch[1].trim();
-          this.logger.debug(`[ComponentService] Template ${relativePath}: Found comment description: ${extractedDescription}`);
         }
+      }
+
+      // Check if this file has a valid spec section - required for GitLab CI/CD components
+      // Files without a spec section are not components (e.g., YAML anchors/fragments)
+      const hasSpecSection = specSection.match(/^spec:\s*$/m) !== null;
+
+      // Check for YAML fragment patterns - anchors starting with '.'
+      // These are reusable YAML fragments that can be extended via 'extends:'
+      const anchorMatches = content.matchAll(/^(\.[a-zA-Z_][a-zA-Z0-9_-]*):\s*$/gm);
+      const fragmentAnchors: Array<{
+        name: string;
+        description?: string;
+        type: 'job' | 'variables' | 'before_script' | 'after_script' | 'rules' | 'generic';
+      }> = [];
+
+      for (const match of anchorMatches) {
+        const anchorName = match[1];
+
+        // Try to determine anchor type from name or content
+        let anchorType: 'job' | 'variables' | 'before_script' | 'after_script' | 'rules' | 'generic' = 'generic';
+        const lowerName = anchorName.toLowerCase();
+
+        if (lowerName.includes('before_script') || lowerName.includes('before-script')) {
+          anchorType = 'before_script';
+        } else if (lowerName.includes('after_script') || lowerName.includes('after-script')) {
+          anchorType = 'after_script';
+        } else if (lowerName.includes('rule')) {
+          anchorType = 'rules';
+        } else if (lowerName.includes('variable')) {
+          anchorType = 'variables';
+        } else {
+          // Check content after anchor to determine type
+          const anchorContent = this.extractAnchorContent(content, anchorName);
+          if (anchorContent) {
+            if (anchorContent.includes('before_script:')) anchorType = 'before_script';
+            else if (anchorContent.includes('after_script:')) anchorType = 'after_script';
+            else if (anchorContent.includes('rules:')) anchorType = 'rules';
+            else if (anchorContent.includes('variables:')) anchorType = 'variables';
+            else if (anchorContent.includes('script:') || anchorContent.includes('stage:') || anchorContent.includes('image:')) anchorType = 'job';
+          }
+        }
+
+        // Try to extract description from comment above the anchor
+        const descriptionMatch = content.match(new RegExp(`^#\\s*(.+?)\\n${anchorName.replace('.', '\\.')}:`, 'm'));
+        const description = descriptionMatch ? descriptionMatch[1].trim() : undefined;
+
+        fragmentAnchors.push({
+          name: anchorName,
+          description,
+          type: anchorType
+        });
+
+        this.logger.debug(`[ComponentService] Template ${relativePath}: Found YAML anchor: ${anchorName} (type: ${anchorType})`);
+      }
+
+      const isYamlFragment = fragmentAnchors.length > 0 && !hasSpecSection;
+
+      // Check for explicit fragment marker comment: # @gitlab-component-helper: fragment
+      // or # @type: fragment
+      const hasFragmentMarker = content.match(/^#\s*@(gitlab-component-helper:\s*fragment|type:\s*fragment)/m) !== null;
+
+      // Check for explicit component marker to override heuristics
+      const hasComponentMarker = content.match(/^#\s*@(gitlab-component-helper:\s*component|type:\s*component)/m) !== null;
+
+      // Extract structured header metadata (only spec-compliant comments)
+      const headerMetadata = this.parseHeaderMetadata(content);
+      if (headerMetadata.summary) {
+        extractedDescription = headerMetadata.summary;
+        this.logger.debug(`[ComponentService] Template ${relativePath}: Using header summary as description`);
       }
 
       // Extract variables from GitLab CI/CD component spec format - ONLY from spec section
@@ -907,7 +986,7 @@ export class ComponentService implements ComponentSource {
             break;
           }
 
-          // New input parameter (indented under inputs) - handle 2 to 4 spaces of indentation
+          // New input parameter (indented under inputs) - handle both 2-space and 4-space indentation
           // Match lines like "    name:" where the input name ends with ":" and has only whitespace after
           if (line.match(/^\s{2,4}[a-zA-Z_][a-zA-Z0-9_]*:\s*$/)) {
             // If we have a current input, finalize it before starting a new one
@@ -990,16 +1069,112 @@ export class ComponentService implements ComponentSource {
         }
       }
 
-      // Determine if this is a valid component - must have a spec section
+      // Determine if this is a valid component - must have a spec section (or explicit component marker)
       // Files that only contain YAML anchors (like .options or .common templates) are not components
-      const isValidComponent = hasSpecSection;
-      this.logger.debug(`[ComponentService] Template ${relativePath}: isValidComponent=${isValidComponent} (hasSpecSection=${hasSpecSection})`);
+      // but can be treated as YAML fragments if they have anchors
+      const isValidComponent = hasSpecSection || hasComponentMarker;
 
-      return { content, extractedVariables, extractedDescription, isValidComponent };
+      this.logger.debug(`[ComponentService] Template ${relativePath}: isValidComponent=${isValidComponent}, isYamlFragment=${isYamlFragment}, hasSpecSection=${hasSpecSection}, fragmentAnchors=${fragmentAnchors.length}`);
+
+      return {
+        content,
+        extractedVariables,
+        extractedDescription,
+        headerSummary: headerMetadata.summary,
+        headerUsage: headerMetadata.usage,
+        headerNotes: headerMetadata.notes,
+        isValidComponent,
+        isYamlFragment: isYamlFragment || hasFragmentMarker,
+        fragmentAnchors: fragmentAnchors.length > 0 ? fragmentAnchors : undefined
+      };
     } catch (error) {
       this.logger.debug(`Could not fetch template content: ${error}`);
       return null;
     }
+  }
+
+  /**
+   * Extract the content block for a YAML anchor from the full file content
+   * Used to determine anchor type based on its content
+   */
+  private extractAnchorContent(content: string, anchorName: string): string | null {
+    try {
+      // Escape special regex chars in anchor name (especially the leading dot)
+      const escapedName = anchorName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+      // Match the anchor and capture content until the next top-level key or end of file
+      // This regex captures indented content belonging to the anchor
+      const anchorRegex = new RegExp(
+        `^${escapedName}:\\s*\\n((?:(?:[ \\t]+.*)\\n?)*)`,
+        'm'
+      );
+
+      const match = content.match(anchorRegex);
+      if (match && match[1]) {
+        return match[1];
+      }
+      return null;
+    } catch (error) {
+      this.logger.debug(`Error extracting anchor content for ${anchorName}: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * Parse spec-compliant header comments for context.
+   * Only lines matching the header spec are included; other comments are ignored.
+   *
+   * Supported formats (must be at top of file before any non-comment content):
+   *   # @gitlab-component-helper: summary: <text>
+   *   # @gitlab-component-helper: usage: <text>
+   *   # @gitlab-component-helper: note: <text>
+   *   # @gch: summary: <text>
+   *   # @gch: usage: <text>
+   *   # @gch: note: <text>
+   */
+  private parseHeaderMetadata(content: string): { summary?: string; usage?: string; notes?: string[] } {
+    const lines = content.split('\n');
+    const notes: string[] = [];
+    let summary: string | undefined;
+    let usage: string | undefined;
+
+    let started = false;
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      if (!started) {
+        if (trimmed === '') {
+          continue; // Skip leading blank lines
+        }
+        if (!trimmed.startsWith('#')) {
+          break; // Header comments must be at top of file
+        }
+        started = true;
+      }
+
+      if (!trimmed.startsWith('#')) {
+        break; // Stop at first non-comment line after header starts
+      }
+
+      const match = trimmed.match(/^#\s*@(?:gitlab-component-helper|gch):\s*(summary|usage|note)s?\s*:\s*(.+)$/i);
+      if (match) {
+        const key = match[1].toLowerCase();
+        const value = match[2].trim();
+        if (key === 'summary') {
+          summary = value;
+        } else if (key === 'usage') {
+          usage = value;
+        } else if (key === 'note') {
+          notes.push(value);
+        }
+      }
+    }
+
+    return {
+      summary,
+      usage,
+      notes: notes.length > 0 ? notes : undefined
+    };
   }
 
   /**
