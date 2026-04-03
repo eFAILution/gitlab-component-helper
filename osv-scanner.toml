@@ -1,0 +1,5 @@
+[[PackageOverrides]]
+ecosystem = "npm"
+group = "dev"
+vulnerability.ignore = true
+reason = "Security reporting should focus on shipped product dependencies; dev-only npm packages are tracked separately."
