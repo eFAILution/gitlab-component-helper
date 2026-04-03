@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { getComponentService } from '../services/componentService';
-import { getComponentCacheManager } from '../services/componentCacheManager';
+import { getComponentService } from '../services/component';
+import { getComponentCacheManager } from '../services/cache/componentCacheManager';
 import { parseYaml } from '../utils/yamlParser';
 import { Component } from '../types/git-component';
 import { Logger } from '../utils/logger';

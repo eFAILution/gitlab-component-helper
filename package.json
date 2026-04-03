@@ -196,6 +196,10 @@
       {
         "command": "gitlabComponentHelper.addProjectToken",
         "title": "GitLab CI: Add Component Project/Group"
+      },
+      {
+        "command": "gitlab-component-helper.showPerformanceStats",
+        "title": "GitLab CI: Show Performance Statistics"
       }
     ],
     "menus": {
