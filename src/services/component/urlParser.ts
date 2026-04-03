@@ -24,25 +24,30 @@ export class UrlParser {
       const urlObj = new URL(url);
       const gitlabInstance = urlObj.hostname;
 
-      const pathParts = urlObj.pathname.split('/');
-      if (pathParts.length < 3) {
+      const pathParts = urlObj.pathname.split('/').filter(Boolean);
+      if (pathParts.length < 2) {
         return null;
       }
 
-      // The last part contains the component name and version
+      // The last part contains the component name and optional version in explicit URLs.
       const lastPart = pathParts[pathParts.length - 1];
       let name: string;
       let version: string | undefined;
+      let path: string;
 
       if (lastPart.includes('@')) {
         // Split component name and version
         [name, version] = lastPart.split('@');
-      } else {
+        path = pathParts.slice(0, pathParts.length - 1).join('/');
+      } else if (pathParts.length >= 3) {
         name = lastPart;
+        path = pathParts.slice(0, pathParts.length - 1).join('/');
+      } else {
+        // Project-only shorthand URL: default to main component on that project.
+        name = 'main';
+        version = 'main';
+        path = pathParts.join('/');
       }
-
-      // Extract the path (everything except the last part)
-      const path = pathParts.slice(1, pathParts.length - 1).join('/');
 
       this.logger.debug(
         `Parsed component URL: ${gitlabInstance}/${path}/${name}${version ? `@${version}` : ''}`,

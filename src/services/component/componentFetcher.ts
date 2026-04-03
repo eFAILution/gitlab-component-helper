@@ -76,26 +76,41 @@ export class ComponentFetcher {
       const urlObj = new URL(url);
       const gitlabInstance = urlObj.hostname;
 
-      // Extract project path, component name, and version
-      const pathParts = urlObj.pathname.split('/');
+      // Extract project path, component name, and version.
+      // Supports:
+      // 1) /group/project/component@version
+      // 2) /group/project/component
+      // 3) /group/project (project-only shorthand -> default component selection)
+      const pathParts = urlObj.pathname.split('/').filter(Boolean);
       let componentName: string;
       let version: string;
       let projectPath: string;
+      let projectOnlyUrl = false;
 
       const lastPart = pathParts[pathParts.length - 1];
 
       if (lastPart.includes('@')) {
         [componentName, version] = lastPart.split('@');
-        projectPath = pathParts.slice(1, pathParts.length - 1).join('/');
-      } else {
+        projectPath = pathParts.slice(0, pathParts.length - 1).join('/');
+      } else if (pathParts.length >= 3) {
         componentName = lastPart;
         version = 'main';
-        projectPath = pathParts.slice(1, pathParts.length - 1).join('/');
+        projectPath = pathParts.slice(0, pathParts.length - 1).join('/');
+      } else {
+        // Project-only URL (e.g. /components/dependency-scanning).
+        // Default to "main" and let catalog selection refine it if available.
+        componentName = 'main';
+        version = 'main';
+        projectPath = pathParts.join('/');
+        projectOnlyUrl = true;
       }
 
       this.logger.debug(
         `Parsed URL: Project=${projectPath}, Component=${componentName}, Version=${version}`
       );
+
+      const encodedProjectPath = encodeURIComponent(projectPath);
+      const apiBaseUrl = `https://${gitlabInstance}/api/v4`;
 
       let templateContent = '';
       let parameters: Array<{
@@ -124,11 +139,52 @@ export class ComponentFetcher {
         )) as GitLabCatalogData;
 
         if (catalogData && catalogData.components) {
-          const catalogComponent = catalogData.components.find(
+          let catalogComponent = catalogData.components.find(
             (c: GitLabCatalogComponent) => c.name === componentName
           );
+
+          // For project-only shorthand URLs, try to auto-select a sensible component.
+          if (!catalogComponent && projectOnlyUrl) {
+            const projectBaseName = projectPath.split('/').pop() || '';
+            catalogComponent =
+              catalogData.components.find((c: GitLabCatalogComponent) => c.name === 'main') ||
+              catalogData.components.find((c: GitLabCatalogComponent) => c.name === projectBaseName) ||
+              (catalogData.components.length === 1 ? catalogData.components[0] : undefined);
+
+            if (catalogComponent) {
+              componentName = catalogComponent.name;
+              this.logger.debug(
+                `Project-only URL resolved to component: ${componentName}`,
+                'ComponentFetcher'
+              );
+            }
+          }
+
           if (catalogComponent) {
             this.logger.info(`Found component in catalog: ${componentName}`);
+
+            let extractedParameters =
+              catalogComponent.variables?.map((v: GitLabCatalogVariable) => ({
+                name: v.name,
+                description: v.description || `Parameter: ${v.name}`,
+                required: v.required || false,
+                type: v.type || 'string',
+                default: v.default
+              })) || [];
+
+            // Some catalog entries omit variable details. Try parsing the template directly.
+            if (extractedParameters.length === 0) {
+              const templateResult = await this.fetchTemplate(
+                apiBaseUrl,
+                encodedProjectPath,
+                componentName,
+                version,
+                catalogFetchOptions
+              );
+              if (templateResult?.parameters?.length) {
+                extractedParameters = templateResult.parameters;
+              }
+            }
 
             const component = {
               name: componentName,
@@ -140,14 +196,7 @@ export class ComponentFetcher {
                 (catalogComponent.documentation_url
                   ? `[Full Documentation](${catalogComponent.documentation_url})`
                   : ''),
-              parameters:
-                catalogComponent.variables?.map((v: GitLabCatalogVariable) => ({
-                  name: v.name,
-                  description: v.description || `Parameter: ${v.name}`,
-                  required: v.required || false,
-                  type: v.type || 'string',
-                  default: v.default
-                })) || [],
+              parameters: extractedParameters,
               version,
               source: `${gitlabInstance}/${projectPath}`,
               documentationUrl: catalogComponent.documentation_url
@@ -162,8 +211,6 @@ export class ComponentFetcher {
       }
 
       // Fall back to API + repository approach with parallel requests
-      const encodedProjectPath = encodeURIComponent(projectPath);
-      const apiBaseUrl = `https://${gitlabInstance}/api/v4`;
       const projectApiUrl = `${apiBaseUrl}/projects/${encodedProjectPath}`;
 
       this.logger.debug(`Fetching project info from: ${projectApiUrl}`);
@@ -270,15 +317,38 @@ export class ComponentFetcher {
     fetchOptions?: any
   ): Promise<{ content: string; parameters: any[] } | null> {
     try {
-      const templatePath = `templates/${componentName}.yml`;
-      const templateUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(
-        templatePath
-      )}/raw?ref=${version}`;
+      const templatePathCandidates = [
+        `templates/${componentName}.yml`,
+        `templates/${componentName}.yaml`,
+        `templates/${componentName}/template.yml`,
+        `templates/${componentName}/template.yaml`
+      ];
 
-      this.logger.debug(`[ComponentFetcher] Fetching template from: ${templateUrl}`);
-      const templateContent = await this.httpClient.fetchText(templateUrl, fetchOptions);
+      let templateContent: string | null = null;
+      let resolvedTemplatePath = '';
+
+      for (const templatePath of templatePathCandidates) {
+        const templateUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(
+          templatePath
+        )}/raw?ref=${version}`;
+        this.logger.debug(`[ComponentFetcher] Trying template path: ${templatePath}`);
+
+        try {
+          templateContent = await this.httpClient.fetchText(templateUrl, fetchOptions);
+          resolvedTemplatePath = templatePath;
+          break;
+        } catch {
+          // try next candidate
+        }
+      }
+
+      if (!templateContent) {
+        this.logger.debug(`[ComponentFetcher] No template found for ${componentName} at known paths`);
+        return null;
+      }
+
       this.logger.debug(
-        `[ComponentFetcher] Template content received, length: ${templateContent.length} chars`
+        `[ComponentFetcher] Template content received from ${resolvedTemplatePath}, length: ${templateContent.length} chars`
       );
 
       // Use unified parser to extract parameters
@@ -396,20 +466,8 @@ export class ComponentFetcher {
       }
       this.logger.debug(`Found project: ${projectInfo.name} (ID: ${projectInfo.id}), using ref: ${ref}`);
 
-      // Re-fetch templates with correct ref if needed
-      templates = await this.httpClient
-        .fetchJson(
-          `${apiBaseUrl}/projects/${encodeURIComponent(
-            projectPath
-          )}/repository/tree?path=templates&ref=${ref}`,
-          fetchOptions
-        )
-        .catch(() => [] as GitLabTreeItem[]);
-
-      // Filter YAML files
-      const yamlFiles = templates.filter(
-        (file: GitLabTreeItem) => file.name.endsWith('.yml') || file.name.endsWith('.yaml')
-      );
+      // Re-fetch templates with correct ref and include one subdirectory level.
+      const yamlFiles = await this.fetchAllTemplateFiles(apiBaseUrl, projectPath, ref, fetchOptions);
       this.logger.debug(`Found ${yamlFiles.length} YAML template files`);
 
       if (yamlFiles.length === 0) {
@@ -425,14 +483,17 @@ export class ComponentFetcher {
       const componentResults = await this.httpClient.processBatch(
         yamlFiles,
         async (file: GitLabTreeItem) => {
-          const name = file.name.replace(/\.ya?ml$/, '');
-          this.logger.debug(`Processing component: ${name} (${file.name})`);
+          const relativePath = file.path.replace(/^templates\//, '');
+          const name = relativePath.includes('/')
+            ? relativePath.split('/')[0]
+            : relativePath.replace(/\.ya?ml$/, '');
+          this.logger.debug(`Processing component: ${name} (${relativePath})`);
 
           // Fetch template content
           const templateResult = await this.fetchTemplateContent(
             apiBaseUrl,
             projectInfo.id,
-            file.name,
+            relativePath,
             ref,
             fetchOptions
           );
@@ -494,12 +555,41 @@ export class ComponentFetcher {
   }
 
   /**
+   * Fetch YAML template files from templates/ including one nested directory level.
+   */
+  private async fetchAllTemplateFiles(
+    apiBaseUrl: string,
+    projectPath: string,
+    ref: string,
+    fetchOptions?: any
+  ): Promise<GitLabTreeItem[]> {
+    const treeUrl = `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`;
+    const topLevel: GitLabTreeItem[] = await this.httpClient.fetchJson(treeUrl, fetchOptions).catch(() => [] as GitLabTreeItem[]);
+
+    const yamlFiles: GitLabTreeItem[] = topLevel.filter((item: GitLabTreeItem) =>
+      item.type === 'blob' && (item.name.endsWith('.yml') || item.name.endsWith('.yaml'))
+    );
+
+    const subdirs = topLevel.filter((item: GitLabTreeItem) => item.type === 'tree');
+    for (const subdir of subdirs) {
+      const subdirUrl = `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=${encodeURIComponent('templates/' + subdir.name)}&ref=${ref}`;
+      const subdirContents: GitLabTreeItem[] = await this.httpClient.fetchJson(subdirUrl, fetchOptions).catch(() => [] as GitLabTreeItem[]);
+      const subdirYaml = subdirContents.filter((item: GitLabTreeItem) =>
+        item.type === 'blob' && (item.name.endsWith('.yml') || item.name.endsWith('.yaml'))
+      );
+      yamlFiles.push(...subdirYaml);
+    }
+
+    return yamlFiles;
+  }
+
+  /**
    * Helper method for parallel template content fetching
    */
   private async fetchTemplateContent(
     apiBaseUrl: string,
     projectId: string,
-    fileName: string,
+    relativePath: string,
     ref: string,
     fetchOptions?: any
   ): Promise<{
@@ -510,12 +600,12 @@ export class ComponentFetcher {
   } | null> {
     try {
       const contentUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(
-        'templates/' + fileName
+        'templates/' + relativePath
       )}/raw?ref=${ref}`;
       const content = await this.httpClient.fetchText(contentUrl, fetchOptions);
 
       // Use unified parser to extract spec information
-      const parsedSpec = GitLabSpecParser.parse(content, fileName);
+      const parsedSpec = GitLabSpecParser.parse(content, relativePath);
 
       return {
         content,
