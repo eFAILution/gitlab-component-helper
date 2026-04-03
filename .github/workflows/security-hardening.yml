@@ -1,0 +1,28 @@
+name: Security Hardening
+
+on:
+  pull_request:
+    branches: [beta, main]
+  push:
+    branches: [beta, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  argus-hardening:
+    name: Argus Reusable Hardening
+    # Pinned to the commit for Argus v0.6.8 for supply-chain safety.
+    uses: huntridge-labs/argus/.github/workflows/reusable-security-hardening.yml@0e74137817fbf4be257f76a976c04b7f730de4dc
+    with:
+      scanners: codeql,gitleaks,osv,dependency-review
+      enable_code_security: true
+      allow_failure: true
+      severity_threshold: high
+      post_pr_comment: true
+    secrets: inherit
