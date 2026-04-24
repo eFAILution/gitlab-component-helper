@@ -68,6 +68,42 @@ include:
 
 ---
 
+## 📝 Template Header Spec (Optional Context)
+
+To provide consistent context in the Component Browser, you can add **spec-compliant header comments** at the top of a template file. Only these keys are displayed; all other comments are ignored.
+
+**Supported keys (must be at top of file):**
+- `summary`
+- `usage`
+- `note`
+
+**Full format:**
+```yaml
+# @gitlab-component-helper: summary: Push a Helm chart to Sonic
+# @gitlab-component-helper: usage: include + set SONIC_TARGET_* variables
+# @gitlab-component-helper: note: Requires a protected ref for publish
+```
+
+**Short format:**
+```yaml
+# @gch: summary: Push a Helm chart to Sonic
+# @gch: usage: include + set SONIC_TARGET_* variables
+# @gch: note: Requires a protected ref for publish
+```
+
+Notes:
+- Header comments must appear **before any non-comment content**.
+- Multiple `note` entries are supported.
+- If no header is present, the Context section stays hidden.
+
+---
+
+## 📄 Raw YAML Toggle
+
+Component details include a **Raw YAML** toggle so you can inspect the original template when needed. This is available regardless of whether header comments are present.
+
+---
+
 ## ⚙️ Configuration
 
 Add your favorite sources in VS Code settings:

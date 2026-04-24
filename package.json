@@ -2,7 +2,7 @@
   "name": "gitlab-component-helper",
   "displayName": "GitLab Component Helper",
   "description": "Provides intellisense for GitLab CI components",
-  "version": "0.8.6",
+  "version": "0.9.5",
   "icon": "images/icon.png",
   "engines": {
     "node": ">=22.0.0",
@@ -196,6 +196,10 @@
       {
         "command": "gitlabComponentHelper.addProjectToken",
         "title": "GitLab CI: Add Component Project/Group"
+      },
+      {
+        "command": "gitlab-component-helper.showPerformanceStats",
+        "title": "GitLab CI: Show Performance Statistics"
       }
     ],
     "menus": {
@@ -222,8 +226,9 @@
     "test": "node tests/run-tests.js",
     "test:unit": "node tests/run-tests.js unit",
     "test:integration": "node tests/run-tests.js integration",
-    "test:performance": "node tests/run-tests.js performance",
-    "test:all": "node tests/run-tests.js",
+    "test:all": "node tests/run-tests.js && npm run test:extension-host",
+    "pretest:extension-host": "npm run compile && tsc --project tsconfig.test.json",
+    "test:extension-host": "node out-test/runTest.js",
     "release": "release-it",
     "release:beta": "release-it --config .release-it.beta.json",
     "release:main": "release-it --config .release-it.json",
@@ -250,19 +255,19 @@
     "@types/glob": "^9.0.0",
     "@types/js-yaml": "^4.0.9",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^25.3.3",
+    "@types/node": "^25.6.0",
     "@types/vscode": "^1.109.0",
-    "@typescript-eslint/eslint-plugin": "^8.57.2",
-    "@typescript-eslint/parser": "^8.57.2",
+    "@typescript-eslint/eslint-plugin": "^8.58.1",
+    "@typescript-eslint/parser": "^8.58.1",
     "@vscode/test-electron": "^2.3.9",
     "commitizen": "^4.3.1",
     "conventional-changelog-conventionalcommits": "^9.3.1",
     "cz-conventional-changelog": "^3.3.0",
     "cz-emoji-conventional": "^1.1.0",
     "dateformat": "^5.0.3",
-    "dotenv": "^17.3.1",
-    "esbuild": "^0.27.3",
-    "eslint": "^10.1.0",
+    "dotenv": "^17.4.2",
+    "esbuild": "^0.28.0",
+    "eslint": "^10.2.0",
     "husky": "^9.1.6",
     "is-ci": "^4.0.0",
     "js-yaml": "^4.1.1",
@@ -270,8 +275,8 @@
     "npm-run-all": "^4.1.5",
     "release-it": "^19.2.4",
     "semver": "^7.7.3",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.57.2"
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.58.1"
   },
   "keywords": [],
   "author": "eFAILution",

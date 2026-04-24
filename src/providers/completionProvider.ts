@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import { getComponentUnderCursor } from './componentDetector';
-import { getComponentService } from '../services/componentService';
+import { getComponentService } from '../services/component';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
-import { getComponentCacheManager } from '../services/componentCacheManager';
+import { getComponentCacheManager } from '../services/cache/componentCacheManager';
 import { getVariableCompletions, GITLAB_PREDEFINED_VARIABLES } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 

@@ -1,0 +1,151 @@
+name: Bug report
+description: Report a reproducible bug in GitLab Component Helper.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug.
+
+        Please provide complete details so maintainers can triage quickly.
+        Incomplete reports may be closed until missing context is added.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Bug summary
+      description: What is broken?
+      placeholder: A concise description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproducible-steps
+    attributes:
+      label: Steps to reproduce
+      description: Include exact steps, in order.
+      placeholder: |
+        1. Open a .gitlab-ci.yml file
+        2. Run "GitLab CI: Browse Components"
+        3. Select ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: What should happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: What happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: component-context
+    attributes:
+      label: Component context (if applicable)
+      description: Required for parser/completion/hover/browser issues.
+      placeholder: |
+        Component URL:
+        GitLab instance:
+        Project path:
+        Version/reference:
+        Source type (project/group):
+    validations:
+      required: false
+
+  - type: textarea
+    id: sample-yaml
+    attributes:
+      label: Minimal .gitlab-ci.yml snippet
+      description: Paste a redacted, minimal snippet that reproduces the issue.
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Extension logs
+      description: |
+        Paste relevant lines from the "GitLab Component Helper" output channel.
+        If available, include output from:
+        - GitLab CI: Show Cache Status
+        - GitLab CI: Debug Cache (Detailed)
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: feature-area
+    attributes:
+      label: Affected area
+      options:
+        - Component Browser
+        - Hover provider
+        - Completion provider
+        - Validation provider
+        - Cache behavior
+        - GitLab API integration
+        - Token/authentication
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: extension-version
+    attributes:
+      label: Extension version
+      placeholder: e.g. 0.8.6
+    validations:
+      required: true
+
+  - type: input
+    id: vscode-version
+    attributes:
+      label: VS Code version
+      placeholder: e.g. 1.109.0
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      placeholder: e.g. 22.x
+    validations:
+      required: false
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submit checks
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I can reproduce this on the latest version from main/beta.
+          required: true
+        - label: I included a minimal YAML snippet and relevant logs.
+          required: true

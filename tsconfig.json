@@ -11,13 +11,20 @@
     "rootDir": "src",
     "strict": true,
     "moduleResolution": "node",
+    "ignoreDeprecations": "6.0",
     "types": [
       "node",
       "vscode"
     ]
   },
+  "include": [
+    "src/**/*"
+  ],
   "exclude": [
     "node_modules",
-    ".vscode-test"
+    ".vscode-test",
+    "out",
+    "out-test",
+    "tests"
   ]
 }

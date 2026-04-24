@@ -36,6 +36,7 @@ node_modules
 .vscode/
 .vscode-test
 out
+out-test
 
 # Other
 offline-search-index.*
