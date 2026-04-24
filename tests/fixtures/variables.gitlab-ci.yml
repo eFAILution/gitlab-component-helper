@@ -1,0 +1,14 @@
+# Fixture for extension-host hover tests. The interesting tokens are
+# GitLab predefined variables so assertions can run fully offline (no
+# network / no cache population required).
+
+stages:
+  - build
+
+variables:
+  MY_VAR: "deployed-to-$CI_COMMIT_SHA"
+
+build_job:
+  stage: build
+  script:
+    - echo "commit $CI_COMMIT_SHA on $CI_COMMIT_REF_NAME"
