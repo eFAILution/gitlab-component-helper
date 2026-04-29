@@ -1,0 +1,12 @@
+============================================================
+AICaC Compliance Validation Report
+============================================================
+
+❌ AICaC NOT ADOPTED
+   AICaC validation failed
+
+Errors:
+  • .ai/context.yaml: schema[project.type] 'vscode-extension' is not one of ['rest-api', 'graphql-api', 'grpc-service', 'cli', 'library', 'web-app', 'mobile-app', 'data-pipeline', 'ml-model', 'infrastructure', 'specification', 'monorepo', 'desktop-app', 'plugin', 'other']
+  • architecture.yaml[scripts].depends_on references unknown component 'semantic-release configuration'
+
+Recommendation: Fix the errors above; see spec/README.md
