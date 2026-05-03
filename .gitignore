@@ -2,7 +2,6 @@
 .DS_Store
 .env
 .venv
-.vscode
 env/
 venv/
 ENV/
@@ -33,7 +32,8 @@ node_modules
 .pylintrc
 
 # User Configs
-.vscode/
+.vscode/*
+!.vscode/launch.json
 .vscode-test
 out
 out-test
