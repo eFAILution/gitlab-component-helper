@@ -7,5 +7,20 @@ export { UrlParser, ParsedComponentUrl } from './urlParser';
 export { VersionManager } from './versionManager';
 export { ComponentFetcher } from './componentFetcher';
 
+// Discovery configuration
+export {
+  DiscoveryConfig,
+  DiscoveryOverride,
+  ComponentSourceWithDiscovery,
+  HARD_DEFAULTS,
+  DISCOVERY_LIMITS,
+  mergeDiscoveryConfig,
+  clampDiscoveryConfig,
+  buildTemplatePathCandidates,
+  matchesFilePattern,
+  readGlobalDiscoveryConfig,
+  getDiscoveryConfigForSource,
+} from './discoveryConfig';
+
 // Command registration
 export { registerAddProjectTokenCommand } from './commands';
