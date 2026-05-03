@@ -158,9 +158,82 @@
                 "type": "string",
                 "default": "gitlab.com",
                 "description": "GitLab instance hostname"
+              },
+              "discovery": {
+                "type": "object",
+                "description": "Per-source discovery overrides (uses gitlabComponentHelper.discovery.* defaults if omitted)",
+                "properties": {
+                  "templateRoots": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Repository directories to scan for components"
+                  },
+                  "maxDepth": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 3,
+                    "description": "Subdirectory depth to recurse under each template root"
+                  },
+                  "filePatterns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Filename globs (e.g. '*.yml'); path globs are not supported"
+                  },
+                  "templateFileNames": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Filenames recognised inside per-component subfolders (e.g. 'template.yml')"
+                  }
+                }
               }
             }
           }
+        },
+        "gitlabComponentHelper.discovery.templateRoots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "templates"
+          ],
+          "description": "Repository directories scanned for components when cataloguing a source. Up to 5 entries.",
+          "maxItems": 5
+        },
+        "gitlabComponentHelper.discovery.maxDepth": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0,
+          "maximum": 3,
+          "description": "Subdirectory depth to recurse under each template root. 0 = root only, 1 = one level (default, matches GitLab spec)."
+        },
+        "gitlabComponentHelper.discovery.filePatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "*.yml",
+            "*.yaml"
+          ],
+          "description": "Filename globs identifying component template files. Filename only, no path globs."
+        },
+        "gitlabComponentHelper.discovery.templateFileNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "template.yml",
+            "template.yaml"
+          ],
+          "description": "Filenames recognised inside per-component subfolders, e.g. 'templates/foo/template.yml'."
         }
       }
     },
