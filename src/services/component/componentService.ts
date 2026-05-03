@@ -196,15 +196,48 @@ export class ComponentService implements ComponentSource {
   }
 
   // Legacy methods for backward compatibility
+  private legacyTokenWarningLogged = false;
+
+  private async resolveLegacyGitlabToken(gitlabHost: string): Promise<string> {
+    const secretToken = await this.tokenManager.getTokenForInstance(gitlabHost);
+    if (secretToken) {
+      return secretToken;
+    }
+    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+    const settingToken = config.get<string>('gitlabToken', '');
+    if (settingToken && !this.legacyTokenWarningLogged) {
+      this.logger.warn(
+        '[ComponentService] Using gitlabComponentHelper.gitlabToken from settings.json (plain text). ' +
+        'Run the "GitLab CI: Add Component Project/Group" command to migrate this token to encrypted SecretStorage, then clear the setting.'
+      );
+      this.legacyTokenWarningLogged = true;
+    }
+    return settingToken;
+  }
+
   private async fetchFromGitLab(): Promise<Component[]> {
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
     const gitlabUrl = config.get<string>('gitlabUrl', '');
     const projectId = config.get<string>('gitlabProjectId', '');
-    const token = config.get<string>('gitlabToken', '');
     const filePath = config.get<string>('gitlabComponentsFilePath', 'components.json');
 
-    if (!gitlabUrl || !projectId || !token) {
-      throw new Error('GitLab URL, project ID, or token not configured');
+    if (!gitlabUrl || !projectId) {
+      throw new Error('GitLab URL or project ID not configured');
+    }
+
+    const gitlabHost = (() => {
+      try {
+        return new URL(gitlabUrl).hostname;
+      } catch {
+        return gitlabUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      }
+    })();
+
+    const token = await this.resolveLegacyGitlabToken(gitlabHost);
+    if (!token) {
+      throw new Error(
+        `No GitLab token configured for ${gitlabHost}. Run the "GitLab CI: Add Component Project/Group" command to add one.`
+      );
     }
 
     const apiUrl = `${gitlabUrl}/api/v4/projects/${encodeURIComponent(

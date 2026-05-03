@@ -71,7 +71,9 @@
         "gitlabComponentHelper.gitlabToken": {
           "type": "string",
           "default": "",
-          "description": "GitLab API access token"
+          "description": "GitLab API access token (DEPRECATED - stored in plain text). Use the 'GitLab CI: Add Component Project/Group' command instead, which stores tokens encrypted via VS Code SecretStorage.",
+          "deprecationMessage": "Tokens stored here live in plain text in settings.json. Run the 'GitLab CI: Add Component Project/Group' command to migrate to encrypted SecretStorage, then clear this field.",
+          "markdownDescription": "**Deprecated:** Tokens stored here live in plain text in `settings.json`. Run the **GitLab CI: Add Component Project/Group** command instead \u2014 it stores tokens encrypted via VS Code SecretStorage. Once migrated, clear this field."
         },
         "gitlabComponentHelper.gitlabComponentsFilePath": {
           "type": "string",
