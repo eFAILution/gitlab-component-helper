@@ -47,6 +47,8 @@ Add any private project or group with a personal access token—just once per Gi
 - Tokens are stored securely using VS Code's built-in SecretStorage—never in plain text or files.
 - Tokens are only used for authenticated API calls to your specified GitLab instance and are never sent to third parties.
 
+> ⚠️ The legacy `gitlabComponentHelper.gitlabToken` setting stores tokens in plain text in `settings.json` and is **deprecated**. Use the **GitLab CI: Add Component Project/Group** command instead — it stores tokens encrypted via SecretStorage. If you still have a token in that setting, copy it through the command and clear the field.
+
 ---
 
 ## ⚡ Example Usage
@@ -113,17 +115,69 @@ Add your favorite sources in VS Code settings:
   {
     "name": "OpenTofu Components",
     "path": "components/opentofu",
-    "gitlabInstance": "gitlab.com",
-    "type": "project"
+    "gitlabInstance": "gitlab.com"
   },
   {
     "name": "Internal CI Components",
     "path": "devops/ci-components",
-    "gitlabInstance": "gitlab.company.com",
-    "type": "group"
+    "gitlabInstance": "gitlab.company.com"
   }
 ]
 ```
+
+---
+
+## 🗂️ Component Discovery
+
+By default the extension follows the [GitLab CI Components spec](https://docs.gitlab.com/ci/components/#directory-structure) when scanning a source repository — it looks for templates in `templates/` and one subdirectory level deep, matching `*.yml` and `*.yaml`. **No configuration is required for spec-compliant repos.**
+
+For repositories that pre-date the spec, use a custom directory layout, or store templates outside `templates/`, you can override discovery behavior either globally or per source.
+
+### Global defaults
+
+```jsonc
+"gitlabComponentHelper.discovery.templateRoots": ["templates", "ci/components"],
+"gitlabComponentHelper.discovery.maxDepth": 2,
+"gitlabComponentHelper.discovery.filePatterns": ["*.yml", "*.yaml"],
+"gitlabComponentHelper.discovery.templateFileNames": ["template.yml", "template.yaml"]
+```
+
+These four settings are also editable from the **VS Code Settings UI** (search for "GitLab Component Helper Discovery").
+
+### Per-source override
+
+Need different rules for one repository? Add a `discovery` block to that source — its values override the global defaults for that source only.
+
+```jsonc
+"gitlabComponentHelper.componentSources": [
+  {
+    "name": "Standard CI Components",
+    "path": "components/opentofu",
+    "gitlabInstance": "gitlab.com"
+    // uses global discovery defaults
+  },
+  {
+    "name": "Legacy Internal Components",
+    "path": "infra/legacy-ci",
+    "gitlabInstance": "gitlab.company.com",
+    "discovery": {
+      "templateRoots": ["ci/components", "shared/pipelines"],
+      "maxDepth": 2
+    }
+  }
+]
+```
+
+### Limits
+
+To keep the extension fast and predictable:
+
+| Field | Limit |
+|---|---|
+| `templateRoots` | Up to 5 roots per source |
+| `maxDepth` | 0–3 (0 = root only, 1 = one subdirectory level, the spec default) |
+| `filePatterns` | Filename globs only — no path globs (e.g. `*.yml` ✅, `foo/*.yml` ❌) |
+| `templateFileNames` | Filenames only — no slashes |
 
 ---
 
@@ -267,15 +321,20 @@ The following settings are available for the GitLab Component Helper extension. 
 | `gitlabComponentHelper.componentSource` | string | `local` | Source for component definitions. One of: `local`, `gitlab`, `url` |
 | `gitlabComponentHelper.gitlabUrl` | string | `https://gitlab.com` | GitLab instance URL |
 | `gitlabComponentHelper.gitlabProjectId` | string | `""` | GitLab project ID containing component definitions |
-| `gitlabComponentHelper.gitlabToken` | string | `""` | GitLab API access token |
+| `gitlabComponentHelper.gitlabToken` | string | `""` | ⚠️ **Deprecated** — stores tokens in plain text. Use the **GitLab CI: Add Component Project/Group** command instead, which encrypts via SecretStorage. |
 | `gitlabComponentHelper.gitlabComponentsFilePath` | string | `components.json` | Path to components JSON file in GitLab repository |
 | `gitlabComponentHelper.componentsUrl` | string | `""` | URL to a JSON file containing component definitions |
 | `gitlabComponentHelper.cacheTime` | number | `3600` | Cache time for components in seconds |
-| `gitlabComponentHelper.logLevel` | string | `INFO` | Logging level for component service. One of: `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `gitlabComponentHelper.logLevel` | string | `ERROR` | Logging level for component service. One of: `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `gitlabComponentHelper.autoShowOutput` | boolean | `false` | Automatically show output channel when log level changes |
 | `gitlabComponentHelper.httpTimeout` | number | `10000` | HTTP request timeout in milliseconds |
 | `gitlabComponentHelper.retryAttempts` | number | `3` | Number of retry attempts for failed HTTP requests |
 | `gitlabComponentHelper.batchSize` | number | `5` | Number of components to process in parallel batches |
-| `gitlabComponentHelper.componentSources` | array | See below | GitLab repositories containing reusable CI/CD components |
+| `gitlabComponentHelper.componentSources` | array | See below | GitLab repositories containing reusable CI/CD components. Each item supports an optional `discovery` block to override the global discovery defaults for that source. |
+| `gitlabComponentHelper.discovery.templateRoots` | array | `["templates"]` | Repository directories scanned for components. Up to 5 entries. |
+| `gitlabComponentHelper.discovery.maxDepth` | number | `1` | Subdirectory depth to recurse under each root. Range `0`–`3`. |
+| `gitlabComponentHelper.discovery.filePatterns` | array | `["*.yml", "*.yaml"]` | Filename globs identifying component template files. Filename only — no path globs. |
+| `gitlabComponentHelper.discovery.templateFileNames` | array | `["template.yml", "template.yaml"]` | Filenames recognised inside per-component subfolders (e.g. `templates/foo/template.yml`). |
 
 ### Example `componentSources` value:
 ```json
