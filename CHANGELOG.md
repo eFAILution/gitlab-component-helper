@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+# [0.10.0](https://github.com/eFAILution/gitlab-component-helper/compare/0.8.8...0.10.0) (2026-05-07)
+
+
+### Bug Fixes
+
+* **componentBrowserProvider:** escape HTML characters in version dropdown and error messages ([dac2e5c](https://github.com/eFAILution/gitlab-component-helper/commit/dac2e5cad4651e2921f92055cee31e65dc0be082))
+* **component:** resolve inputs for project-style complex components ([8bae7d1](https://github.com/eFAILution/gitlab-component-helper/commit/8bae7d13a550c8341da0b131479d8d454be7d0a7))
+* **deps:** pin @types/vscode to match engines.vscode ([17e756a](https://github.com/eFAILution/gitlab-component-helper/commit/17e756a0333d1ff94de9f742fc1ed0e1eb1ff67b))
+* **package:** replace em-dash in markdownDescription with hyphen ([b36cf82](https://github.com/eFAILution/gitlab-component-helper/commit/b36cf824ba6118e07cc3728c10cc1def6c11fb4f))
+* **security:** deprecate plain-text gitlabToken setting and prefer SecretStorage ([093f725](https://github.com/eFAILution/gitlab-component-helper/commit/093f725bff8bc37ac677182ffaa65bc5f60ff6e5))
+
+
+### Features
+
+* **componentService:** enhance component processing to include YAML fragments with reusable anchors ([739f9bb](https://github.com/eFAILution/gitlab-component-helper/commit/739f9bb0ddb12ae8f354f3ca489417b86913e107))
+* **discovery:** add configurable template discovery schema and helpers ([8fd7856](https://github.com/eFAILution/gitlab-component-helper/commit/8fd7856eb9a28cc80a182382451495477dd9e1a3))
+
 ## [0.8.8](https://github.com/eFAILution/gitlab-component-helper/compare/0.8.7...0.8.8) (2026-04-29)
 
 ## [0.8.7](https://github.com/eFAILution/gitlab-component-helper/compare/0.8.6...0.8.7) (2026-04-29)
