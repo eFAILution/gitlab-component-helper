@@ -1,109 +1,97 @@
-# .ai/context.yaml - Project Overview
-version: "1.0"
-schema: "https://aicac.dev/schema/v1"
-
+version: '2.0'
+schema: https://aicac.dev/schema/v1
 project:
-  name: "gitlab-component-helper"
-  type: "vscode-extension"
-  language: "typescript"
-  node_version: ">=22.0.0"
-  vscode_version: ">=1.102.0"
-  description: "VS Code extension providing intellisense for GitLab CI components"
-  purpose: "Smart autocomplete, hover docs, and component browsing for GitLab CI/CD"
-
+  name: gitlab-component-helper
+  type: vscode-extension
+  language: typescript
+  node_version: '>=22.0.0'
+  vscode_version: '>=1.102.0'
+  description: VS Code extension providing intellisense for GitLab CI components
+  purpose: Smart autocomplete, hover docs, and component browsing for GitLab CI/CD
 repository:
-  url: "https://github.com/eFAILution/gitlab-component-helper"
-  default_branch: "main"
-
+  url: https://github.com/eFAILution/gitlab-component-helper
+  default_branch: main
 entrypoints:
-  extension: "src/extension.ts"
-  main_output: "out/extension.js"
-
+  extension: src/extension.ts
+  main_output: out/extension.js
 structure:
-  source: "src/"
-  compiled: "out/"
-  tests: "tests/"
-  providers: "src/providers/"
-  services: "src/services/"
-  cache: "src/services/cache/"
-  component: "src/services/component/"
-  parsers: "src/parsers/"
-  templates: "src/templates/"
-  constants: "src/constants/"
-  errors: "src/errors/"
-  types: "src/types/"
-  utils: "src/utils/"
-  scripts: "scripts/"
-
+  source: src/
+  compiled: out/
+  tests: tests/
+  providers: src/providers/
+  services: src/services/
+  cache: src/services/cache/
+  component: src/services/component/
+  parsers: src/parsers/
+  templates: src/templates/
+  constants: src/constants/
+  errors: src/errors/
+  types: src/types/
+  utils: src/utils/
+  scripts: scripts/
 context_modules:
-  architecture: "architecture.yaml"
-  workflows: "workflows.yaml"
-  decisions: "decisions.yaml"
-  errors: "errors.yaml"
-
+  architecture: architecture.yaml
+  workflows: workflows.yaml
+  decisions: decisions.yaml
+  errors: errors.yaml
 dependencies:
   runtime:
-    - vscode: "VS Code Extension API"
-    - js-yaml: "YAML parsing"
+  - vscode: VS Code Extension API
+  - js-yaml: YAML parsing
   dev:
-    - typescript: "Type-safe development"
-    - esbuild: "Fast bundling"
-    - mocha: "Testing framework"
-    - husky: "Git hooks"
-    - semantic-release: "Automated releases"
-
+  - typescript: Type-safe development
+  - esbuild: Fast bundling
+  - mocha: Testing framework
+  - husky: Git hooks
+  - semantic-release: Automated releases
 common_tasks:
-  compile: "npm run compile"
-  watch: "npm run watch"
-  test: "npm test"
-  test_unit: "npm run test:unit"
-  test_integration: "npm run test:integration"
-  package: "npm run package"
-
+  compile: npm run compile
+  watch: npm run watch
+  test: npm test
+  test_unit: npm run test:unit
+  test_integration: npm run test:integration
+  package: npm run package
 build_system:
-  bundler: "esbuild"
-  config: "esbuild.js"
-  output_format: "commonjs"
-  target: "ES2020"
-
+  bundler: esbuild
+  config: esbuild.js
+  output_format: commonjs
+  target: ES2020
 testing:
-  framework: "mocha"
-  runner: "tests/run-tests.js"
+  framework: mocha
+  runner: tests/run-tests.js
   types:
-    - unit: "tests/unit/"
-    - integration: "tests/integration/"
-    - extension_host: "tests/extension-host/ (real VS Code via @vscode/test-electron, compiled via tsconfig.test.json)"
+  - unit: tests/unit/
+  - integration: tests/integration/
+  - extension_host: tests/extension-host/ (real VS Code via @vscode/test-electron,
+      compiled via tsconfig.test.json)
   scripts:
-    test: "node tests/run-tests.js"
-    test_unit: "node tests/run-tests.js unit"
-    test_integration: "node tests/run-tests.js integration"
-    test_extension_host: "node out-test/runTest.js (after npm run pretest:extension-host)"
-    test_all: "node tests/run-tests.js && npm run test:extension-host"
-
+    test: node tests/run-tests.js
+    test_unit: node tests/run-tests.js unit
+    test_integration: node tests/run-tests.js integration
+    test_extension_host: node out-test/runTest.js (after npm run pretest:extension-host)
+    test_all: node tests/run-tests.js && npm run test:extension-host
 release:
-  automation: "release-it"
+  automation: release-it
   configs:
-    main: ".release-it.json (requireBranch: main, requireEvenMinor)"
-    beta: ".release-it.beta.json (requireBranch: beta, requireOddMinor, prerelease)"
-  commit_convention: "conventional-commits"
-  versioning: "even-minor on main (e.g. 1.0.x), odd-minor on beta (e.g. 0.9.x)"
+    main: '.release-it.json (requireBranch: main, requireEvenMinor)'
+    beta: '.release-it.beta.json (requireBranch: beta, requireOddMinor, prerelease)'
+  commit_convention: conventional-commits
+  versioning: even-minor on main (e.g. 1.0.x), odd-minor on beta (e.g. 0.9.x)
   scripts:
-    main: "npm run release:main"
-    beta: "npm run release:beta"
-    dry_run_main: "npm run release:main:dry"
-    dry_run_beta: "npm run release:beta:dry"
-
+    main: npm run release:main
+    beta: npm run release:beta
+    dry_run_main: npm run release:main:dry
+    dry_run_beta: npm run release:beta:dry
 constraints:
-  - "Must work on VS Code 1.102.0+"
-  - "Compatible with Node.js 22+"
-  - "Support both gitlab.com and self-hosted GitLab instances"
-  - "Component data cached for performance"
-  - "Support private GitLab repositories with token auth"
-
+- Must work on VS Code 1.102.0+
+- Compatible with Node.js 22+
+- Support both gitlab.com and self-hosted GitLab instances
+- Component data cached for performance
+- Support private GitLab repositories with token auth
 key_features:
-  - "Component browser with search and filter"
-  - "Smart autocomplete for component URLs and versions"
-  - "Hover documentation with parameter details"
-  - "Input validation with Quick Fix suggestions"
-  - "Multi-source support (multiple GitLab instances)"
-  - "Secure token storage via VS Code SecretStorage"
+- Component browser with search and filter
+- Smart autocomplete for component URLs and versions
+- Hover documentation with parameter details
+- Input validation with Quick Fix suggestions
+- Multi-source support (multiple GitLab instances)
+- Secure token storage via VS Code SecretStorage

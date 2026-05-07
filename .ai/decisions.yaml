@@ -1,366 +1,409 @@
-# .ai/decisions.yaml - Architectural Decision Records
 decisions:
-  use_esbuild:
-    date: "2024"
-    status: "accepted"
-    context: "Need fast bundling for TypeScript extension"
-    decision: "Use esbuild instead of webpack"
+  USE_ESBUILD:
+    date: '2024'
+    status: accepted
+    context: Need fast bundling for TypeScript extension
+    decision: Use esbuild instead of webpack
     rationale:
-      - "10-100x faster than webpack"
-      - "Simple configuration"
-      - "Good TypeScript support"
-      - "Smaller bundle size"
+    - 10-100x faster than webpack
+    - Simple configuration
+    - Good TypeScript support
+    - Smaller bundle size
     alternatives_considered:
-      - webpack: "Too slow, complex configuration"
-      - rollup: "Not optimized for Node.js"
+    - name: webpack
+      rejected_because: Too slow, complex configuration
+    - name: rollup
+      rejected_because: Not optimized for Node.js
     consequences:
       positive:
-        - "Fast compilation during development"
-        - "Quick CI/CD builds"
-        - "Smaller extension size"
+      - Fast compilation during development
+      - Quick CI/CD builds
+      - Smaller extension size
       negative:
-        - "Less ecosystem plugins than webpack"
+      - Less ecosystem plugins than webpack
     references:
-      - "esbuild.js"
-      - "package.json (build scripts)"
-
-  cache_components:
-    date: "2024"
-    status: "accepted"
-    context: "GitLab API calls are slow and rate-limited"
-    decision: "Implement component caching with TTL"
+    - esbuild.js
+    - package.json (build scripts)
+    title: Use Esbuild
+  CACHE_COMPONENTS:
+    date: '2024'
+    status: accepted
+    context: GitLab API calls are slow and rate-limited
+    decision: Implement component caching with TTL
     rationale:
-      - "Reduce API calls to GitLab"
-      - "Improve autocomplete performance"
-      - "Better user experience"
-      - "Respect rate limits"
+    - Reduce API calls to GitLab
+    - Improve autocomplete performance
+    - Better user experience
+    - Respect rate limits
     implementation:
-      pattern: "Cache-aside pattern"
-      ttl: "3600 seconds (configurable)"
-      storage: "In-memory cache in ComponentCacheManager"
+      pattern: Cache-aside pattern
+      ttl: 3600 seconds (configurable)
+      storage: In-memory cache in ComponentCacheManager
     alternatives_considered:
-      - no_cache: "Too slow, too many API calls"
-      - persistent_cache: "Unnecessary complexity, stale data issues"
+    - name: no_cache
+      rejected_because: Too slow, too many API calls
+    - name: persistent_cache
+      rejected_because: Unnecessary complexity, stale data issues
     consequences:
       positive:
-        - "Fast autocomplete"
-        - "Fewer API calls"
-        - "Better UX"
+      - Fast autocomplete
+      - Fewer API calls
+      - Better UX
       negative:
-        - "Slightly stale data (max 1 hour)"
-        - "Memory usage"
+      - Slightly stale data (max 1 hour)
+      - Memory usage
     references:
-      - "src/services/componentCacheManager.ts"
-      - "CACHE_MANAGEMENT.md"
-
-  use_secretstorage_for_tokens:
-    date: "2024"
-    status: "accepted"
-    context: "Need secure storage for GitLab access tokens"
-    decision: "Use VS Code SecretStorage API"
+    - src/services/componentCacheManager.ts
+    - CACHE_MANAGEMENT.md
+    title: Cache Components
+  USE_SECRETSTORAGE_FOR_TOKENS:
+    date: '2024'
+    status: accepted
+    context: Need secure storage for GitLab access tokens
+    decision: Use VS Code SecretStorage API
     rationale:
-      - "Secure, encrypted storage"
-      - "Built into VS Code"
-      - "Cross-platform"
-      - "No plain text files"
+    - Secure, encrypted storage
+    - Built into VS Code
+    - Cross-platform
+    - No plain text files
     alternatives_considered:
-      - settings_json: "Insecure, tokens visible in plain text"
-      - environment_variables: "Not portable, hard to manage"
-      - file_system: "Security risk"
+    - name: settings_json
+      rejected_because: Insecure, tokens visible in plain text
+    - name: environment_variables
+      rejected_because: Not portable, hard to manage
+    - name: file_system
+      rejected_because: Security risk
     consequences:
       positive:
-        - "Secure token storage"
-        - "Native VS Code integration"
-        - "Cross-platform compatibility"
+      - Secure token storage
+      - Native VS Code integration
+      - Cross-platform compatibility
       negative:
-        - "Tokens tied to VS Code installation"
+      - Tokens tied to VS Code installation
     references:
-      - "src/services/componentService.ts (setSecretStorage)"
-      - "README.md (security section)"
-
-  release_it:
-    date: "2026"
-    status: "accepted"
-    supersedes: "semantic_release (.releaserc.json removed)"
-    context: "Need separate release flows for beta vs main with different version constraints and packaging steps"
-    decision: "Use release-it with two configs: .release-it.json (main) and .release-it.beta.json (beta)"
+    - src/services/componentService.ts (setSecretStorage)
+    - README.md (security section)
+    title: Use Secretstorage For Tokens
+  RELEASE_IT:
+    date: '2026'
+    status: accepted
+    supersedes: semantic_release (.releaserc.json removed)
+    context: Need separate release flows for beta vs main with different version constraints
+      and packaging steps
+    decision: 'Use release-it with two configs: .release-it.json (main) and .release-it.beta.json
+      (beta)'
     rationale:
-      - "Per-branch config: requireBranch enforces correct branch"
-      - "Per-branch versioning: requireEvenMinor on main, requireOddMinor on beta"
-      - "Beta builds packaged with --pre-release flag for marketplace"
-      - "Custom plugins (./.release-it/vscode-version.js) enforce VS Code engine version sync"
+    - 'Per-branch config: requireBranch enforces correct branch'
+    - 'Per-branch versioning: requireEvenMinor on main, requireOddMinor on beta'
+    - Beta builds packaged with --pre-release flag for marketplace
+    - Custom plugins (./.release-it/vscode-version.js) enforce VS Code engine version
+      sync
     implementation:
-      main_config: ".release-it.json (requireBranch: main, requireEvenMinor: true, GitHub release with .vsix asset)"
-      beta_config: ".release-it.beta.json (requireBranch: beta, requireOddMinor: true, vsce package --pre-release, no GitHub release, no tag)"
-      commit_format: "conventional-commits"
-      hooks: "after:bump runs vsce package"
+      main_config: '.release-it.json (requireBranch: main, requireEvenMinor: true,
+        GitHub release with .vsix asset)'
+      beta_config: '.release-it.beta.json (requireBranch: beta, requireOddMinor: true,
+        vsce package --pre-release, no GitHub release, no tag)'
+      commit_format: conventional-commits
+      hooks: after:bump runs vsce package
     alternatives_considered:
-      - semantic_release: "Single-flow only; no native multi-config support; harder to gate beta vs stable"
-      - manual_releases: "Error-prone, time-consuming"
+    - name: semantic_release
+      rejected_because: Single-flow only; no native multi-config support; harder to
+        gate beta vs stable
+    - name: manual_releases
+      rejected_because: Error-prone, time-consuming
     consequences:
       positive:
-        - "Clean beta/main separation"
-        - "Marketplace pre-release flag handled automatically"
-        - "Version-policy violations caught at release time"
+      - Clean beta/main separation
+      - Marketplace pre-release flag handled automatically
+      - Version-policy violations caught at release time
       negative:
-        - "Two configs to maintain"
-        - "Requires running correct npm script per branch"
+      - Two configs to maintain
+      - Requires running correct npm script per branch
     references:
-      - ".release-it.json"
-      - ".release-it.beta.json"
-      - ".release-it/vscode-version.js"
-      - "package.json (release:main, release:beta scripts)"
-
-  modular_service_split:
-    date: "2026"
-    status: "accepted"
-    context: "componentService.ts (1149 lines) and componentCacheManager.ts (806 lines) became unmaintainable monoliths"
-    decision: "Split into orchestrator + specialized services: src/services/component/ and src/services/cache/"
+    - .release-it.json
+    - .release-it.beta.json
+    - .release-it/vscode-version.js
+    - package.json (release:main, release:beta scripts)
+    title: Release It
+  MODULAR_SERVICE_SPLIT:
+    date: '2026'
+    status: accepted
+    context: componentService.ts (1149 lines) and componentCacheManager.ts (806 lines)
+      became unmaintainable monoliths
+    decision: 'Split into orchestrator + specialized services: src/services/component/
+      and src/services/cache/'
     rationale:
-      - "Single responsibility per file"
-      - "Easier review and test isolation"
-      - "Enforce <400 line file budget"
+    - Single responsibility per file
+    - Easier review and test isolation
+    - Enforce <400 line file budget
     implementation:
       component:
-        orchestrator: "componentService.ts"
-        delegates_to: ["componentFetcher", "versionManager", "tokenManager", "urlParser", "discoveryConfig", "commands"]
+        orchestrator: componentService.ts
+        delegates_to:
+        - componentFetcher
+        - versionManager
+        - tokenManager
+        - urlParser
+        - discoveryConfig
+        - commands
       cache:
-        orchestrator: "componentCacheManager.ts"
-        delegates_to: ["unifiedCache", "projectCache", "versionCache", "groupCache"]
+        orchestrator: componentCacheManager.ts
+        delegates_to:
+        - unifiedCache
+        - projectCache
+        - versionCache
+        - groupCache
     consequences:
       positive:
-        - "Average file <300 lines"
-        - "Specialized services unit-testable in isolation"
-        - "Clear dependency graph"
+      - Average file <300 lines
+      - Specialized services unit-testable in isolation
+      - Clear dependency graph
       negative:
-        - "More files to navigate"
-        - "Slight indirection through orchestrator"
+      - More files to navigate
+      - Slight indirection through orchestrator
     references:
-      - "src/services/component/index.ts"
-      - "src/services/cache/index.ts"
-
-  centralized_error_handling:
-    date: "2026"
-    status: "accepted"
-    context: "Errors were ad-hoc strings or untyped throws; user-facing messages inconsistent; no notion of recoverability"
-    decision: "Introduce GitLabComponentError hierarchy in src/errors/ with typed subclasses, ErrorCode enum, recoverable flag, and centralized handler"
+    - src/services/component/index.ts
+    - src/services/cache/index.ts
+    title: Modular Service Split
+  CENTRALIZED_ERROR_HANDLING:
+    date: '2026'
+    status: accepted
+    context: Errors were ad-hoc strings or untyped throws; user-facing messages inconsistent;
+      no notion of recoverability
+    decision: Introduce GitLabComponentError hierarchy in src/errors/ with typed subclasses,
+      ErrorCode enum, recoverable flag, and centralized handler
     rationale:
-      - "Every error carries code + userMessage + recoverable + cause chain"
-      - "Handler decides logging level and notification surface"
-      - "Subclasses (NetworkError, ConfigError, ParseError) make catch blocks precise"
+    - Every error carries code + userMessage + recoverable + cause chain
+    - Handler decides logging level and notification surface
+    - Subclasses (NetworkError, ConfigError, ParseError) make catch blocks precise
     implementation:
-      base: "src/errors/types.ts (GitLabComponentError extends Error)"
-      handler: "src/errors/handler.ts (logs, notifies, optionally retries)"
-      subclasses: "NetworkError, ConfigError, ParseError"
+      base: src/errors/types.ts (GitLabComponentError extends Error)
+      handler: src/errors/handler.ts (logs, notifies, optionally retries)
+      subclasses: NetworkError, ConfigError, ParseError
     alternatives_considered:
-      - string_errors: "No type info; users see stack traces"
-      - per_module_errors: "Inconsistent UX across modules"
+    - name: string_errors
+      rejected_because: No type info; users see stack traces
+    - name: per_module_errors
+      rejected_because: Inconsistent UX across modules
     consequences:
       positive:
-        - "Consistent user-facing error messages"
-        - "Type-safe catch blocks"
-        - "Recoverable operations can auto-retry"
+      - Consistent user-facing error messages
+      - Type-safe catch blocks
+      - Recoverable operations can auto-retry
       negative:
-        - "Boilerplate when wrapping low-level errors"
+      - Boilerplate when wrapping low-level errors
     references:
-      - "src/errors/types.ts"
-      - "src/errors/handler.ts"
-
-  request_deduplication:
-    date: "2026"
-    status: "accepted"
-    context: "Concurrent UI events (browser open + autocomplete + hover) issued duplicate HTTP requests for the same component, wasting bandwidth and hitting rate limits"
-    decision: "Wrap fetches in RequestDeduplicator: identical concurrent requests share a single in-flight promise"
+    - src/errors/types.ts
+    - src/errors/handler.ts
+    title: Centralized Error Handling
+  REQUEST_DEDUPLICATION:
+    date: '2026'
+    status: accepted
+    context: Concurrent UI events (browser open + autocomplete + hover) issued duplicate
+      HTTP requests for the same component, wasting bandwidth and hitting rate limits
+    decision: 'Wrap fetches in RequestDeduplicator: identical concurrent requests
+      share a single in-flight promise'
     rationale:
-      - "Eliminates duplicate HTTP traffic without changing call sites"
-      - "Reduces rate-limit pressure"
-      - "Composable with existing cache layer"
+    - Eliminates duplicate HTTP traffic without changing call sites
+    - Reduces rate-limit pressure
+    - Composable with existing cache layer
     implementation:
-      location: "src/utils/requestDeduplicator.ts"
-      key: "request URL + method"
-      cleanup: "promise removed from map on settle"
+      location: src/utils/requestDeduplicator.ts
+      key: request URL + method
+      cleanup: promise removed from map on settle
     consequences:
       positive:
-        - "~40% network reduction during heavy browsing"
-        - "Faster perceived load on cold cache"
+      - ~40% network reduction during heavy browsing
+      - Faster perceived load on cold cache
       negative:
-        - "Promise sharing means all callers see same error"
+      - Promise sharing means all callers see same error
     references:
-      - "src/utils/requestDeduplicator.ts"
-
-  performance_monitoring:
-    date: "2026"
-    status: "accepted"
-    context: "Hard to detect regressions or slow operations in production"
-    decision: "PerformanceMonitor singleton tracks operation timings, warns when any operation exceeds 1000ms threshold"
+    - src/utils/requestDeduplicator.ts
+    title: Request Deduplication
+  PERFORMANCE_MONITORING:
+    date: '2026'
+    status: accepted
+    context: Hard to detect regressions or slow operations in production
+    decision: PerformanceMonitor singleton tracks operation timings, warns when any
+      operation exceeds 1000ms threshold
     rationale:
-      - "Self-contained, opt-in via wrap()"
-      - "Stats: count, avg, min, max, median, p95, p99"
-      - "Bounded memory: keeps last 1000 metrics per operation"
+    - Self-contained, opt-in via wrap()
+    - 'Stats: count, avg, min, max, median, p95, p99'
+    - 'Bounded memory: keeps last 1000 metrics per operation'
     implementation:
-      location: "src/utils/performanceMonitor.ts"
+      location: src/utils/performanceMonitor.ts
       threshold_ms: 1000
-      tracked_today: "fetchComponentMetadata, fetchCatalogData, cache refresh ops"
+      tracked_today: fetchComponentMetadata, fetchCatalogData, cache refresh ops
     consequences:
       positive:
-        - "Visibility into slow ops via output channel"
-        - "Foundation for future telemetry"
+      - Visibility into slow ops via output channel
+      - Foundation for future telemetry
       negative:
-        - "Slight overhead on every wrapped call"
+      - Slight overhead on every wrapped call
     references:
-      - "src/utils/performanceMonitor.ts"
-
-  file_size_policy:
-    date: "2026"
-    status: "accepted"
-    context: "Multiple files reached 800-1100 lines and became review/maintenance bottlenecks"
-    decision: "Soft cap of ~400 lines per source file; over-budget files trigger a refactor split"
+    - src/utils/performanceMonitor.ts
+    title: Performance Monitoring
+  FILE_SIZE_POLICY:
+    date: '2026'
+    status: accepted
+    context: Multiple files reached 800-1100 lines and became review/maintenance bottlenecks
+    decision: Soft cap of ~400 lines per source file; over-budget files trigger a
+      refactor split
     rationale:
-      - "Forces single-responsibility modules"
-      - "Improves diff reviewability"
-      - "Lowers the cost of grokking unfamiliar files"
+    - Forces single-responsibility modules
+    - Improves diff reviewability
+    - Lowers the cost of grokking unfamiliar files
     implementation:
-      enforcement: "Code review (no automated check)"
-      examples_of_splits: "componentService 1149→8 files, componentCacheManager 806→5 files"
+      enforcement: Code review (no automated check)
+      examples_of_splits: "componentService 1149\u21928 files, componentCacheManager\
+        \ 806\u21925 files"
     consequences:
       positive:
-        - "Smaller files; clearer boundaries"
+      - Smaller files; clearer boundaries
       negative:
-        - "Sometimes splits too eagerly across natural cohesion"
+      - Sometimes splits too eagerly across natural cohesion
     references:
-      - "src/services/component/"
-      - "src/services/cache/"
-
-  extension_host_test_layer:
-    date: "2026"
-    status: "accepted"
-    context: "Mocha-only tests could not exercise real VS Code APIs (commands, hover, activation); regressions slipped through"
-    decision: "Add tests/extension-host/ layer using @vscode/test-electron, compiled via tsconfig.test.json into out-test/"
+    - src/services/component/
+    - src/services/cache/
+    title: File Size Policy
+  EXTENSION_HOST_TEST_LAYER:
+    date: '2026'
+    status: accepted
+    context: Mocha-only tests could not exercise real VS Code APIs (commands, hover,
+      activation); regressions slipped through
+    decision: Add tests/extension-host/ layer using @vscode/test-electron, compiled
+      via tsconfig.test.json into out-test/
     rationale:
-      - "Activation, hover, command registration verified end-to-end"
-      - "Catches regressions invisible to unit/integration tests"
+    - Activation, hover, command registration verified end-to-end
+    - Catches regressions invisible to unit/integration tests
     implementation:
-      runner: "out-test/runTest.js (compiled from tests/extension-host/runTest.ts)"
-      suites: "tests/extension-host/suite/{activation,hoverProvider}.test.ts"
-      pretest: "npm run pretest:extension-host (compile + tsc test config)"
+      runner: out-test/runTest.js (compiled from tests/extension-host/runTest.ts)
+      suites: tests/extension-host/suite/{activation,hoverProvider}.test.ts
+      pretest: npm run pretest:extension-host (compile + tsc test config)
     consequences:
       positive:
-        - "True extension-host regression coverage"
-        - "Confidence merging refactors"
+      - True extension-host regression coverage
+      - Confidence merging refactors
       negative:
-        - "Slower than unit/integration tests"
-        - "Requires real VS Code download in CI"
+      - Slower than unit/integration tests
+      - Requires real VS Code download in CI
     references:
-      - "tests/extension-host/"
-      - "tsconfig.test.json"
-
-  multi_source_support:
-    date: "2024"
-    status: "accepted"
-    context: "Users have components in multiple GitLab instances"
-    decision: "Support multiple component sources with per-instance tokens"
+    - tests/extension-host/
+    - tsconfig.test.json
+    title: Extension Host Test Layer
+  MULTI_SOURCE_SUPPORT:
+    date: '2024'
+    status: accepted
+    context: Users have components in multiple GitLab instances
+    decision: Support multiple component sources with per-instance tokens
     rationale:
-      - "Users need public gitlab.com components"
-      - "Users need private self-hosted GitLab components"
-      - "Different instances require different tokens"
+    - Users need public gitlab.com components
+    - Users need private self-hosted GitLab components
+    - Different instances require different tokens
     implementation:
-      config: "gitlabComponentHelper.componentSources[]"
-      auth: "Per-instance token in SecretStorage"
+      config: gitlabComponentHelper.componentSources[]
+      auth: Per-instance token in SecretStorage
     alternatives_considered:
-      - single_source: "Too limiting for enterprise users"
-      - no_auth: "Can't access private components"
+    - name: single_source
+      rejected_because: Too limiting for enterprise users
+    - name: no_auth
+      rejected_because: Can't access private components
     consequences:
       positive:
-        - "Flexible for any GitLab setup"
-        - "Supports hybrid (public + private)"
+      - Flexible for any GitLab setup
+      - Supports hybrid (public + private)
       negative:
-        - "More complex configuration"
-        - "Token management per instance"
+      - More complex configuration
+      - Token management per instance
     references:
-      - "package.json (componentSources config)"
-      - "README.md (configuration section)"
-
-  typescript_strict_mode:
-    date: "2024"
-    status: "accepted"
-    context: "Need type safety and catch errors early"
-    decision: "Enable TypeScript strict mode"
+    - package.json (componentSources config)
+    - README.md (configuration section)
+    title: Multi Source Support
+  TYPESCRIPT_STRICT_MODE:
+    date: '2024'
+    status: accepted
+    context: Need type safety and catch errors early
+    decision: Enable TypeScript strict mode
     rationale:
-      - "Catch type errors at compile time"
-      - "Better IDE support"
-      - "Safer refactoring"
-      - "Self-documenting code"
+    - Catch type errors at compile time
+    - Better IDE support
+    - Safer refactoring
+    - Self-documenting code
     implementation:
-      config: "tsconfig.json (strict: true)"
-      target: "ES2020"
+      config: 'tsconfig.json (strict: true)'
+      target: ES2020
     consequences:
       positive:
-        - "Type safety"
-        - "Fewer runtime errors"
-        - "Better documentation"
+      - Type safety
+      - Fewer runtime errors
+      - Better documentation
       negative:
-        - "More boilerplate type annotations"
+      - More boilerplate type annotations
     references:
-      - "tsconfig.json"
-
-  batch_api_requests:
-    date: "2024"
-    status: "accepted"
-    context: "Loading many components causes API rate limiting"
-    decision: "Batch API requests with configurable concurrency"
+    - tsconfig.json
+    title: Typescript Strict Mode
+  BATCH_API_REQUESTS:
+    date: '2024'
+    status: accepted
+    context: Loading many components causes API rate limiting
+    decision: Batch API requests with configurable concurrency
     rationale:
-      - "Respect GitLab rate limits"
-      - "Faster initial load with parallelism"
-      - "Configurable batch size"
+    - Respect GitLab rate limits
+    - Faster initial load with parallelism
+    - Configurable batch size
     implementation:
       default_batch_size: 5
-      config: "gitlabComponentHelper.batchSize"
+      config: gitlabComponentHelper.batchSize
     alternatives_considered:
-      - sequential_requests: "Too slow"
-      - unlimited_parallel: "Hits rate limits"
+    - name: sequential_requests
+      rejected_because: Too slow
+    - name: unlimited_parallel
+      rejected_because: Hits rate limits
     consequences:
       positive:
-        - "Fast component loading"
-        - "Respects rate limits"
+      - Fast component loading
+      - Respects rate limits
       negative:
-        - "More complex implementation"
+      - More complex implementation
     references:
-      - "src/services/componentService.ts"
-      - "PERFORMANCE_OPTIMIZATIONS.md"
-
-  mocha_over_jest:
-    date: "2024"
-    status: "accepted"
-    context: "Need testing framework for VS Code extension"
-    decision: "Use Mocha with @vscode/test-electron"
+    - src/services/componentService.ts
+    - PERFORMANCE_OPTIMIZATIONS.md
+    title: Batch Api Requests
+  MOCHA_OVER_JEST:
+    date: '2024'
+    status: accepted
+    context: Need testing framework for VS Code extension
+    decision: Use Mocha with @vscode/test-electron
     rationale:
-      - "Official VS Code testing recommendation"
-      - "Better VS Code API integration"
-      - "Simpler setup for extensions"
+    - Official VS Code testing recommendation
+    - Better VS Code API integration
+    - Simpler setup for extensions
     alternatives_considered:
-      - jest: "Poor VS Code extension support"
-      - vitest: "Not designed for VS Code extensions"
+    - name: jest
+      rejected_because: Poor VS Code extension support
+    - name: vitest
+      rejected_because: Not designed for VS Code extensions
     consequences:
       positive:
-        - "Works well with VS Code APIs"
-        - "Good documentation"
+      - Works well with VS Code APIs
+      - Good documentation
       negative:
-        - "Less modern than Jest/Vitest"
+      - Less modern than Jest/Vitest
     references:
-      - "tests/run-tests.js"
-      - "package.json (test scripts)"
-
+    - tests/run-tests.js
+    - package.json (test scripts)
+    title: Mocha Over Jest
 future_decisions:
-  - question: "Should we support other CI/CD platforms (GitHub Actions, CircleCI)?"
-    status: "under_consideration"
-    considerations:
-      - "User demand"
-      - "Maintainability"
-      - "Scope creep"
-
-  - question: "Add telemetry for usage analytics?"
-    status: "deferred"
-    considerations:
-      - "Privacy concerns"
-      - "User consent"
-      - "Value vs complexity"
+- question: Should we support other CI/CD platforms (GitHub Actions, CircleCI)?
+  status: under_consideration
+  considerations:
+  - User demand
+  - Maintainability
+  - Scope creep
+- question: Add telemetry for usage analytics?
+  status: deferred
+  considerations:
+  - Privacy concerns
+  - User consent
+  - Value vs complexity
+version: '2.0'
