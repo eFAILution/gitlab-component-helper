@@ -2,7 +2,7 @@
   "name": "gitlab-component-helper",
   "displayName": "GitLab Component Helper",
   "description": "Provides intellisense for GitLab CI components",
-  "version": "0.9.9",
+  "version": "0.9.10",
   "icon": "images/icon.png",
   "engines": {
     "node": ">=22.0.0",
@@ -73,7 +73,7 @@
           "default": "",
           "description": "GitLab API access token (DEPRECATED - stored in plain text). Use the 'GitLab CI: Add Component Project/Group' command instead, which stores tokens encrypted via VS Code SecretStorage.",
           "deprecationMessage": "Tokens stored here live in plain text in settings.json. Run the 'GitLab CI: Add Component Project/Group' command to migrate to encrypted SecretStorage, then clear this field.",
-          "markdownDescription": "**Deprecated:** Tokens stored here live in plain text in `settings.json`. Run the **GitLab CI: Add Component Project/Group** command instead \u2014 it stores tokens encrypted via VS Code SecretStorage. Once migrated, clear this field."
+          "markdownDescription": "**Deprecated:** Tokens stored here live in plain text in `settings.json`. Run the **GitLab CI: Add Component Project/Group** command instead — it stores tokens encrypted via VS Code SecretStorage. Once migrated, clear this field."
         },
         "gitlabComponentHelper.gitlabComponentsFilePath": {
           "type": "string",
