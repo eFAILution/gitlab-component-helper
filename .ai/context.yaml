@@ -25,6 +25,12 @@ structure:
   tests: "tests/"
   providers: "src/providers/"
   services: "src/services/"
+  cache: "src/services/cache/"
+  component: "src/services/component/"
+  parsers: "src/parsers/"
+  templates: "src/templates/"
+  constants: "src/constants/"
+  errors: "src/errors/"
   types: "src/types/"
   utils: "src/utils/"
   scripts: "scripts/"
@@ -66,13 +72,26 @@ testing:
   types:
     - unit: "tests/unit/"
     - integration: "tests/integration/"
-    - performance: "tests/performance.test.js"
+    - extension_host: "tests/extension-host/ (real VS Code via @vscode/test-electron, compiled via tsconfig.test.json)"
+  scripts:
+    test: "node tests/run-tests.js"
+    test_unit: "node tests/run-tests.js unit"
+    test_integration: "node tests/run-tests.js integration"
+    test_extension_host: "node out-test/runTest.js (after npm run pretest:extension-host)"
+    test_all: "node tests/run-tests.js && npm run test:extension-host"
 
 release:
-  automation: "semantic-release"
-  config: ".releaserc.json"
+  automation: "release-it"
+  configs:
+    main: ".release-it.json (requireBranch: main, requireEvenMinor)"
+    beta: ".release-it.beta.json (requireBranch: beta, requireOddMinor, prerelease)"
   commit_convention: "conventional-commits"
-  versioning: "automatic"
+  versioning: "even-minor on main (e.g. 1.0.x), odd-minor on beta (e.g. 0.9.x)"
+  scripts:
+    main: "npm run release:main"
+    beta: "npm run release:beta"
+    dry_run_main: "npm run release:main:dry"
+    dry_run_beta: "npm run release:beta:dry"
 
 constraints:
   - "Must work on VS Code 1.102.0+"
