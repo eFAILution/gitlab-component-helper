@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.2](https://github.com/eFAILution/gitlab-component-helper/compare/0.10.1...0.10.2) (2026-05-07)
+
+
+### Bug Fixes
+
+* **ai:** satisfy AICaC v2 schema and remove stale references ([0910a4a](https://github.com/eFAILution/gitlab-component-helper/commit/0910a4a8246f4fb5dd43efe538dfe5d7cdf97a89))
+
 ## [0.10.1](https://github.com/eFAILution/gitlab-component-helper/compare/0.10.0...0.10.1) (2026-05-07)
 
 # [0.10.0](https://github.com/eFAILution/gitlab-component-helper/compare/0.8.8...0.10.0) (2026-05-07)
