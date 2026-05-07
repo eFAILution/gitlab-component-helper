@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 /**
- * Simple test runner for GitLab Component Helper extension
- * Runs unit tests and reports results
+ * Test runner for GitLab Component Helper extension.
+ *
+ * Runs every *.test.js file under tests/unit and tests/integration in a
+ * child process and fails on any of:
+ *   - non-zero exit code
+ *   - unhandled exceptions / promise rejections surfaced on stderr
+ *   - "Cannot find module" require failures
+ *   - a visible "❌ FAIL" or "FAIL:" marker emitted by the test itself
+ *
+ * Scope: these are characterization (inline-logic) tests. Real provider
+ * coverage lives in tests/extension-host — see tests/README.md.
  */
 /* eslint-env node */
 
@@ -9,125 +18,123 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
-// Colors for console output
 const colors = {
   red: '\x1b[31m',
   green: '\x1b[32m',
   yellow: '\x1b[33m',
   blue: '\x1b[34m',
-  magenta: '\x1b[35m',
   cyan: '\x1b[36m',
-  white: '\x1b[37m',
-  reset: '\x1b[0m'
+  reset: '\x1b[0m',
 };
 
-console.log(`${colors.cyan}=== GitLab Component Helper Tests ===${colors.reset}\n`);
-
-// Check for test type filter from command line arguments
-// eslint-disable-next-line no-undef
-const testTypeFilter = process.argv[2]; // e.g., 'unit', 'integration', 'performance'
-
-// Find all test files in different directories
-const testDirectories = [
-  // eslint-disable-next-line no-undef
-  { path: path.join(__dirname, 'unit'), type: 'unit' },
-  // eslint-disable-next-line no-undef
-  { path: path.join(__dirname, 'integration'), type: 'integration' },
-  // eslint-disable-next-line no-undef
-  { path: __dirname, type: 'performance' } // Root tests directory for files like performance.test.js
+// Patterns that indicate a test silently swallowed a real failure. Kept tight
+// so "expected negative" markers (e.g. "❌ No description found" in a test
+// verifying that the parser ignores the wrong case) don't trip a false fail.
+const FAIL_PATTERNS = [
+  /Cannot find module/i,
+  /UnhandledPromiseRejectionWarning/i,
+  /Unhandled (?:promise )?rejection:/i,
+  /^\s*❌\s+(?:FAIL|ERROR)\b/m,
+  /^\s*FAIL:/m,
 ];
 
-let testFiles = [];
+const testTypeFilter = process.argv[2]; // 'unit' | 'integration' | undefined
+const testDirectories = [
+  { path: path.join(__dirname, 'unit'), type: 'unit' },
+  { path: path.join(__dirname, 'integration'), type: 'integration' },
+];
 
-testDirectories.forEach(testDir => {
-  if (fs.existsSync(testDir.path)) {
-    let files = fs.readdirSync(testDir.path)
-      .filter(file => file.endsWith('.test.js'))
-      .map(file => ({ path: path.join(testDir.path, file), type: testDir.type }));
+const testFiles = testDirectories
+  .flatMap((dir) => {
+    if (!fs.existsSync(dir.path)) return [];
+    return fs
+      .readdirSync(dir.path)
+      .filter((f) => f.endsWith('.test.js'))
+      .map((f) => ({ path: path.join(dir.path, f), type: dir.type }));
+  })
+  .filter((f) => !testTypeFilter || f.type === testTypeFilter)
+  .sort((a, b) => a.path.localeCompare(b.path));
 
-    // Filter by test type if specified
-    if (testTypeFilter) {
-      files = files.filter(file => file.type === testTypeFilter);
-    }
-
-    testFiles = testFiles.concat(files);
-  }
-});
-
-// Sort test files for consistent execution order
-testFiles.sort((a, b) => a.path.localeCompare(b.path));
-
-const typeMessage = testTypeFilter ? ` (${testTypeFilter} tests only)` : '';
-console.log(`${colors.blue}Found ${testFiles.length} test file(s)${typeMessage}:${colors.reset}`);
-testFiles.forEach(file => {
-  // eslint-disable-next-line no-undef
-  const relativePath = path.relative(__dirname, file.path);
-  console.log(`  - ${relativePath} (${file.type})`);
+console.log(`${colors.cyan}=== GitLab Component Helper Tests ===${colors.reset}\n`);
+const scope = testTypeFilter ? ` (${testTypeFilter} only)` : '';
+console.log(`${colors.blue}Found ${testFiles.length} test file(s)${scope}:${colors.reset}`);
+testFiles.forEach((f) => {
+  console.log(`  - ${path.relative(__dirname, f.path)} (${f.type})`);
 });
 console.log();
 
-let totalTests = 0;
-let passedTests = 0;
-let failedTests = 0;
+function runTest(testFile) {
+  const name = path.basename(testFile.path);
+  const captured = { stdout: '', stderr: '' };
 
-// Run each test file
-async function runTests() {
-  for (const testFileObj of testFiles) {
-    const testFile = testFileObj.path;
-    console.log(`${colors.yellow}Running ${path.basename(testFile)}...${colors.reset}`);
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [testFile.path], {
+      cwd: path.dirname(testFile.path),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
-    try {
-      await new Promise((resolve, reject) => {
-        const child = spawn(process.execPath, [testFile], {
-          stdio: 'inherit',
-          cwd: path.dirname(testFile)
+    child.stdout.on('data', (chunk) => {
+      process.stdout.write(chunk);
+      captured.stdout += chunk.toString();
+    });
+    child.stderr.on('data', (chunk) => {
+      process.stderr.write(chunk);
+      captured.stderr += chunk.toString();
+    });
+
+    child.on('error', (err) => {
+      resolve({ name, passed: false, reason: `spawn error: ${err.message}` });
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        resolve({ name, passed: false, reason: `exit code ${code}` });
+        return;
+      }
+      const combined = `${captured.stdout}\n${captured.stderr}`;
+      const matched = FAIL_PATTERNS.find((p) => p.test(combined));
+      if (matched) {
+        resolve({
+          name,
+          passed: false,
+          reason: `matched failure pattern ${matched} in output`,
         });
-
-        child.on('close', (code) => {
-          if (code === 0) {
-            console.log(`${colors.green}✅ ${path.basename(testFile)} completed${colors.reset}\n`);
-            resolve();
-          } else {
-            console.log(`${colors.red}❌ ${path.basename(testFile)} failed with code ${code}${colors.reset}\n`);
-            reject(new Error(`Test failed with code ${code}`));
-          }
-        });
-
-        child.on('error', (err) => {
-          console.error(`${colors.red}Error running ${path.basename(testFile)}: ${err.message}${colors.reset}\n`);
-          reject(err);
-        });
-      });
-
-      passedTests++;
-    } catch {
-      failedTests++;
-    }
-
-    totalTests++;
-  }
-
-  // Print summary
-  console.log(`${colors.cyan}=== Test Summary ===${colors.reset}`);
-  console.log(`Total test files: ${totalTests}`);
-  console.log(`${colors.green}Passed: ${passedTests}${colors.reset}`);
-  if (failedTests > 0) {
-    console.log(`${colors.red}Failed: ${failedTests}${colors.reset}`);
-  }
-
-  if (failedTests === 0) {
-    console.log(`\n${colors.green}🎉 All tests passed!${colors.reset}`);
-    // eslint-disable-next-line no-undef
-    process.exit(0);
-  } else {
-    console.log(`\n${colors.red}💥 Some tests failed!${colors.reset}`);
-    // eslint-disable-next-line no-undef
-    process.exit(1);
-  }
+        return;
+      }
+      resolve({ name, passed: true });
+    });
+  });
 }
 
-runTests().catch(err => {
-  console.error(`${colors.red}Test runner error: ${err.message}${colors.reset}`);
-  // eslint-disable-next-line no-undef
+(async () => {
+  const results = [];
+  for (const f of testFiles) {
+    console.log(`${colors.yellow}Running ${path.basename(f.path)}...${colors.reset}`);
+    const result = await runTest(f);
+    results.push(result);
+    if (result.passed) {
+      console.log(`${colors.green}✅ ${result.name}${colors.reset}\n`);
+    } else {
+      console.log(`${colors.red}❌ ${result.name} — ${result.reason}${colors.reset}\n`);
+    }
+  }
+
+  const passed = results.filter((r) => r.passed).length;
+  const failed = results.length - passed;
+
+  console.log(`${colors.cyan}=== Test Summary ===${colors.reset}`);
+  console.log(`Total: ${results.length}`);
+  console.log(`${colors.green}Passed: ${passed}${colors.reset}`);
+  if (failed > 0) {
+    console.log(`${colors.red}Failed: ${failed}${colors.reset}`);
+    results
+      .filter((r) => !r.passed)
+      .forEach((r) => console.log(`  - ${r.name}: ${r.reason}`));
+    process.exit(1);
+  }
+  console.log(`\n${colors.green}🎉 All tests passed!${colors.reset}`);
+  process.exit(0);
+})().catch((err) => {
+  console.error(`${colors.red}Runner error: ${err?.stack || err}${colors.reset}`);
   process.exit(1);
 });

@@ -46,8 +46,47 @@ jobs:
             compile.txt
           retention-days: 30
 
+  extension-host:
+    # Runs real providers inside a headless VS Code via @vscode/test-electron.
+    # This is the layer that replaces hand-debugging in the Extension Host —
+    # hover, completion, validation, activation all exercised end-to-end.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache VS Code test binary
+        uses: actions/cache@v4
+        with:
+          path: .vscode-test
+          key: vscode-test-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            vscode-test-${{ runner.os }}-
+
+      - name: Run extension-host tests
+        run: xvfb-run -a npm run test:extension-host
+
+      - name: Upload extension-host logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: extension-host-logs
+          path: |
+            out-test/
+            .vscode-test/user-data/logs/
+          retention-days: 14
+
   release:
-    needs: [test]
+    needs: [test, extension-host]
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
     permissions:

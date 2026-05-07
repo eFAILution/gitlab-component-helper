@@ -1,13 +1,15 @@
-import { registerAddProjectTokenCommand, getComponentService } from './services/componentService';
+import { registerAddProjectTokenCommand, getComponentService } from './services/component';
 import * as vscode from 'vscode';
 import { HoverProvider } from './providers/hoverProvider';
 import { CompletionProvider } from './providers/completionProvider';
 import { ComponentBrowserProvider } from './providers/componentBrowserProvider';
 import { detectIncludeComponent } from './providers/componentDetector';
-import { getComponentCacheManager, ComponentCacheManager } from './services/componentCacheManager';
+import { getComponentCacheManager, ComponentCacheManager } from './services/cache/componentCacheManager';
 import { Logger } from './utils/logger';
 import { ValidationProvider } from './providers/validationProvider';
 import { parseYaml } from './utils/yamlParser';
+import { DetachedComponentTemplate } from './templates';
+import { getPerformanceMonitor } from './utils/performanceMonitor';
 
 // Constants for timing delays
 const PANEL_FOCUS_DELAY_MS = 100;
@@ -286,7 +288,7 @@ export function activate(context: vscode.ExtensionContext) {
         // Create a webview panel for the detached component details
         const panel = vscode.window.createWebviewPanel(
           'gitlabComponentDetails',
-          `${component.name} - Details`,
+          `Component: ${component.name}`,
           vscode.ViewColumn.Beside,
           {
             enableScripts: true,
@@ -295,8 +297,82 @@ export function activate(context: vscode.ExtensionContext) {
           }
         );
 
-        // Generate HTML content for the detached panel with interactive features
-        panel.webview.html = await getDetachedComponentHtml(component);
+        // Use the same details HTML as the Component Browser
+        const componentBrowser = new ComponentBrowserProvider(context, cacheManager);
+
+        // Try to enrich the component details (raw YAML, header metadata) before rendering
+        let activeComponent = component;
+        try {
+          const resolvedGitlabInstance = component?.gitlabInstance || component?.context?.gitlabInstance;
+          const resolvedSourcePath = component?.sourcePath || component?.context?.path;
+          const resolvedName = component?.name;
+
+          if (resolvedGitlabInstance && resolvedSourcePath && resolvedName) {
+            const targetVersion = component.version || 'main';
+
+            // Prefer cache for version-specific fetch
+            const cached = await cacheManager.fetchSpecificVersion(
+              resolvedName,
+              resolvedSourcePath,
+              resolvedGitlabInstance,
+              targetVersion
+            );
+
+            if (cached) {
+              activeComponent = {
+                ...cached,
+                originalUrl: component.originalUrl,
+                url: component.url,
+                _hoverContext: component._hoverContext
+              };
+            } else {
+              const componentService = getComponentService();
+              const componentUrl = `https://${resolvedGitlabInstance}/${resolvedSourcePath}/${resolvedName}@${targetVersion}`;
+
+              // Try catalog fragments (for YAML fragments without spec)
+              try {
+                const catalogData = await componentService.fetchCatalogData(
+                  resolvedGitlabInstance,
+                  resolvedSourcePath,
+                  true,
+                  targetVersion
+                );
+                const fragment = catalogData?.fragments?.find((frag: any) => frag.name === resolvedName);
+                if (fragment) {
+                  activeComponent = {
+                    ...component,
+                    name: fragment.name,
+                    description: fragment.description || component.description,
+                    summary: fragment.summary,
+                    usage: fragment.usage,
+                    notes: fragment.notes,
+                    rawYaml: fragment.rawYaml,
+                    gitlabInstance: resolvedGitlabInstance,
+                    sourcePath: resolvedSourcePath,
+                    version: targetVersion,
+                    _hoverContext: component._hoverContext
+                  };
+                }
+              } catch (catalogError) {
+                logger.debug(`[Extension] Fragment catalog fetch failed: ${catalogError}`, 'Extension');
+              }
+
+              const fetched = await componentService.getComponentFromUrl(componentUrl);
+              if (fetched) {
+                activeComponent = {
+                  ...fetched,
+                  originalUrl: component.originalUrl,
+                  url: component.url || fetched.url,
+                  _hoverContext: component._hoverContext
+                };
+              }
+            }
+          }
+        } catch (error) {
+          logger.debug(`[Extension] Failed to enrich detached hover component: ${error}`, 'Extension');
+        }
+
+        panel.webview.html = componentBrowser.getComponentDetailsHtml(activeComponent);
 
         // Ensure the original editor remains focused after panel creation
         setTimeout(async () => {
@@ -324,25 +400,52 @@ export function activate(context: vscode.ExtensionContext) {
                   return;
                 }
 
-                const componentBrowser = new ComponentBrowserProvider(context, cacheManager);
+                // Handle different insertion options
+                const { version, includeInputs, selectedInputs } = message;
 
-                // Check if we have hover context (editing existing component)
-                if (component._hoverContext) {
-                  // Edit the existing component at the hover position
-                  await componentBrowser.editExistingComponentFromDetached(
-                    component,
-                    component._hoverContext.documentUri,
-                    component._hoverContext.position,
-                    message.includeInputs || false,
-                    message.selectedInputs || []
+                // Update component version if specified
+                if (version && version !== activeComponent.version) {
+                  const updatedComponent = await cacheManager.fetchSpecificVersion(
+                    activeComponent.name,
+                    activeComponent.sourcePath,
+                    activeComponent.gitlabInstance,
+                    version
                   );
+                  if (updatedComponent) {
+                    if (activeComponent._hoverContext) {
+                      await componentBrowser.editExistingComponentFromDetached(
+                        updatedComponent,
+                        activeComponent._hoverContext.documentUri,
+                        activeComponent._hoverContext.position,
+                        includeInputs || false,
+                        selectedInputs || []
+                      );
+                    } else {
+                      await componentBrowser.insertComponentFromDetached(
+                        updatedComponent,
+                        includeInputs || false,
+                        selectedInputs || []
+                      );
+                    }
+                  } else {
+                    vscode.window.showErrorMessage(`Failed to fetch version ${version} of component ${activeComponent.name}`);
+                  }
                 } else {
-                  // Insert new component at cursor position
-                  await componentBrowser.insertComponentFromDetached(
-                    component,
-                    message.includeInputs || false,
-                    message.selectedInputs || []
-                  );
+                  if (activeComponent._hoverContext) {
+                    await componentBrowser.editExistingComponentFromDetached(
+                      activeComponent,
+                      activeComponent._hoverContext.documentUri,
+                      activeComponent._hoverContext.position,
+                      includeInputs || false,
+                      selectedInputs || []
+                    );
+                  } else {
+                    await componentBrowser.insertComponentFromDetached(
+                      activeComponent,
+                      includeInputs || false,
+                      selectedInputs || []
+                    );
+                  }
                 }
 
                 // Close the panel after successful insertion/edit
@@ -350,6 +453,49 @@ export function activate(context: vscode.ExtensionContext) {
               } catch (error) {
                 logger.error(`[Extension] Error inserting component from detached view: ${error}`, 'Extension');
                 vscode.window.showErrorMessage(`Error inserting component: ${error}`);
+              }
+              break;
+            case 'fetchVersions':
+              try {
+                const versions = await cacheManager.fetchComponentVersions(activeComponent);
+                panel.webview.postMessage({
+                  command: 'versionsLoaded',
+                  versions: versions,
+                  currentVersion: activeComponent.version
+                });
+              } catch (error) {
+                panel.webview.postMessage({
+                  command: 'versionsError',
+                  error: error instanceof Error ? error.message : String(error)
+                });
+              }
+              break;
+            case 'versionChanged':
+              try {
+                const { selectedVersion } = message;
+                const updatedComponent = await cacheManager.fetchSpecificVersion(
+                  activeComponent.name,
+                  activeComponent.sourcePath,
+                  activeComponent.gitlabInstance,
+                  selectedVersion
+                );
+                if (updatedComponent) {
+                  activeComponent = updatedComponent;
+                  panel.webview.postMessage({
+                    command: 'componentDetailsUpdated',
+                    component: updatedComponent
+                  });
+                } else {
+                  panel.webview.postMessage({
+                    command: 'versionChangeError',
+                    error: `Failed to fetch details for version ${selectedVersion}`
+                  });
+                }
+              } catch (error) {
+                panel.webview.postMessage({
+                  command: 'versionChangeError',
+                  error: error instanceof Error ? error.message : String(error)
+                });
               }
               break;
           }
@@ -406,6 +552,41 @@ export function activate(context: vscode.ExtensionContext) {
     // Initialize the validation provider
     new ValidationProvider(context);
 
+    // Register command to show performance statistics
+    logger.debug('[Extension] Registering showPerformanceStats command...', 'Extension');
+    context.subscriptions.push(
+      vscode.commands.registerCommand('gitlab-component-helper.showPerformanceStats', async () => {
+        const performanceMonitor = getPerformanceMonitor();
+        const summary = performanceMonitor.getSummary();
+
+        // Create output channel to show detailed performance stats
+        const outputChannel = vscode.window.createOutputChannel('GitLab Component Helper - Performance');
+        outputChannel.clear();
+        outputChannel.appendLine(summary);
+        outputChannel.show();
+
+        // Also get detailed stats for slowest operations
+        const slowestOps = performanceMonitor.getSlowestOperations(10);
+
+        if (slowestOps.length > 0) {
+          outputChannel.appendLine('\n=== Top 10 Slowest Operations ===\n');
+
+          for (let i = 0; i < slowestOps.length; i++) {
+            const stat = slowestOps[i];
+            outputChannel.appendLine(`${i + 1}. ${stat.name}`);
+            outputChannel.appendLine(`   Average: ${stat.avgDuration.toFixed(2)}ms`);
+            outputChannel.appendLine(`   Max: ${stat.maxDuration}ms`);
+            outputChannel.appendLine(`   P95: ${stat.p95Duration.toFixed(2)}ms`);
+            outputChannel.appendLine(`   Count: ${stat.count}`);
+            outputChannel.appendLine('');
+          }
+        }
+
+        logger.info('[Extension] Performance statistics displayed', 'Extension');
+        vscode.window.showInformationMessage('Performance statistics displayed in output channel');
+      })
+    );
+
     logger.info('[Extension] All commands registered successfully!', 'Extension');
     logger.info('[Extension] Extension activation completed successfully!', 'Extension');
 
@@ -417,13 +598,28 @@ export function activate(context: vscode.ExtensionContext) {
   }
 }
 
-// Helper function to generate HTML for detached component details
+/**
+ * Helper function to generate HTML for detached component details.
+ * Detects existing inputs and delegates to the template for rendering.
+ */
 async function getDetachedComponentHtml(component: any): Promise<string> {
-  const parameters = component.parameters || [];
+  const existingInputs = await detectExistingInputs(component);
+  return DetachedComponentTemplate.render(component, existingInputs);
+}
 
-  // Detect existing inputs for this component in the active editor
+/**
+ * Detects existing input parameters for a component in the active editor.
+ * Returns an array of input parameter names already present in the file.
+ */
+async function detectExistingInputs(component: any): Promise<string[]> {
+  const parameters = component.parameters || [];
   const existingInputs: string[] = [];
   const editor = vscode.window.activeTextEditor;
+
+  if (!editor || parameters.length === 0) {
+    return existingInputs;
+  }
+
   if (editor && parameters.length > 0) {
     try {
       const document = editor.document;
@@ -491,356 +687,12 @@ async function getDetachedComponentHtml(component: any): Promise<string> {
           }
         }
       } catch (fallbackError) {
-        // Ignore both parsing errors
+        // Silently ignore errors
       }
     }
-  }  return `
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${component.name} - Component Details</title>
-      <style>
-        body {
-          font-family: var(--vscode-font-family);
-          color: var(--vscode-editor-foreground);
-          background-color: var(--vscode-editor-background);
-          padding: 20px;
-          line-height: 1.6;
-        }
-        .header {
-          border-bottom: 2px solid var(--vscode-panel-border);
-          padding-bottom: 15px;
-          margin-bottom: 20px;
-        }
-        h1 {
-          margin: 0 0 10px 0;
-          color: var(--vscode-editor-foreground);
-        }
-        .metadata {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 20px;
-          margin-bottom: 20px;
-          font-size: 0.9em;
-        }
-        .metadata div {
-          background-color: var(--vscode-panel-background);
-          padding: 8px 12px;
-          border-radius: 4px;
-          border: 1px solid var(--vscode-panel-border);
-        }
-        .description {
-          background-color: var(--vscode-textBlockQuote-background);
-          border-left: 4px solid var(--vscode-textBlockQuote-border);
-          padding: 15px;
-          margin-bottom: 25px;
-          border-radius: 0 4px 4px 0;
-        }
-        .section {
-          margin-bottom: 30px;
-        }
-        .section h2 {
-          color: var(--vscode-editor-foreground);
-          border-bottom: 1px solid var(--vscode-panel-border);
-          padding-bottom: 8px;
-          margin-bottom: 15px;
-        }
-        .parameters-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 15px;
-        }
-        .select-all-group {
-          display: flex;
-          align-items: center;
-          gap: 5px;
-          font-size: 0.9em;
-        }
-        .parameters {
-          border: 1px solid var(--vscode-panel-border);
-          border-radius: 5px;
-        }
-        .parameter {
-          padding: 15px;
-          border-bottom: 1px solid var(--vscode-panel-border);
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-        }
-        .parameter:last-child {
-          border-bottom: none;
-        }
-        .parameter-content {
-          flex: 1;
-          margin-right: 15px;
-        }
-        .parameter-checkbox {
-          display: flex;
-          align-items: center;
-          gap: 5px;
-          margin-top: 5px;
-        }
-        .parameter-checkbox.existing {
-          background-color: var(--vscode-diffEditor-insertedTextBackground);
-          padding: 5px;
-          border-radius: 3px;
-          border: 1px solid var(--vscode-diffEditor-insertedTextBorder);
-        }
-        .parameter-checkbox.existing label {
-          color: var(--vscode-diffEditor-insertedLineBackground);
-          font-weight: 500;
-        }
-        .parameter-name {
-          font-weight: bold;
-          font-size: 1.1em;
-          margin-bottom: 5px;
-        }
-        .parameter-required {
-          color: var(--vscode-errorForeground);
-          font-size: 0.9em;
-          font-weight: bold;
-        }
-        .parameter-optional {
-          color: var(--vscode-disabledForeground);
-          font-size: 0.9em;
-        }
-        .parameter-description {
-          margin: 8px 0;
-          line-height: 1.4;
-        }
-        .parameter-details {
-          display: flex;
-          gap: 15px;
-          margin-top: 8px;
-          font-size: 0.9em;
-        }
-        .parameter-default {
-          background-color: var(--vscode-textCodeBlock-background);
-          padding: 2px 6px;
-          border-radius: 3px;
-          font-family: monospace;
-          font-size: 0.9em;
-        }
-        .insert-options {
-          background-color: var(--vscode-panel-background);
-          border: 1px solid var(--vscode-panel-border);
-          border-radius: 5px;
-          padding: 20px;
-          margin-top: 25px;
-        }
-        .insert-options h3 {
-          margin-top: 0;
-          margin-bottom: 15px;
-          color: var(--vscode-editor-foreground);
-        }
-        .checkbox-group {
-          margin-bottom: 15px;
-        }
-        .checkbox-group label {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          cursor: pointer;
-        }
-        .button-group {
-          display: flex;
-          gap: 10px;
-        }
-        button {
-          background-color: var(--vscode-button-background);
-          color: var(--vscode-button-foreground);
-          border: none;
-          padding: 10px 20px;
-          border-radius: 3px;
-          cursor: pointer;
-          font-size: 0.9em;
-          font-weight: 500;
-        }
-        button:hover {
-          background-color: var(--vscode-button-hoverBackground);
-        }
-        button.secondary {
-          background-color: var(--vscode-button-secondaryBackground);
-          color: var(--vscode-button-secondaryForeground);
-        }
-        button.secondary:hover {
-          background-color: var(--vscode-button-secondaryHoverBackground);
-        }
-        .no-content {
-          color: var(--vscode-disabledForeground);
-          font-style: italic;
-          text-align: center;
-          padding: 20px;
-        }
-        a {
-          color: var(--vscode-textLink-foreground);
-          text-decoration: none;
-        }
-        a:hover {
-          color: var(--vscode-textLink-activeForeground);
-          text-decoration: underline;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="header">
-        <h1>${component.name}</h1>
-        <div class="metadata">
-          ${component.context ?
-            `<div><strong>Source:</strong> <a href="https://${component.context.gitlabInstance}/${component.context.path}" target="_blank">${component.context.gitlabInstance}/${component.context.path}</a></div>` :
-            component.source ? `<div><strong>Source:</strong> <a href="${component.source}" target="_blank">${component.source}</a></div>` : ''
-          }
-          ${component.version ? `<div><strong>Version:</strong> ${component.version}</div>` : ''}
-          ${component.documentationUrl ? `<div><strong>Documentation:</strong> <a href="${component.documentationUrl}" target="_blank">View Online</a></div>` : ''}
-        </div>
-      </div>
+  }
 
-      ${component.description ? `
-        <div class="description">
-          ${component.description}
-        </div>
-      ` : `
-        <div class="description">
-          <strong>Component/Project does not have a description</strong><br>
-          <em>No additional documentation available.</em>
-        </div>
-      `}
-
-      <div class="section">
-        <div class="parameters-header">
-          <h2>Parameters</h2>
-          <div style="display: flex; align-items: center; gap: 15px;">
-            ${existingInputs.length > 0 ? `
-              <div style="font-size: 0.8em; color: var(--vscode-charts-green); background-color: var(--vscode-diffEditor-insertedTextBackground); padding: 3px 8px; border-radius: 3px;">
-                ${existingInputs.length} already in file
-              </div>
-            ` : ''}
-            ${parameters.length > 0 ? `
-              <div class="select-all-group">
-                <input type="checkbox" id="selectAllInputs" onchange="toggleAllInputs()">
-                <label for="selectAllInputs">Select All</label>
-              </div>
-            ` : ''}
-          </div>
-        </div>
-
-        ${parameters.length === 0 ?
-          '<div class="no-content">No parameters documented for this component.</div>' :
-          `<div class="parameters">
-            ${parameters.map((param: any) => `
-              <div class="parameter">
-                <div class="parameter-content">
-                  <div class="parameter-name">${param.name}</div>
-                  <div class="${param.required ? 'parameter-required' : 'parameter-optional'}">
-                    (${param.required ? 'required' : 'optional'})
-                  </div>
-                  <div class="parameter-description">${param.description || `Parameter: ${param.name}`}</div>
-                  <div class="parameter-details">
-                    <div><strong>Type:</strong> ${param.type || 'string'}</div>
-                    ${param.default !== undefined ?
-                      `<div><strong>Default:</strong> <span class="parameter-default">${param.default}</span></div>` : ''}
-                  </div>
-                </div>
-                <div class="parameter-checkbox${existingInputs.includes(param.name) ? ' existing' : ''}">
-                  <input type="checkbox" id="input-${param.name}" class="input-checkbox" onchange="updateInputSelection()" data-param-name="${param.name}"${existingInputs.includes(param.name) ? ' checked' : ''}>
-                  <label for="input-${param.name}">${existingInputs.includes(param.name) ? 'Already Present' : 'Insert'}</label>
-                </div>
-              </div>
-            `).join('')}
-          </div>`
-        }
-      </div>
-
-      <div class="insert-options">
-        <h3>${existingInputs.length > 0 ? 'Edit Component' : 'Insert Component'}</h3>
-        ${existingInputs.length > 0 ? `
-          <div style="background-color: var(--vscode-diffEditor-insertedTextBackground); padding: 10px; border-radius: 5px; margin-bottom: 15px; border: 1px solid var(--vscode-diffEditor-insertedTextBorder);">
-            <strong>📝 Edit Mode:</strong> This will update the existing component in your GitLab CI file. Uncheck inputs to remove them, check new ones to add them.
-          </div>
-        ` : ''}
-        <div class="checkbox-group">
-          <label>
-            <input type="checkbox" id="includeInputs">
-            Include input parameters with default values
-          </label>
-        </div>
-        <div class="button-group">
-          <button onclick="insertComponent()">${existingInputs.length > 0 ? 'Update Component' : 'Insert Component'}</button>
-        </div>
-      </div>
-
-      <script>
-        const vscode = acquireVsCodeApi();
-
-        function insertComponent() {
-          const includeInputs = document.getElementById('includeInputs')?.checked || false;
-
-          // Get selected individual inputs
-          const selectedInputs = [];
-          const inputCheckboxes = document.querySelectorAll('.input-checkbox:checked');
-          inputCheckboxes.forEach(checkbox => {
-            selectedInputs.push(checkbox.getAttribute('data-param-name'));
-          });
-
-          vscode.postMessage({
-            command: 'insertComponent',
-            includeInputs: includeInputs,
-            selectedInputs: selectedInputs
-          });
-        }
-
-        function toggleAllInputs() {
-          const selectAllCheckbox = document.getElementById('selectAllInputs');
-          const inputCheckboxes = document.querySelectorAll('.input-checkbox');
-
-          inputCheckboxes.forEach(checkbox => {
-            checkbox.checked = selectAllCheckbox.checked;
-          });
-
-          updateInputSelection();
-        }
-
-        function updateInputSelection() {
-          const inputCheckboxes = document.querySelectorAll('.input-checkbox');
-          const checkedInputs = document.querySelectorAll('.input-checkbox:checked');
-          const selectAllCheckbox = document.getElementById('selectAllInputs');
-          const includeInputsCheckbox = document.getElementById('includeInputs');
-
-          // Update select all checkbox state
-          if (checkedInputs.length === 0) {
-            selectAllCheckbox.checked = false;
-            selectAllCheckbox.indeterminate = false;
-          } else if (checkedInputs.length === inputCheckboxes.length) {
-            selectAllCheckbox.checked = true;
-            selectAllCheckbox.indeterminate = false;
-          } else {
-            selectAllCheckbox.checked = false;
-            selectAllCheckbox.indeterminate = true;
-          }
-
-          // Auto-check "Include input parameters" if any individual inputs are selected
-          if (checkedInputs.length > 0) {
-            includeInputsCheckbox.checked = true;
-          }
-        }
-
-        // Initialize the checkbox states on load
-        document.addEventListener('DOMContentLoaded', function() {
-          updateInputSelection();
-
-          // Show a helpful message if existing inputs were detected
-          const checkedInputs = document.querySelectorAll('.input-checkbox:checked');
-          if (checkedInputs.length > 0) {
-            console.log('Pre-selected existing inputs from your GitLab CI file');
-          }
-        });
-      </script>
-    </body>
-    </html>
-  `;
+  return existingInputs;
 }
 
 export function deactivate() {}

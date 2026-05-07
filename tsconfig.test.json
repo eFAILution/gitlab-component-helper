@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2020",
+    "outDir": "out-test",
+    "rootDir": "tests/extension-host",
+    "lib": [
+      "es2020",
+      "dom"
+    ],
+    "sourceMap": true,
+    "strict": true,
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "ignoreDeprecations": "6.0",
+    "types": [
+      "node",
+      "vscode",
+      "mocha"
+    ]
+  },
+  "include": [
+    "tests/extension-host/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".vscode-test",
+    "out",
+    "out-test"
+  ]
+}

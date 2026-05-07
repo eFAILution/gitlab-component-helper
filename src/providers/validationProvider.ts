@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { getComponentService } from '../services/componentService';
-import { getComponentCacheManager } from '../services/componentCacheManager';
+import { getComponentService } from '../services/component';
+import { getComponentCacheManager } from '../services/cache/componentCacheManager';
 import { parseYaml } from '../utils/yamlParser';
 import { Component } from '../types/git-component';
 import { Logger } from '../utils/logger';
@@ -226,8 +226,8 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                             this.logger.debug(`[ValidationProvider] Component not found or accessible: ${expandedUrl}`, 'ValidationProvider');
                             componentFetchFailed = true;
 
-                            // For testing purposes, create a mock component for example URLs
-                            if (expandedUrl.includes('gitlab.example.com') || expandedUrl.includes('my-group/my-component')) {
+                            // For testing purposes, create a mock component for known example URLs
+                            if (this.isExampleMockComponentUrl(expandedUrl)) {
                                 this.logger.debug(`[ValidationProvider] Creating mock component for testing: ${expandedUrl}`, 'ValidationProvider');
                                 component = {
                                     name: 'mock-component',
@@ -398,6 +398,18 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
         this.logger.debug(`[ValidationProvider] Created ${diagnostics.length} total diagnostics for ${document.fileName}`, 'ValidationProvider');
         this.diagnosticCollection.set(document.uri, diagnostics);
+    }
+
+    private isExampleMockComponentUrl(componentUrl: string): boolean {
+        try {
+            const parsed = new URL(componentUrl);
+            const isExampleHost = parsed.hostname === 'gitlab.example.com';
+            const hasExpectedPath = parsed.pathname.includes('/my-group/my-component');
+            return isExampleHost || hasExpectedPath;
+        } catch {
+            // Fallback for malformed input in tests.
+            return componentUrl.includes('my-group/my-component');
+        }
     }
 
     /**

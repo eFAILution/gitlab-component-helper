@@ -1,0 +1,100 @@
+name: Feature request
+description: Propose an enhancement for GitLab Component Helper.
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for your proposal.
+
+        Help us evaluate impact, complexity, and fit by including concrete workflows and examples.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What user problem does this solve?
+      placeholder: Describe the current pain point.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior, UX, and expected outcome.
+      placeholder: Describe what should happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: yaml-example
+    attributes:
+      label: Example .gitlab-ci.yml usage
+      description: Show before/after or expected config.
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: commands-ui
+    attributes:
+      label: Command/UI impact
+      description: Should this affect Component Browser, hover, completion, validation, commands, or settings?
+      placeholder: |
+        - New command:
+        - Setting changes:
+        - Browser/hover/completion changes:
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Clear testable criteria for done.
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - Nice to have
+        - Important
+        - Critical for adoption
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches or workarounds you tried.
+    validations:
+      required: false
+
+  - type: input
+    id: gitlab-instance
+    attributes:
+      label: Target GitLab instance(s)
+      description: gitlab.com, self-managed, or both.
+      placeholder: e.g. gitlab.com and self-managed
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submit checks
+      options:
+        - label: I searched existing feature requests and did not find a duplicate.
+          required: true
+        - label: I included concrete examples and acceptance criteria.
+          required: true

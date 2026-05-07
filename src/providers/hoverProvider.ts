@@ -99,7 +99,7 @@ export class HoverProvider implements vscode.HoverProvider {
       hoverContent.appendMarkdown(`[🔗 Open in Detailed View](${detachCommand.toString()})\n\n`);
 
       // Description with fallback handling
-      let description = component.description || '';
+      const description = component.description || '';
 
       hoverContent.appendMarkdown(`${description}\n\n`);
 
@@ -317,7 +317,7 @@ export class HoverProvider implements vscode.HoverProvider {
     markdown.appendMarkdown(`## ${component.name}\n\n`);
 
     // Enhanced description with fallback handling
-    let description = component.description || 'Component/Project does not have a description';
+    const description = component.description || 'Component/Project does not have a description';
 
     markdown.appendMarkdown(`${description}\n\n`);
 

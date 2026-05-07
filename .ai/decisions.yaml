@@ -78,33 +78,181 @@ decisions:
       - "src/services/componentService.ts (setSecretStorage)"
       - "README.md (security section)"
 
-  semantic_release:
-    date: "2024"
+  release_it:
+    date: "2026"
     status: "accepted"
-    context: "Need automated versioning and releases"
-    decision: "Use semantic-release for automated releases"
+    supersedes: "semantic_release (.releaserc.json removed)"
+    context: "Need separate release flows for beta vs main with different version constraints and packaging steps"
+    decision: "Use release-it with two configs: .release-it.json (main) and .release-it.beta.json (beta)"
     rationale:
-      - "Automated version bumping"
-      - "Automatic CHANGELOG generation"
-      - "GitHub release creation"
-      - "Conventional commits enforcement"
+      - "Per-branch config: requireBranch enforces correct branch"
+      - "Per-branch versioning: requireEvenMinor on main, requireOddMinor on beta"
+      - "Beta builds packaged with --pre-release flag for marketplace"
+      - "Custom plugins (./.release-it/vscode-version.js) enforce VS Code engine version sync"
     implementation:
-      triggers: "Push to main branch"
-      config: ".releaserc.json"
+      main_config: ".release-it.json (requireBranch: main, requireEvenMinor: true, GitHub release with .vsix asset)"
+      beta_config: ".release-it.beta.json (requireBranch: beta, requireOddMinor: true, vsce package --pre-release, no GitHub release, no tag)"
       commit_format: "conventional-commits"
+      hooks: "after:bump runs vsce package"
     alternatives_considered:
+      - semantic_release: "Single-flow only; no native multi-config support; harder to gate beta vs stable"
       - manual_releases: "Error-prone, time-consuming"
-      - github_actions_only: "Reinventing the wheel"
     consequences:
       positive:
-        - "Zero manual versioning"
-        - "Consistent release process"
-        - "Automatic documentation"
+        - "Clean beta/main separation"
+        - "Marketplace pre-release flag handled automatically"
+        - "Version-policy violations caught at release time"
       negative:
-        - "Requires conventional commits discipline"
+        - "Two configs to maintain"
+        - "Requires running correct npm script per branch"
     references:
-      - "SEMANTIC_RELEASE.md"
-      - ".releaserc.json"
+      - ".release-it.json"
+      - ".release-it.beta.json"
+      - ".release-it/vscode-version.js"
+      - "package.json (release:main, release:beta scripts)"
+
+  modular_service_split:
+    date: "2026"
+    status: "accepted"
+    context: "componentService.ts (1149 lines) and componentCacheManager.ts (806 lines) became unmaintainable monoliths"
+    decision: "Split into orchestrator + specialized services: src/services/component/ and src/services/cache/"
+    rationale:
+      - "Single responsibility per file"
+      - "Easier review and test isolation"
+      - "Enforce <400 line file budget"
+    implementation:
+      component:
+        orchestrator: "componentService.ts"
+        delegates_to: ["componentFetcher", "versionManager", "tokenManager", "urlParser", "discoveryConfig", "commands"]
+      cache:
+        orchestrator: "componentCacheManager.ts"
+        delegates_to: ["unifiedCache", "projectCache", "versionCache", "groupCache"]
+    consequences:
+      positive:
+        - "Average file <300 lines"
+        - "Specialized services unit-testable in isolation"
+        - "Clear dependency graph"
+      negative:
+        - "More files to navigate"
+        - "Slight indirection through orchestrator"
+    references:
+      - "src/services/component/index.ts"
+      - "src/services/cache/index.ts"
+
+  centralized_error_handling:
+    date: "2026"
+    status: "accepted"
+    context: "Errors were ad-hoc strings or untyped throws; user-facing messages inconsistent; no notion of recoverability"
+    decision: "Introduce GitLabComponentError hierarchy in src/errors/ with typed subclasses, ErrorCode enum, recoverable flag, and centralized handler"
+    rationale:
+      - "Every error carries code + userMessage + recoverable + cause chain"
+      - "Handler decides logging level and notification surface"
+      - "Subclasses (NetworkError, ConfigError, ParseError) make catch blocks precise"
+    implementation:
+      base: "src/errors/types.ts (GitLabComponentError extends Error)"
+      handler: "src/errors/handler.ts (logs, notifies, optionally retries)"
+      subclasses: "NetworkError, ConfigError, ParseError"
+    alternatives_considered:
+      - string_errors: "No type info; users see stack traces"
+      - per_module_errors: "Inconsistent UX across modules"
+    consequences:
+      positive:
+        - "Consistent user-facing error messages"
+        - "Type-safe catch blocks"
+        - "Recoverable operations can auto-retry"
+      negative:
+        - "Boilerplate when wrapping low-level errors"
+    references:
+      - "src/errors/types.ts"
+      - "src/errors/handler.ts"
+
+  request_deduplication:
+    date: "2026"
+    status: "accepted"
+    context: "Concurrent UI events (browser open + autocomplete + hover) issued duplicate HTTP requests for the same component, wasting bandwidth and hitting rate limits"
+    decision: "Wrap fetches in RequestDeduplicator: identical concurrent requests share a single in-flight promise"
+    rationale:
+      - "Eliminates duplicate HTTP traffic without changing call sites"
+      - "Reduces rate-limit pressure"
+      - "Composable with existing cache layer"
+    implementation:
+      location: "src/utils/requestDeduplicator.ts"
+      key: "request URL + method"
+      cleanup: "promise removed from map on settle"
+    consequences:
+      positive:
+        - "~40% network reduction during heavy browsing"
+        - "Faster perceived load on cold cache"
+      negative:
+        - "Promise sharing means all callers see same error"
+    references:
+      - "src/utils/requestDeduplicator.ts"
+
+  performance_monitoring:
+    date: "2026"
+    status: "accepted"
+    context: "Hard to detect regressions or slow operations in production"
+    decision: "PerformanceMonitor singleton tracks operation timings, warns when any operation exceeds 1000ms threshold"
+    rationale:
+      - "Self-contained, opt-in via wrap()"
+      - "Stats: count, avg, min, max, median, p95, p99"
+      - "Bounded memory: keeps last 1000 metrics per operation"
+    implementation:
+      location: "src/utils/performanceMonitor.ts"
+      threshold_ms: 1000
+      tracked_today: "fetchComponentMetadata, fetchCatalogData, cache refresh ops"
+    consequences:
+      positive:
+        - "Visibility into slow ops via output channel"
+        - "Foundation for future telemetry"
+      negative:
+        - "Slight overhead on every wrapped call"
+    references:
+      - "src/utils/performanceMonitor.ts"
+
+  file_size_policy:
+    date: "2026"
+    status: "accepted"
+    context: "Multiple files reached 800-1100 lines and became review/maintenance bottlenecks"
+    decision: "Soft cap of ~400 lines per source file; over-budget files trigger a refactor split"
+    rationale:
+      - "Forces single-responsibility modules"
+      - "Improves diff reviewability"
+      - "Lowers the cost of grokking unfamiliar files"
+    implementation:
+      enforcement: "Code review (no automated check)"
+      examples_of_splits: "componentService 1149→8 files, componentCacheManager 806→5 files"
+    consequences:
+      positive:
+        - "Smaller files; clearer boundaries"
+      negative:
+        - "Sometimes splits too eagerly across natural cohesion"
+    references:
+      - "src/services/component/"
+      - "src/services/cache/"
+
+  extension_host_test_layer:
+    date: "2026"
+    status: "accepted"
+    context: "Mocha-only tests could not exercise real VS Code APIs (commands, hover, activation); regressions slipped through"
+    decision: "Add tests/extension-host/ layer using @vscode/test-electron, compiled via tsconfig.test.json into out-test/"
+    rationale:
+      - "Activation, hover, command registration verified end-to-end"
+      - "Catches regressions invisible to unit/integration tests"
+    implementation:
+      runner: "out-test/runTest.js (compiled from tests/extension-host/runTest.ts)"
+      suites: "tests/extension-host/suite/{activation,hoverProvider}.test.ts"
+      pretest: "npm run pretest:extension-host (compile + tsc test config)"
+    consequences:
+      positive:
+        - "True extension-host regression coverage"
+        - "Confidence merging refactors"
+      negative:
+        - "Slower than unit/integration tests"
+        - "Requires real VS Code download in CI"
+    references:
+      - "tests/extension-host/"
+      - "tsconfig.test.json"
 
   multi_source_support:
     date: "2024"

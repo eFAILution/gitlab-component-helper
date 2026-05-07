@@ -1,1 +1,1 @@
-npm run compile && npm test
+npm run compile

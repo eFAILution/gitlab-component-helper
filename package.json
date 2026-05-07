@@ -2,7 +2,7 @@
   "name": "gitlab-component-helper",
   "displayName": "GitLab Component Helper",
   "description": "Provides intellisense for GitLab CI components",
-  "version": "0.8.8",
+  "version": "0.9.11",
   "icon": "images/icon.png",
   "engines": {
     "node": ">=22.0.0",
@@ -71,7 +71,9 @@
         "gitlabComponentHelper.gitlabToken": {
           "type": "string",
           "default": "",
-          "description": "GitLab API access token"
+          "description": "GitLab API access token (DEPRECATED - stored in plain text). Use the 'GitLab CI: Add Component Project/Group' command instead, which stores tokens encrypted via VS Code SecretStorage.",
+          "deprecationMessage": "Tokens stored here live in plain text in settings.json. Run the 'GitLab CI: Add Component Project/Group' command to migrate to encrypted SecretStorage, then clear this field.",
+          "markdownDescription": "**Deprecated:** Tokens stored here live in plain text in `settings.json`. Run the **GitLab CI: Add Component Project/Group** command instead - it stores tokens encrypted via VS Code SecretStorage. Once migrated, clear this field."
         },
         "gitlabComponentHelper.gitlabComponentsFilePath": {
           "type": "string",
@@ -158,9 +160,82 @@
                 "type": "string",
                 "default": "gitlab.com",
                 "description": "GitLab instance hostname"
+              },
+              "discovery": {
+                "type": "object",
+                "description": "Per-source discovery overrides (uses gitlabComponentHelper.discovery.* defaults if omitted)",
+                "properties": {
+                  "templateRoots": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Repository directories to scan for components"
+                  },
+                  "maxDepth": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 3,
+                    "description": "Subdirectory depth to recurse under each template root"
+                  },
+                  "filePatterns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Filename globs (e.g. '*.yml'); path globs are not supported"
+                  },
+                  "templateFileNames": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Filenames recognised inside per-component subfolders (e.g. 'template.yml')"
+                  }
+                }
               }
             }
           }
+        },
+        "gitlabComponentHelper.discovery.templateRoots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "templates"
+          ],
+          "description": "Repository directories scanned for components when cataloguing a source. Up to 5 entries.",
+          "maxItems": 5
+        },
+        "gitlabComponentHelper.discovery.maxDepth": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0,
+          "maximum": 3,
+          "description": "Subdirectory depth to recurse under each template root. 0 = root only, 1 = one level (default, matches GitLab spec)."
+        },
+        "gitlabComponentHelper.discovery.filePatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "*.yml",
+            "*.yaml"
+          ],
+          "description": "Filename globs identifying component template files. Filename only, no path globs."
+        },
+        "gitlabComponentHelper.discovery.templateFileNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "template.yml",
+            "template.yaml"
+          ],
+          "description": "Filenames recognised inside per-component subfolders, e.g. 'templates/foo/template.yml'."
         }
       }
     },
@@ -196,6 +271,10 @@
       {
         "command": "gitlabComponentHelper.addProjectToken",
         "title": "GitLab CI: Add Component Project/Group"
+      },
+      {
+        "command": "gitlab-component-helper.showPerformanceStats",
+        "title": "GitLab CI: Show Performance Statistics"
       }
     ],
     "menus": {
@@ -216,14 +295,15 @@
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
     "package": "npm run check-types && node esbuild.js --production",
     "check-types": "tsc --noEmit",
-    "lint": "echo 'ESLint temporarily disabled - build process handles code quality'",
+    "lint": "eslint src",
     "pretest": "npm run compile",
     "prepare": "husky",
     "test": "node tests/run-tests.js",
     "test:unit": "node tests/run-tests.js unit",
     "test:integration": "node tests/run-tests.js integration",
-    "test:performance": "node tests/run-tests.js performance",
-    "test:all": "node tests/run-tests.js",
+    "test:all": "node tests/run-tests.js && npm run test:extension-host",
+    "pretest:extension-host": "npm run compile && tsc --project tsconfig.test.json",
+    "test:extension-host": "node out-test/runTest.js",
     "release": "release-it",
     "release:beta": "release-it --config .release-it.beta.json",
     "release:main": "release-it --config .release-it.json",
@@ -250,19 +330,19 @@
     "@types/glob": "^9.0.0",
     "@types/js-yaml": "^4.0.9",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^25.3.3",
+    "@types/node": "^25.6.0",
     "@types/vscode": "^1.109.0",
-    "@typescript-eslint/eslint-plugin": "^8.57.2",
-    "@typescript-eslint/parser": "^8.57.2",
+    "@typescript-eslint/eslint-plugin": "^8.58.1",
+    "@typescript-eslint/parser": "^8.58.1",
     "@vscode/test-electron": "^2.3.9",
     "commitizen": "^4.3.1",
     "conventional-changelog-conventionalcommits": "^9.3.1",
     "cz-conventional-changelog": "^3.3.0",
     "cz-emoji-conventional": "^1.1.0",
     "dateformat": "^5.0.3",
-    "dotenv": "^17.3.1",
-    "esbuild": "^0.27.3",
-    "eslint": "^10.1.0",
+    "dotenv": "^17.4.2",
+    "esbuild": "^0.28.0",
+    "eslint": "^10.2.0",
     "husky": "^9.1.6",
     "is-ci": "^4.0.0",
     "js-yaml": "^4.1.1",
@@ -270,8 +350,8 @@
     "npm-run-all": "^4.1.5",
     "release-it": "^19.2.4",
     "semver": "^7.7.3",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.57.2"
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.58.1"
   },
   "keywords": [],
   "author": "eFAILution",

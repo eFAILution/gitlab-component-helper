@@ -2,7 +2,6 @@
 .DS_Store
 .env
 .venv
-.vscode
 env/
 venv/
 ENV/
@@ -33,9 +32,11 @@ node_modules
 .pylintrc
 
 # User Configs
-.vscode/
+.vscode/*
+!.vscode/launch.json
 .vscode-test
 out
+out-test
 
 # Other
 offline-search-index.*
@@ -43,3 +44,4 @@ offline-search-index.*
 *.vsix
 rsync-changes.sh
 sync-changes.sh
+.omc/
