@@ -128,8 +128,8 @@ export class ComponentFetcher {
           namespaceProject
         )}`;
 
-        let token = await this.tokenManager.getTokenForProject(gitlabInstance, projectPath);
-        let catalogFetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+        const token = await this.tokenManager.getTokenForProject(gitlabInstance, projectPath);
+        const catalogFetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
 
         this.logger.debug(`Trying to fetch from GitLab Catalog API: ${catalogApiUrl}`);
         this.logger.debug(`Using token for catalog API: ${token ? 'YES' : 'NO'}`);

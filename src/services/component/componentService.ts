@@ -21,7 +21,7 @@ interface CacheEntry {
 }
 
 const sourceCache = new Map<string, CacheEntry>();
-let backgroundUpdateInProgress = false;
+const backgroundUpdateInProgress = false;
 
 /**
  * Main component service that orchestrates fetching and managing GitLab components

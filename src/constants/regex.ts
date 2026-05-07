@@ -10,7 +10,7 @@ export const URL_PROTOCOL_REGEX = /^https?:\/\//i;
 export const LEADING_TRAILING_SLASH_REGEX = /^\/+|\/+$/g;
 
 // Git URL Patterns
-export const GIT_HTTPS_URL_REGEX = /^https:\/\/([^\/]+)\/(.+)\.git$/;
+export const GIT_HTTPS_URL_REGEX = /^https:\/\/([^/]+)\/(.+)\.git$/;
 export const GIT_SSH_URL_REGEX = /^git@([^:]+):(.+)\.git$/;
 
 // Component URL Patterns

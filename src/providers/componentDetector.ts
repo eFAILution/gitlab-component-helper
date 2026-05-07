@@ -63,7 +63,7 @@ export async function detectComponent(document: vscode.TextDocument, position: v
  */
 export async function getComponentUnderCursor(document: vscode.TextDocument, position: vscode.Position): Promise<Component | null> {
   // Check current line and a few lines above to find component context
-  let lineNum = position.line;
+  const lineNum = position.line;
   const maxLines = 5; // Check up to 5 lines above
 
   for (let i = 0; i <= Math.min(lineNum, maxLines); i++) {

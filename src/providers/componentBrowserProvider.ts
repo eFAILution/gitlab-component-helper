@@ -167,7 +167,7 @@ export class ComponentBrowserProvider {
 
       // Get component sources from settings to potentially add context source
       const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-      let sources = config.get<Array<{
+      const sources = config.get<Array<{
         name: string;
         path: string;
         gitlabInstance?: string;
