@@ -45,3 +45,6 @@ offline-search-index.*
 rsync-changes.sh
 sync-changes.sh
 .omc/
+
+# AICaC validation artifacts
+validation_output.txt
