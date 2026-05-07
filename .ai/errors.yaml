@@ -310,7 +310,7 @@ errors:
       example: 'component: gitlab.com/path@'
     - check: Bottom-right status bar should show 'YAML' or 'GitLab CI'
     - correct_context: Must be in 'include:' block with 'component:' key
-  semantic_release_failure:
+  release_failure:
     symptoms:
     - Release not created on push to main
     - Version not bumped
@@ -323,7 +323,7 @@ errors:
         - 'feat: add new feature'
         - 'fix: resolve bug'
         - 'docs: update README'
-        reference: SEMANTIC_RELEASE.md
+        reference: .release-it.json
     - cause: No releasable commits
       solution:
         note: Only feat, fix, and breaking changes trigger releases

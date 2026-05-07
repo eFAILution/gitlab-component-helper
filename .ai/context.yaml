@@ -1,11 +1,11 @@
 version: '2.0'
-schema: https://aicac.dev/schema/v1
+schema: https://aicac.dev/schema/v2
 project:
   name: gitlab-component-helper
-  type: vscode-extension
+  type: plugin
   language: typescript
   node_version: '>=22.0.0'
-  vscode_version: '>=1.102.0'
+  vscode_version: '>=1.109.0'
   description: VS Code extension providing intellisense for GitLab CI components
   purpose: Smart autocomplete, hover docs, and component browsing for GitLab CI/CD
 repository:

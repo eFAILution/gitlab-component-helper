@@ -63,7 +63,7 @@ keys:
   - component_not_loading
   - extension_not_activating
   - hover_not_working
-  - semantic_release_failure
+  - release_failure
   - test_failures
 routing:
   project_overview:
