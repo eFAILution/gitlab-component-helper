@@ -1,5 +1,7 @@
 import { parseYaml } from '../utils/yamlParser';
 import { getComponentService } from '../services/component/componentService';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface PipelineJob {
     name: string;
@@ -124,9 +126,12 @@ export class PipelineParser {
                     targetUrl = inc;
                     targetName = inc;
                 } else {
-                    this.errors.push(`Local file includes (${inc}) are currently stubbed in visualizer.`);
-                    return; // Cannot resolve local file from here easily without workspace context
+                    await this.resolveLocalInclude(inc, currentSource, depth, context);
+                    return;
                 }
+            } else if (inc.local) {
+                await this.resolveLocalInclude(inc.local, currentSource, depth, context);
+                return;
             } else if (inc.component) {
                 // Component include
                 // e.g., gitlab.com/my-group/my-project/my-component@1.0.0
@@ -134,23 +139,55 @@ export class PipelineParser {
                 targetName = `component:${componentUrl}`;
                 
                 // Parse component URL to fetch the raw template
-                const componentService = getComponentService();
-                const parsedUrl = componentService.parseCustomComponentUrl(`https://${componentUrl}`);
-                if (parsedUrl) {
-                    const { gitlabInstance, path } = parsedUrl;
-                    const pathParts = path.split('@');
-                    const fullPath = pathParts[0];
-                    const version = pathParts.length > 1 ? pathParts[1] : 'main';
-                    
-                    // The component path is likely a project path + template name.
-                    // For simplicity, we can fetch metadata, but we need the raw content.
-                    // componentFetcher.ts logic: it finds templates/name.yml
-                    // This is a bit complex to reproduce here without duplicating fetch logic.
-                    // We will log it as an included source but might not be able to fetch its content perfectly.
-                    this.includedSources.push(targetName);
-                    this.errors.push(`Recursive parsing of component ${componentUrl} is not fully supported yet.`);
-                    return;
+                const parts = componentUrl.split('/');
+                const gitlabInstance = parts[0];
+                const rest = parts.slice(1);
+                
+                let lastPart = rest[rest.length - 1];
+                let version = 'main';
+                if (lastPart.includes('@')) {
+                    const split = lastPart.split('@');
+                    lastPart = split[0];
+                    version = split[1];
+                    rest[rest.length - 1] = lastPart;
                 }
+                
+                const combinations = [];
+                if (rest.length >= 2) {
+                    // Try assuming the last part is the component sub-directory
+                    const p1 = rest.slice(0, rest.length - 1).join('/');
+                    const t1 = rest[rest.length - 1];
+                    combinations.push({ proj: p1, temp: `templates/${t1}.yml` });
+                    combinations.push({ proj: p1, temp: `templates/${t1}/template.yml` });
+                    
+                    // Try assuming the whole thing is the project
+                    const p2 = rest.join('/');
+                    combinations.push({ proj: p2, temp: `templates/template.yml` });
+                    combinations.push({ proj: p2, temp: `templates/${t1}.yml` });
+                }
+                
+                let fetched = false;
+                const componentService = getComponentService();
+                
+                for (const combo of combinations) {
+                    const url = `https://${gitlabInstance}/api/v4/projects/${encodeURIComponent(combo.proj)}/repository/files/${encodeURIComponent(combo.temp)}/raw?ref=${version}`;
+                    try {
+                        const content = await componentService.httpClient.fetchText(url);
+                        if (content && typeof content === 'string' && !content.includes('{"message":"404 Project Not Found"}')) {
+                            this.includedSources.push(targetName);
+                            await this.parseRecursive(content, targetName, depth, context);
+                            fetched = true;
+                            break;
+                        }
+                    } catch (e) {
+                        // Continue trying next combination
+                    }
+                }
+                
+                if (!fetched) {
+                    this.errors.push(`Could not fetch component ${componentUrl}`);
+                }
+                return;
             } else if (inc.project && inc.file) {
                 // Project include
                 targetName = `project:${inc.project}:${inc.file}`;
@@ -177,6 +214,24 @@ export class PipelineParser {
             }
         } catch (e) {
             this.errors.push(`Failed to resolve include ${targetName}: ${e}`);
+        }
+    }
+
+    private async resolveLocalInclude(inc: string, currentSource: string, depth: number, context?: any) {
+        try {
+            if (path.isAbsolute(currentSource)) {
+                const dir = path.dirname(currentSource);
+                const localPath = inc.startsWith('/') ? path.join(dir, inc.substring(1)) : path.resolve(dir, inc);
+                
+                const localContent = await fs.promises.readFile(localPath, 'utf8');
+                const targetName = `local:${inc}`;
+                this.includedSources.push(targetName);
+                await this.parseRecursive(localContent, localPath, depth, context);
+            } else {
+                this.errors.push(`Cannot resolve local file ${inc} because current source is not a local file.`);
+            }
+        } catch (err) {
+            this.errors.push(`Failed to read local file ${inc}`);
         }
     }
 

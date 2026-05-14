@@ -37,7 +37,7 @@ export class PipelineVisualizerProvider {
 
             if (document) {
                 content = document.getText();
-                sourceName = 'local file';
+                sourceName = document.uri.fsPath;
             } else if (componentContext) {
                 // Fetch component YAML
                 const gitlabInstance = componentContext.gitlabInstance || 'gitlab.com';
@@ -132,23 +132,43 @@ export class PipelineVisualizerProvider {
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Pipeline Visualization</title>
             <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+            <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
             <style>
                 body {
                     font-family: var(--vscode-font-family);
                     color: var(--vscode-editor-foreground);
                     background-color: var(--vscode-editor-background);
                     padding: 20px;
+                    margin: 0;
+                    height: 100vh;
+                    box-sizing: border-box;
                 }
                 .container {
                     display: flex;
                     flex-direction: column;
-                    gap: 20px;
+                    height: 100%;
+                    gap: 15px;
                 }
                 .graph-container {
                     background-color: white; /* Mermaid usually looks best on white */
-                    padding: 20px;
+                    padding: 10px;
                     border-radius: 8px;
-                    overflow: auto;
+                    flex-grow: 1;
+                    min-height: 400px;
+                    overflow: hidden; /* svg-pan-zoom handles the panning */
+                    position: relative;
+                }
+                .mermaid {
+                    width: 100%;
+                    height: 100%;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                }
+                .mermaid svg {
+                    width: 100% !important;
+                    height: 100% !important;
+                    max-width: none !important;
                 }
                 .errors {
                     background-color: rgba(255,0,0,0.1);
@@ -179,7 +199,34 @@ export class PipelineVisualizerProvider {
                 ${errorsHtml}
             </div>
             <script>
-                mermaid.initialize({ startOnLoad: true, theme: 'default' });
+                mermaid.initialize({ startOnLoad: false, theme: 'default' });
+                
+                async function renderGraph() {
+                    try {
+                        await mermaid.run();
+                        
+                        // After Mermaid renders, initialize svg-pan-zoom
+                        const svg = document.querySelector('.mermaid svg');
+                        if (svg) {
+                            // Ensure SVG takes up the full container space for panning
+                            svg.style.width = '100%';
+                            svg.style.height = '100%';
+                            
+                            svgPanZoom(svg, {
+                                zoomEnabled: true,
+                                controlIconsEnabled: true,
+                                fit: true,
+                                center: true,
+                                minZoom: 0.1,
+                                maxZoom: 10
+                            });
+                        }
+                    } catch (err) {
+                        console.error('Mermaid rendering failed', err);
+                    }
+                }
+                
+                renderGraph();
             </script>
         </body>
         </html>`;
