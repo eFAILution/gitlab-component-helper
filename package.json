@@ -6,7 +6,7 @@
   "icon": "images/icon.png",
   "engines": {
     "node": ">=22.0.0",
-    "vscode": ">=1.109.0"
+    "vscode": ">=1.108.0"
   },
   "publisher": "eFAILution",
   "repository": {
@@ -245,6 +245,10 @@
         "title": "GitLab CI: Browse Components"
       },
       {
+        "command": "gitlab-component-helper.visualizePipeline",
+        "title": "GitLab CI: Visualize Pipeline Stages"
+      },
+      {
         "command": "gitlab-component-helper.refreshComponents",
         "title": "GitLab CI: Refresh Components Cache"
       },
@@ -283,6 +287,11 @@
           "when": "resourceFilename =~ /gitlab-ci\\.yml$/",
           "command": "gitlab-component-helper.browseComponents",
           "group": "navigation"
+        },
+        {
+          "when": "resourceFilename =~ /gitlab-ci\\.yml$/",
+          "command": "gitlab-component-helper.visualizePipeline",
+          "group": "navigation@2"
         }
       ]
     }
