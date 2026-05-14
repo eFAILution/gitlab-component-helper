@@ -1,0 +1,26 @@
+stages:
+  - lint
+  - build
+  - test
+  - deploy
+
+include:
+  - component: gitlab.com/gitlab-org/components/secret-detection/secret-detection@1.0.0
+
+lint_job:
+  stage: lint
+  script: echo "Linting code"
+
+build_app:
+  stage: build
+  script: echo "Building application"
+
+run_tests:
+  stage: test
+  script: echo "Running tests"
+
+deploy_prod:
+  stage: deploy
+  script: echo "Deploying to production"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

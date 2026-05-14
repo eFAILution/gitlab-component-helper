@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { HoverProvider } from './providers/hoverProvider';
 import { CompletionProvider } from './providers/completionProvider';
 import { ComponentBrowserProvider } from './providers/componentBrowserProvider';
+import { PipelineVisualizerProvider } from './providers/pipelineVisualizerProvider';
 import { detectIncludeComponent } from './providers/componentDetector';
 import { getComponentCacheManager, ComponentCacheManager } from './services/cache/componentCacheManager';
 import { Logger } from './utils/logger';
@@ -123,6 +124,23 @@ export function activate(context: vscode.ExtensionContext) {
         // Create and show the browser with the context
         const componentBrowser = new ComponentBrowserProvider(context, cacheManager);
         await componentBrowser.show(componentContext);
+      })
+    );
+
+    // Register command for pipeline visualizer
+    logger.debug('[Extension] Registering visualizePipeline command...', 'Extension');
+    context.subscriptions.push(
+      vscode.commands.registerCommand('gitlab-component-helper.visualizePipeline', async (componentContext?: any) => {
+        const visualizer = new PipelineVisualizerProvider(context);
+        const editor = vscode.window.activeTextEditor;
+        
+        if (componentContext) {
+          await visualizer.show(componentContext);
+        } else if (editor && (editor.document.languageId === 'yaml' || editor.document.languageId === 'gitlab-ci')) {
+          await visualizer.show(undefined, editor.document);
+        } else {
+          vscode.window.showInformationMessage('No component selected or active GitLab CI file to visualize.');
+        }
       })
     );
 

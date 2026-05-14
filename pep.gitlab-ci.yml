@@ -1,0 +1,11 @@
+pep_lint:
+  stage: test
+  script: 
+    - echo "Running PEP checks (Python Enhancement Proposal format linting)"
+    - flake8 .
+
+pep_format:
+  stage: build
+  script:
+    - echo "Formatting with black"
+    - black .

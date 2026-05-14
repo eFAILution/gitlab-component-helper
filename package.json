@@ -6,7 +6,7 @@
   "icon": "images/icon.png",
   "engines": {
     "node": ">=22.0.0",
-    "vscode": ">=1.109.0"
+    "vscode": ">=1.108.0"
   },
   "publisher": "eFAILution",
   "repository": {
@@ -245,6 +245,10 @@
         "title": "GitLab CI: Browse Components"
       },
       {
+        "command": "gitlab-component-helper.visualizePipeline",
+        "title": "GitLab CI: Visualize Pipeline Stages"
+      },
+      {
         "command": "gitlab-component-helper.refreshComponents",
         "title": "GitLab CI: Refresh Components Cache"
       },
@@ -283,6 +287,11 @@
           "when": "resourceFilename =~ /gitlab-ci\\.yml$/",
           "command": "gitlab-component-helper.browseComponents",
           "group": "navigation"
+        },
+        {
+          "when": "resourceFilename =~ /gitlab-ci\\.yml$/",
+          "command": "gitlab-component-helper.visualizePipeline",
+          "group": "navigation@2"
         }
       ]
     }
@@ -297,7 +306,7 @@
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
     "pretest": "npm run compile",
-    "prepare": "husky",
+    "prepare": "husky && husky install",
     "test": "node tests/run-tests.js",
     "test:unit": "node tests/run-tests.js unit",
     "test:integration": "node tests/run-tests.js integration",
@@ -343,7 +352,7 @@
     "dotenv": "^17.4.2",
     "esbuild": "^0.28.0",
     "eslint": "^10.3.0",
-    "husky": "^9.1.6",
+    "husky": "^8.0.0",
     "is-ci": "^4.0.0",
     "js-yaml": "^4.1.1",
     "mocha": "^11.7.5",
