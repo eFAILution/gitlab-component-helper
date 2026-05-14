@@ -2,6 +2,7 @@ import { parseYaml } from '../utils/yamlParser';
 import { getComponentService } from '../services/component/componentService';
 import * as fs from 'fs';
 import * as path from 'path';
+import { expandComponentUrl, expandGitLabVariables } from '../utils/gitlabVariables';
 
 export interface PipelineJob {
     name: string;
@@ -135,7 +136,17 @@ export class PipelineParser {
             } else if (inc.component) {
                 // Component include
                 // e.g., gitlab.com/my-group/my-project/my-component@1.0.0
-                const componentUrl = inc.component;
+                let componentUrl = inc.component;
+                
+                // Expand variables like $CI_SERVER_FQDN
+                componentUrl = expandComponentUrl(componentUrl, {
+                    gitlabInstance: context?.gitlabInstance || 'gitlab.com',
+                    serverUrl: context?.serverUrl,
+                    projectPath: context?.projectPath
+                });
+                // Strip protocol because logic expects domain/path
+                componentUrl = componentUrl.replace(/^https?:\/\//, '');
+
                 targetName = `component:${componentUrl}`;
                 
                 // Parse component URL to fetch the raw template
@@ -190,14 +201,53 @@ export class PipelineParser {
                 return;
             } else if (inc.project && inc.file) {
                 // Project include
-                targetName = `project:${inc.project}:${inc.file}`;
-                this.includedSources.push(targetName);
-                this.errors.push(`Recursive parsing of project files (${inc.project}/${inc.file}) is not fully supported yet.`);
+                let projectPath = inc.project;
+                projectPath = expandGitLabVariables(projectPath, {
+                    gitlabInstance: context?.gitlabInstance || 'gitlab.com',
+                    projectPath: context?.projectPath
+                });
+                
+                const files = Array.isArray(inc.file) ? inc.file : [inc.file];
+                const gitlabInstance = context?.gitlabInstance || 'gitlab.com';
+                const componentService = getComponentService();
+                
+                for (const file of files) {
+                    let expandedFile = expandGitLabVariables(typeof file === 'string' ? file : String(file), {
+                        gitlabInstance: context?.gitlabInstance || 'gitlab.com',
+                        projectPath: context?.projectPath
+                    });
+                    
+                    targetName = `project:${projectPath}:${expandedFile}`;
+                    const ref = inc.ref || 'HEAD';
+                    const cleanFile = expandedFile.replace(/^\//, '');
+                    
+                    const url = `https://${gitlabInstance}/api/v4/projects/${encodeURIComponent(projectPath)}/repository/files/${encodeURIComponent(cleanFile)}/raw?ref=${encodeURIComponent(ref)}`;
+                    
+                    try {
+                        const content = await componentService.httpClient.fetchText(url);
+                        if (content && typeof content === 'string' && !content.includes('{"message":"404 Project Not Found"}')) {
+                            if (!this.includedSources.includes(targetName)) {
+                                this.includedSources.push(targetName);
+                            }
+                            await this.parseRecursive(content, targetName, depth, context);
+                        } else {
+                            this.errors.push(`Could not fetch project file ${inc.project}/${file}`);
+                        }
+                    } catch (e) {
+                        this.errors.push(`Failed to fetch project file ${inc.project}/${file}: ${e}`);
+                    }
+                }
                 return;
             } else if (inc.remote) {
                 // Remote include
-                targetUrl = inc.remote;
-                targetName = `remote:${inc.remote}`;
+                let remoteUrl = inc.remote;
+                remoteUrl = expandGitLabVariables(remoteUrl, {
+                    gitlabInstance: context?.gitlabInstance || 'gitlab.com',
+                    serverUrl: context?.serverUrl,
+                    projectPath: context?.projectPath
+                });
+                targetUrl = remoteUrl;
+                targetName = `remote:${remoteUrl}`;
             } else {
                 return;
             }
