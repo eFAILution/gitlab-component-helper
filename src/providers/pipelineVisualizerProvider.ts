@@ -20,7 +20,8 @@ export class PipelineVisualizerProvider {
                 vscode.ViewColumn.Active,
                 {
                     enableScripts: true,
-                    retainContextWhenHidden: true
+                    retainContextWhenHidden: true,
+                    enableCommandUris: true
                 }
             );
 
@@ -68,8 +69,12 @@ export class PipelineVisualizerProvider {
                 throw new Error("No document or component provided to visualize.");
             }
 
+            const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+            const customVariables = config.get<Record<string, string>>('customVariables', {});
+            const parserContext = componentContext ? { ...componentContext, customVariables } : { customVariables };
+
             const parser = new PipelineParser(10); // max depth 10
-            const graph = await parser.parse(content, sourceName, componentContext);
+            const graph = await parser.parse(content, sourceName, parserContext);
 
             this.panel.webview.html = this.getGraphHtml(graph, sourceName);
         } catch (e) {

@@ -142,7 +142,8 @@ export class PipelineParser {
                 componentUrl = expandComponentUrl(componentUrl, {
                     gitlabInstance: context?.gitlabInstance || 'gitlab.com',
                     serverUrl: context?.serverUrl,
-                    projectPath: context?.projectPath
+                    projectPath: context?.projectPath,
+                    customVariables: context?.customVariables
                 });
                 // Strip protocol because logic expects domain/path
                 componentUrl = componentUrl.replace(/^https?:\/\//, '');
@@ -160,6 +161,10 @@ export class PipelineParser {
                     const split = lastPart.split('@');
                     lastPart = split[0];
                     version = split[1];
+                    if (version === '[current-branch-or-sha]') {
+                        version = 'HEAD';
+                        this.errors.push(`Replaced missing variable $CI_COMMIT_SHA with HEAD for component ${inc.component}. <a href="command:workbench.action.openSettings?%22gitlabComponentHelper.customVariables%22">Click here to set custom variables</a>`);
+                    }
                     rest[rest.length - 1] = lastPart;
                 }
                 
@@ -204,7 +209,8 @@ export class PipelineParser {
                 let projectPath = inc.project;
                 projectPath = expandGitLabVariables(projectPath, {
                     gitlabInstance: context?.gitlabInstance || 'gitlab.com',
-                    projectPath: context?.projectPath
+                    projectPath: context?.projectPath,
+                    customVariables: context?.customVariables
                 });
                 
                 const files = Array.isArray(inc.file) ? inc.file : [inc.file];
@@ -214,7 +220,8 @@ export class PipelineParser {
                 for (const file of files) {
                     let expandedFile = expandGitLabVariables(typeof file === 'string' ? file : String(file), {
                         gitlabInstance: context?.gitlabInstance || 'gitlab.com',
-                        projectPath: context?.projectPath
+                        projectPath: context?.projectPath,
+                        customVariables: context?.customVariables
                     });
                     
                     targetName = `project:${projectPath}:${expandedFile}`;
@@ -244,7 +251,8 @@ export class PipelineParser {
                 remoteUrl = expandGitLabVariables(remoteUrl, {
                     gitlabInstance: context?.gitlabInstance || 'gitlab.com',
                     serverUrl: context?.serverUrl,
-                    projectPath: context?.projectPath
+                    projectPath: context?.projectPath,
+                    customVariables: context?.customVariables
                 });
                 targetUrl = remoteUrl;
                 targetName = `remote:${remoteUrl}`;

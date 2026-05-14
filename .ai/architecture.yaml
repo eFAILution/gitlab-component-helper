@@ -3,16 +3,16 @@ components:
     location: src/extension.ts
     purpose: VS Code extension activation and initialization
     responsibilities:
-    - Register providers (hover, completion, validation)
-    - Initialize cache manager
-    - Register commands
-    - Setup configuration watchers
-    - Wire centralized error handler
+      - Register providers (hover, completion, validation)
+      - Initialize cache manager
+      - Register commands
+      - Setup configuration watchers
+      - Wire centralized error handler
     depends_on:
-    - providers
-    - services
-    - utils
-    - errors
+      - providers
+      - services
+      - utils
+      - errors
   providers:
     location: src/providers/
     purpose: VS Code language feature providers
@@ -21,25 +21,25 @@ components:
       hoverProvider.ts: Documentation on hover
       validationProvider.ts: Input validation with Quick Fixes
       componentBrowserProvider.ts: Component browser webview UI
-      pipelineVisualizerProvider.ts: Interactive Mermaid.js visualization webview
+      pipelineVisualizerProvider.ts: Pipeline Visualizer webview UI for rendering pipeline graphs
       componentDetector.ts: Detect GitLab CI component usage in YAML
       componentHtmlRenderer.ts: Render component docs as HTML
     depends_on:
-    - services
-    - utils
-    - types
-    - templates
+      - services
+      - utils
+      - types
+      - templates
   services:
     location: src/services/
     purpose: Business logic and data management
     submodules:
-    - cache
-    - component
+      - cache
+      - component
   cache:
     location: src/services/cache/
     purpose: Multi-tier caching system for GitLab component data
     files:
-      componentCacheManager.ts: 'Orchestrator: lifecycle, refresh scheduling, persistence'
+      componentCacheManager.ts: "Orchestrator: lifecycle, refresh scheduling, persistence"
       unifiedCache.ts: Single in-memory cache implementation
       projectCache.ts: Project-level component fetch and transform
       versionCache.ts: Version metadata cache with semver sorting
@@ -48,9 +48,9 @@ components:
       index.ts: Public exports
     pattern: Orchestrator + specialized sub-caches; ProjectCache reused by GroupCache
     depends_on:
-    - utils
-    - types
-    - errors
+      - utils
+      - types
+      - errors
   component:
     location: src/services/component/
     purpose: Component fetching, parsing, and metadata management
@@ -65,20 +65,20 @@ components:
       index.ts: Public exports
     pattern: Orchestrator delegates to specialized services
     depends_on:
-    - utils
-    - types
-    - errors
-    - parsers
-    - cache
+      - utils
+      - types
+      - errors
+      - parsers
+      - cache
   parsers:
     location: src/parsers/
     purpose: Data parsing modules
     files:
       specParser.ts: GitLab CI/CD spec parsing (single source of truth)
-      pipelineParser.ts: GitLab CI YAML pipeline structure parsing and includes resolution
+      pipelineParser.ts: Recursive YAML parsing for Pipeline Visualizer (handles remote and component includes)
     depends_on:
-    - types
-    - utils
+      - types
+      - utils
   templates:
     location: src/templates/
     purpose: HTML template generation for webview UIs
@@ -88,7 +88,7 @@ components:
       helpers/styleBuilder.ts: CSS style helper
       index.ts: Public exports
     depends_on:
-    - types
+      - types
   constants:
     location: src/constants/
     purpose: Centralized configuration constants (eliminates magic numbers/strings)
@@ -102,12 +102,13 @@ components:
     location: src/errors/
     purpose: Centralized error types and handler
     files:
-      types.ts: GitLabComponentError base + NetworkError/ConfigError/ParseError subclasses,
+      types.ts:
+        GitLabComponentError base + NetworkError/ConfigError/ParseError subclasses,
         ErrorCode enum
       handler.ts: Logging, user notifications, recovery decisions
       index.ts: Barrel export
     depends_on:
-    - utils
+      - utils
   utils:
     location: src/utils/
     purpose: Utility functions and helpers
@@ -120,14 +121,15 @@ components:
       outputChannel.ts: VS Code output channel management
       gitlabVariables.ts: GitLab CI variable expansion
     depends_on:
-    - types
+      - types
   types:
     location: src/types/
     purpose: TypeScript type definitions (single source of truth)
     files:
       git-component.ts: Component and ComponentParameter
       gitlab-catalog.ts: GitLab catalog API types
-      cache.ts: CacheEntry<T>, ComponentCacheEntry, CatalogCacheEntry, ProjectVersionsCacheEntry,
+      cache.ts:
+        CacheEntry<T>, ComponentCacheEntry, CatalogCacheEntry, ProjectVersionsCacheEntry,
         PersistentCacheData
       api.ts: GitLab API request/response types
       index.ts: Barrel export
@@ -146,150 +148,157 @@ interfaces:
   Component:
     location: src/types/git-component.ts
     attributes:
-    - name: string
-    - description: string
-    - parameters: ComponentParameter[]
-    - version: string | undefined
-    - source: string | undefined
-    - gitlabInstance: string | undefined
-    - sourcePath: string | undefined
-    - availableVersions: string[] | undefined
-    - originalUrl: string | undefined
+      - name: string
+      - description: string
+      - parameters: ComponentParameter[]
+      - version: string | undefined
+      - source: string | undefined
+      - gitlabInstance: string | undefined
+      - sourcePath: string | undefined
+      - availableVersions: string[] | undefined
+      - originalUrl: string | undefined
   ComponentParameter:
     location: src/types/git-component.ts
     attributes:
-    - name: string
-    - description: string | undefined
-    - required: boolean
-    - type: string | undefined
-    - default: any | undefined
+      - name: string
+      - description: string | undefined
+      - required: boolean
+      - type: string | undefined
+      - default: any | undefined
   CacheEntry:
     location: src/types/cache.ts
     generic: T
     attributes:
-    - data: T
-    - timestamp: number
+      - data: T
+      - timestamp: number
   GitLabComponentError:
     location: src/errors/types.ts
     extends: Error
     attributes:
-    - code: ErrorCode (NETWORK_ERROR | TIMEOUT | RATE_LIMIT | UNAUTHORIZED | NOT_FOUND
-        | SERVER_ERROR | CONFIG_ERROR | PARSE_ERROR | ...)
-    - userMessage: string (user-friendly description)
-    - recoverable: boolean (can the operation be retried)
-    - details: any (debugging context)
-    - cause: Error | undefined (wrapped original error)
+      - code:
+          ErrorCode (NETWORK_ERROR | TIMEOUT | RATE_LIMIT | UNAUTHORIZED | NOT_FOUND
+          | SERVER_ERROR | CONFIG_ERROR | PARSE_ERROR | ...)
+      - userMessage: string (user-friendly description)
+      - recoverable: boolean (can the operation be retried)
+      - details: any (debugging context)
+      - cause: Error | undefined (wrapped original error)
     subclasses:
-    - NetworkError: HTTP failures (NETWORK_ERROR, TIMEOUT, RATE_LIMIT, UNAUTHORIZED,
-        NOT_FOUND, SERVER_ERROR)
-    - ConfigError: Invalid user configuration
-    - ParseError: YAML/spec parsing failures
+      - NetworkError:
+          HTTP failures (NETWORK_ERROR, TIMEOUT, RATE_LIMIT, UNAUTHORIZED,
+          NOT_FOUND, SERVER_ERROR)
+      - ConfigError: Invalid user configuration
+      - ParseError: YAML/spec parsing failures
 data_flow:
   component_completion:
-  - step: 1
-    component: completionProvider
-    action: User types 'component:' in .gitlab-ci.yml
-  - step: 2
-    component: componentService
-    action: Resolve URL via urlParser, check cache via componentCacheManager
-  - step: 3
-    component: requestDeduplicator
-    action: Reuse in-flight promise if identical request is pending
-  - step: 4
-    component: componentFetcher
-    action: HTTP request via httpClient with batching and retry
-  - step: 5
-    component: componentCacheManager
-    action: Persist result to in-memory + globalState cache
-  - step: 6
-    component: completionProvider
-    action: Show completion items to user
+    - step: 1
+      component: completionProvider
+      action: User types 'component:' in .gitlab-ci.yml
+    - step: 2
+      component: componentService
+      action: Resolve URL via urlParser, check cache via componentCacheManager
+    - step: 3
+      component: requestDeduplicator
+      action: Reuse in-flight promise if identical request is pending
+    - step: 4
+      component: componentFetcher
+      action: HTTP request via httpClient with batching and retry
+    - step: 5
+      component: componentCacheManager
+      action: Persist result to in-memory + globalState cache
+    - step: 6
+      component: completionProvider
+      action: Show completion items to user
   hover_documentation:
-  - step: 1
-    component: hoverProvider
-    action: User hovers over component URL
-  - step: 2
-    component: componentDetector
-    action: Detect if line contains GitLab component
-  - step: 3
-    component: componentService
-    action: Fetch component details (cache-first)
-  - step: 4
-    component: componentHtmlRenderer
-    action: Render documentation as HTML using templates/helpers
-  - step: 5
-    component: hoverProvider
-    action: Display hover card
+    - step: 1
+      component: hoverProvider
+      action: User hovers over component URL
+    - step: 2
+      component: componentDetector
+      action: Detect if line contains GitLab component
+    - step: 3
+      component: componentService
+      action: Fetch component details (cache-first)
+    - step: 4
+      component: componentHtmlRenderer
+      action: Render documentation as HTML using templates/helpers
+    - step: 5
+      component: hoverProvider
+      action: Display hover card
   pipeline_visualization:
-  - step: 1
-    component: vscode
-    action: User triggers 'Visualize Pipeline Stages' command from editor menu or command palette
-  - step: 2
-    component: pipelineParser
-    action: Parse local YAML and recursively resolve external includes/components
-  - step: 3
-    component: pipelineVisualizerProvider
-    action: Generate Mermaid.js syntax from parsed pipeline and render interactive webview
+    - step: 1
+      component: pipelineVisualizerProvider
+      action: User triggers 'Visualize Pipeline Stages' command
+    - step: 2
+      component: pipelineParser
+      action: Parse local YAML, fetch component/project/remote includes recursively
+    - step: 3
+      component: componentService
+      action: Fetch remote include contents via httpClient
+    - step: 4
+      component: pipelineVisualizerProvider
+      action: Render Mermaid flowchart in webview, display warnings for missing variables
   component_caching:
-  - step: 1
-    component: componentCacheManager
-    action: Initialize on extension activation, restore from globalState
-  - step: 2
-    component: groupCache
-    action: Scan group for projects (batched)
-  - step: 3
-    component: projectCache
-    action: Fetch components per project, transform
-  - step: 4
-    component: versionCache
-    action: Fetch and semver-sort available versions
-  - step: 5
-    component: componentCacheManager
-    action: Persist with TTL, schedule refresh
+    - step: 1
+      component: componentCacheManager
+      action: Initialize on extension activation, restore from globalState
+    - step: 2
+      component: groupCache
+      action: Scan group for projects (batched)
+    - step: 3
+      component: projectCache
+      action: Fetch components per project, transform
+    - step: 4
+      component: versionCache
+      action: Fetch and semver-sort available versions
+    - step: 5
+      component: componentCacheManager
+      action: Persist with TTL, schedule refresh
   error_handling:
-  - step: 1
-    component: any_module
-    action: Throw typed GitLabComponentError subclass with code + userMessage
-  - step: 2
-    component: handler
-    action: Log via logger, decide recoverable, surface notification
-  - step: 3
-    component: vscode
-    action: User sees actionable message; recoverable ops can retry
+    - step: 1
+      component: any_module
+      action: Throw typed GitLabComponentError subclass with code + userMessage
+    - step: 2
+      component: handler
+      action: Log via logger, decide recoverable, surface notification
+    - step: 3
+      component: vscode
+      action: User sees actionable message; recoverable ops can retry
 extension_points:
-- name: New provider
-  location: src/providers/
-  registration: src/extension.ts (vscode.languages.register*)
-- name: New command
-  location: src/services/component/commands.ts or src/extension.ts
-  registration: vscode.commands.registerCommand()
-- name: New component source
-  location: settings.json
-  property: gitlabComponentHelper.componentSources[]
-- name: New error type
-  location: src/errors/types.ts
-  pattern: Extend GitLabComponentError, add ErrorCode enum value
+  - name: New provider
+    location: src/providers/
+    registration: src/extension.ts (vscode.languages.register*)
+  - name: New command
+    location: src/services/component/commands.ts or src/extension.ts
+    registration: vscode.commands.registerCommand()
+  - name: New component source
+    location: settings.json
+    property: gitlabComponentHelper.componentSources[]
+  - name: New error type
+    location: src/errors/types.ts
+    pattern: Extend GitLabComponentError, add ErrorCode enum value
 architecture_patterns:
-- pattern: Provider Pattern
-  usage: VS Code language feature providers
-  files: src/providers/*Provider.ts
-- pattern: Singleton
-  usage: Logger, ComponentService, ComponentCacheManager, PerformanceMonitor
-  files: src/utils/logger.ts, src/services/component/componentService.ts, src/services/cache/componentCacheManager.ts,
-    src/utils/performanceMonitor.ts
-- pattern: Cache-Aside
-  usage: Multi-tier component caching with TTL
-  files: src/services/cache/*
-- pattern: Orchestrator + Specialized Services
-  usage: ComponentService delegates to fetcher/version/token/url; ComponentCacheManager
-    delegates to project/version/group caches
-  files: src/services/component/, src/services/cache/
-- pattern: Promise Deduplication
-  usage: Coalesce concurrent identical requests
-  files: src/utils/requestDeduplicator.ts
-- pattern: Centralized Error Hierarchy
-  usage: Typed error subclasses with codes and user messages
-  files: src/errors/
+  - pattern: Provider Pattern
+    usage: VS Code language feature providers
+    files: src/providers/*Provider.ts
+  - pattern: Singleton
+    usage: Logger, ComponentService, ComponentCacheManager, PerformanceMonitor
+    files:
+      src/utils/logger.ts, src/services/component/componentService.ts, src/services/cache/componentCacheManager.ts,
+      src/utils/performanceMonitor.ts
+  - pattern: Cache-Aside
+    usage: Multi-tier component caching with TTL
+    files: src/services/cache/*
+  - pattern: Orchestrator + Specialized Services
+    usage:
+      ComponentService delegates to fetcher/version/token/url; ComponentCacheManager
+      delegates to project/version/group caches
+    files: src/services/component/, src/services/cache/
+  - pattern: Promise Deduplication
+    usage: Coalesce concurrent identical requests
+    files: src/utils/requestDeduplicator.ts
+  - pattern: Centralized Error Hierarchy
+    usage: Typed error subclasses with codes and user messages
+    files: src/errors/
 performance:
   monitor:
     location: src/utils/performanceMonitor.ts
@@ -312,15 +321,15 @@ external_apis:
   gitlab_api:
     base_url: https://{instance}/api/v4/
     endpoints:
-    - path: /projects/{id}/repository/files/{path}
-      method: GET
-      purpose: Fetch component template files
-    - path: /groups/{id}/projects
-      method: GET
-      purpose: List projects in a group
-    - path: /catalog/resources
-      method: GET
-      purpose: Fetch CI/CD catalog components
+      - path: /projects/{id}/repository/files/{path}
+        method: GET
+        purpose: Fetch component template files
+      - path: /groups/{id}/projects
+        method: GET
+        purpose: List projects in a group
+      - path: /catalog/resources
+        method: GET
+        purpose: Fetch CI/CD catalog components
     authentication: Personal Access Token (SecretStorage)
     rate_limits:
       authenticated: 2000 requests/minute
@@ -329,4 +338,4 @@ external_apis:
       attempts: 3
       backoff: exponential
       timeout: 10000ms
-version: '2.0'
+version: "2.0"

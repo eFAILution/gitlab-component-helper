@@ -330,6 +330,7 @@ The following settings are available for the GitLab Component Helper extension. 
 | `gitlabComponentHelper.httpTimeout` | number | `10000` | HTTP request timeout in milliseconds |
 | `gitlabComponentHelper.retryAttempts` | number | `3` | Number of retry attempts for failed HTTP requests |
 | `gitlabComponentHelper.batchSize` | number | `5` | Number of components to process in parallel batches |
+| `gitlabComponentHelper.customVariables` | object | `{}` | Custom variable definitions used to expand CI variables during local visualization/autocomplete (e.g., `{"CI_COMMIT_SHA": "abcdef123"}`) |
 | `gitlabComponentHelper.componentSources` | array | See below | GitLab repositories containing reusable CI/CD components. Each item supports an optional `discovery` block to override the global discovery defaults for that source. |
 | `gitlabComponentHelper.discovery.templateRoots` | array | `["templates"]` | Repository directories scanned for components. Up to 5 entries. |
 | `gitlabComponentHelper.discovery.maxDepth` | number | `1` | Subdirectory depth to recurse under each root. Range `0`–`3`. |
