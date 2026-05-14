@@ -320,7 +320,7 @@
     "commitizen": "commitizen init cz-conventional-changelog --save-dev --save-exact --force"
   },
   "devDependencies": {
-    "@commitlint/cli": "^20.5.3",
+    "@commitlint/cli": "^21.0.1",
     "@commitlint/config-conventional": "^20.5.3",
     "@digitalroute/cz-conventional-changelog-for-jira": "^8.0.1",
     "@eslint/js": "^10.0.1",
