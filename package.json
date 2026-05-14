@@ -6,7 +6,7 @@
   "icon": "images/icon.png",
   "engines": {
     "node": ">=22.0.0",
-    "vscode": ">=1.109.0"
+    "vscode": ">=1.108.0"
   },
   "publisher": "eFAILution",
   "repository": {
@@ -120,6 +120,14 @@
           "type": "number",
           "default": 5,
           "description": "Number of components to process in parallel batches"
+        },
+        "gitlabComponentHelper.customVariables": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Custom variable definitions used to expand CI variables during local visualization/autocomplete (e.g., {\"CI_COMMIT_SHA\": \"abcdef123\"})"
         },
         "gitlabComponentHelper.componentSources": {
           "type": "array",
