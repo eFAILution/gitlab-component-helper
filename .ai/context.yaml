@@ -95,3 +95,4 @@ key_features:
 - Input validation with Quick Fix suggestions
 - Multi-source support (multiple GitLab instances)
 - Secure token storage via VS Code SecretStorage
+- Interactive pipeline visualization with Mermaid.js

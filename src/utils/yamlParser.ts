@@ -5,6 +5,16 @@ import * as vscode from 'vscode';
 const parseCache = new Map<string, { content: string; parsed: any; timestamp: number }>();
 const CACHE_TTL = 5000; // 5 seconds TTL for parse cache
 
+// Define GitLab specific YAML tags
+const referenceType = new yaml.Type('!reference', {
+    kind: 'sequence',
+    construct: function (data) {
+        return { reference: data };
+    }
+});
+
+const GITLAB_SCHEMA = yaml.DEFAULT_SCHEMA.extend([referenceType]);
+
 export function parseYaml(text: string): any {
   try {
     // Generate a simple hash of the content for caching
@@ -17,8 +27,8 @@ export function parseYaml(text: string): any {
       return cached.parsed;
     }
 
-    // Parse and cache
-    const parsed = yaml.load(text);
+    // Parse and cache with GitLab schema
+    const parsed = yaml.load(text, { schema: GITLAB_SCHEMA });
     parseCache.set(contentHash, { content: text, parsed, timestamp: now });
 
     // Clean old cache entries periodically

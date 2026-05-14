@@ -528,6 +528,8 @@ export class ComponentBrowserProvider {
               error: error instanceof Error ? error.message : String(error)
             });
           }
+        } else if (message.command === 'visualizePipeline') {
+          vscode.commands.executeCommand('gitlab-component-helper.visualizePipeline', component);
         }
       }
     );
@@ -1646,6 +1648,7 @@ export class ComponentBrowserProvider {
           </div>
           <div class="button-group">
             <button onclick="insertComponent()">Insert Component</button>
+            <button class="secondary" onclick="visualizePipeline()">Visualize Pipeline</button>
             <button class="secondary" onclick="refreshVersions()">Refresh Versions</button>
           </div>
         </div>
@@ -1671,6 +1674,12 @@ export class ComponentBrowserProvider {
               version: selectedVersion,
               includeInputs: includeInputs,
               selectedInputs: selectedInputs
+            });
+          }
+
+          function visualizePipeline() {
+            vscode.postMessage({
+              command: 'visualizePipeline'
             });
           }
 

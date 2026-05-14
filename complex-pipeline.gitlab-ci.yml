@@ -1,0 +1,24 @@
+stages:
+  - lint
+  - build
+  - test
+  - deploy
+
+include:
+  # 1. Local file include (PEP file)
+  - local: pep.gitlab-ci.yml
+
+  # 2. Component file includes
+  - component: gitlab.com/components/secret-detection/secret-detection@1.1.2
+  - component: gitlab.com/components/sast/sast@3.2.0
+
+  # 3. Local CI server includes
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/build@$CI_COMMIT_SHA
+
+main_app_lint:
+  stage: lint
+  script: echo "Linting main application"
+
+main_app_deploy:
+  stage: deploy
+  script: echo "Deploying main application"

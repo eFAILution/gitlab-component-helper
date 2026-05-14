@@ -193,10 +193,17 @@ export function expandGitLabVariables(text: string, context?: {
   gitlabInstance?: string;
   projectPath?: string;
   serverUrl?: string;
+  customVariables?: Record<string, string>;
 }): string {
   let expanded = text;
 
   if (context) {
+    if (context.customVariables) {
+      for (const [key, value] of Object.entries(context.customVariables)) {
+        expanded = expanded.replace(new RegExp(`\\$${key}\\b`, 'g'), String(value));
+        expanded = expanded.replace(new RegExp(`\\$\\{${key}\\}`, 'g'), String(value));
+      }
+    }
     // Expand common variables based on context
     if (context.gitlabInstance) {
       expanded = expanded.replace(/\$CI_SERVER_FQDN/g, context.gitlabInstance);
@@ -231,10 +238,17 @@ export function expandComponentUrl(componentUrl: string, context?: {
   projectPath?: string;
   serverUrl?: string;
   commitSha?: string; // Optionally provide a commit SHA for expansion
+  customVariables?: Record<string, string>;
 }): string {
   let expanded = componentUrl;
 
   if (context) {
+    if (context.customVariables) {
+      for (const [key, value] of Object.entries(context.customVariables)) {
+        expanded = expanded.replace(new RegExp(`\\$${key}\\b`, 'g'), String(value));
+        expanded = expanded.replace(new RegExp(`\\$\\{${key}\\}`, 'g'), String(value));
+      }
+    }
     // Handle URL expansion carefully to maintain proper URL structure
     if (context.gitlabInstance) {
       // For component URLs that start with $CI_SERVER_FQDN, we need to ensure https:// is added
