@@ -21,6 +21,7 @@ components:
       hoverProvider.ts: Documentation on hover
       validationProvider.ts: Input validation with Quick Fixes
       componentBrowserProvider.ts: Component browser webview UI
+      pipelineVisualizerProvider.ts: Interactive Mermaid.js visualization webview
       componentDetector.ts: Detect GitLab CI component usage in YAML
       componentHtmlRenderer.ts: Render component docs as HTML
     depends_on:
@@ -74,6 +75,7 @@ components:
     purpose: Data parsing modules
     files:
       specParser.ts: GitLab CI/CD spec parsing (single source of truth)
+      pipelineParser.ts: GitLab CI YAML pipeline structure parsing and includes resolution
     depends_on:
     - types
     - utils
@@ -218,6 +220,16 @@ data_flow:
   - step: 5
     component: hoverProvider
     action: Display hover card
+  pipeline_visualization:
+  - step: 1
+    component: vscode
+    action: User triggers 'Visualize Pipeline Stages' command from editor menu or command palette
+  - step: 2
+    component: pipelineParser
+    action: Parse local YAML and recursively resolve external includes/components
+  - step: 3
+    component: pipelineVisualizerProvider
+    action: Generate Mermaid.js syntax from parsed pipeline and render interactive webview
   component_caching:
   - step: 1
     component: componentCacheManager
