@@ -292,12 +292,12 @@
     "menus": {
       "editor/context": [
         {
-          "when": "resourceFilename =~ /gitlab-ci\\.yml$/",
+          "when": "resourceFilename =~ /gitlab-ci\\.ya?ml$/",
           "command": "gitlab-component-helper.browseComponents",
           "group": "navigation"
         },
         {
-          "when": "resourceFilename =~ /gitlab-ci\\.yml$/",
+          "when": "resourceFilename =~ /gitlab-ci\\.ya?ml$/",
           "command": "gitlab-component-helper.visualizePipeline",
           "group": "navigation@2"
         }
@@ -314,7 +314,7 @@
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
     "pretest": "npm run compile",
-    "prepare": "husky && husky install",
+    "prepare": "husky",
     "test": "node tests/run-tests.js",
     "test:unit": "node tests/run-tests.js unit",
     "test:integration": "node tests/run-tests.js integration",
@@ -360,7 +360,7 @@
     "dotenv": "^17.4.2",
     "esbuild": "^0.28.0",
     "eslint": "^10.3.0",
-    "husky": "^8.0.0",
+    "husky": "^9.1.6",
     "is-ci": "^4.0.0",
     "js-yaml": "^4.1.1",
     "mocha": "^11.7.5",
