@@ -342,11 +342,17 @@ export class PipelineParser {
             if (!orderedStages.includes('.post')) orderedStages.push('.post');
         }
 
-        // Ensure all jobs have their stages created, even if they defined a stage that isn't in `stages`
+        // Ensure all jobs have their stages created, even if they defined a stage that isn't in `stages`.
+        // Insert before .post so .post always remains last, matching GitLab CI behaviour.
         const jobStages = new Set(this.allJobs.map(j => j.stage));
+        const postIdx = orderedStages.indexOf('.post');
         for (const s of jobStages) {
             if (!orderedStages.includes(s)) {
-                orderedStages.push(s);
+                if (postIdx >= 0) {
+                    orderedStages.splice(postIdx, 0, s);
+                } else {
+                    orderedStages.push(s);
+                }
             }
         }
 
