@@ -13,8 +13,5 @@ pipeline_execution_policy:
     description: Detects committed secrets
     enabled: true
     pipeline:
-      stages:
-        - secret_scan
-      secret_detection_job:
-        stage: secret_scan
-        script: echo "running secret detection"
+      include:
+        - local: pipelines/secret-detection.gitlab-ci.yml

@@ -384,32 +384,43 @@ export class PipelineParser {
                 await this.parseRecursive(localContent, localPath, depth, context);
 
             } else if (path.isAbsolute(currentSource)) {
-                // Relative inc resolved from workspace repo root (GitLab CI semantics:
-                // local: is repo-root-relative, not relative to the including file).
-                const workspaceFolders = vscode.workspace.workspaceFolders;
-                if (!workspaceFolders || workspaceFolders.length === 0) {
-                    this.errors.push(`Cannot resolve local file ${inc}: no workspace open.`);
-                    return;
-                }
-
-                const repoRoot = workspaceFolders[0].uri.fsPath;
+                // Relative inc: resolve using a prioritised list of candidate paths.
+                //
+                // GitLab CI semantics say local: is repo-root-relative (candidate 1),
+                // but when the including file is a PEP from a separate repo/directory
+                // the workspace root is wrong.  Fall back to the directory of the
+                // including file (candidate 2) so policy-project includes still resolve.
                 const cleanInc = inc.startsWith('/') ? inc.substring(1) : inc;
-                const localPath = path.normalize(path.join(repoRoot, cleanInc));
+                const workspaceFolders = vscode.workspace.workspaceFolders;
 
-                const isInsideWorkspace = workspaceFolders.some(f => {
-                    const relative = path.relative(f.uri.fsPath, localPath);
-                    return !relative.startsWith('..') && !path.isAbsolute(relative);
-                });
-                if (!isInsideWorkspace) {
-                    this.errors.push(`Access denied: local include ${inc} resolves outside the workspace boundaries.`);
+                const candidates: string[] = [];
+                if (workspaceFolders && workspaceFolders.length > 0) {
+                    candidates.push(path.normalize(path.join(workspaceFolders[0].uri.fsPath, cleanInc)));
+                }
+                const dirRelative = path.normalize(path.join(path.dirname(currentSource), cleanInc));
+                if (!candidates.some(c => c === dirRelative)) {
+                    candidates.push(dirRelative);
+                }
+
+                let resolvedPath: string | undefined;
+                for (const candidate of candidates) {
+                    try {
+                        await fs.promises.access(candidate, fs.constants.R_OK);
+                        resolvedPath = candidate;
+                        break;
+                    } catch { /* try next candidate */ }
+                }
+
+                if (!resolvedPath) {
+                    this.errors.push(`Cannot find local file ${inc} (checked workspace root and relative to ${path.basename(currentSource)})`);
                     return;
                 }
 
-                const localContent = await fs.promises.readFile(localPath, 'utf8');
-                if (!this.includedSources.includes(localPath)) {
-                    this.includedSources.push(localPath);
+                const localContent = await fs.promises.readFile(resolvedPath, 'utf8');
+                if (!this.includedSources.includes(resolvedPath)) {
+                    this.includedSources.push(resolvedPath);
                 }
-                await this.parseRecursive(localContent, localPath, depth, context);
+                await this.parseRecursive(localContent, resolvedPath, depth, context);
 
             } else {
                 this.errors.push(`Cannot resolve local file ${inc} because current source is not a local file.`);
