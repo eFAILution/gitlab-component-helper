@@ -44,7 +44,8 @@ export class PipelineVisualizerProvider {
                 {
                     enableScripts: true,
                     retainContextWhenHidden: true,
-                    enableCommandUris: true
+                    enableCommandUris: true,
+                    localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')]
                 }
             );
 
@@ -140,7 +141,6 @@ export class PipelineVisualizerProvider {
     private getGraphHtml(graph: PipelineGraph, sourceName: string, webview: vscode.Webview): string {
         let mermaidCode = 'flowchart LR\n';
 
-        let prevStageId = '';
         const stageIds: string[] = [];
 
         // Filter stages: we only show explicit stages or implicit stages that have jobs
@@ -340,7 +340,7 @@ export class PipelineVisualizerProvider {
         </head>
         <body>
             <h2>Error visualizing pipeline</h2>
-            <p>${error}</p>
+            <p>${escapeHtml(error)}</p>
         </body>
         </html>`;
     }
