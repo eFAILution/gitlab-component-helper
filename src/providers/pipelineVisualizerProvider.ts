@@ -156,10 +156,18 @@ export class PipelineVisualizerProvider {
                 mermaidCode += `    empty_${stageId}[No jobs]\n`;
                 mermaidCode += `    style empty_${stageId} fill:none,stroke:none\n`;
             } else {
+                const jobIds: string[] = [];
                 stage.jobs.forEach(job => {
                     const jobId = `job_${job.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
+                    jobIds.push(jobId);
                     mermaidCode += `    ${jobId}["${escapeMermaid(job.name)}<br/><small><i>${escapeMermaid(job.source)}</i></small>"]\n`;
                 });
+                // Chain jobs with invisible links to force vertical (TB) stacking.
+                // Mermaid's subgraph direction TB is unreliable inside an LR parent;
+                // ~~~ links guarantee the layout engine stacks them top-to-bottom.
+                if (jobIds.length > 1) {
+                    mermaidCode += `    ${jobIds.join(' ~~~ ')}\n`;
+                }
             }
             mermaidCode += `  end\n`;
 
