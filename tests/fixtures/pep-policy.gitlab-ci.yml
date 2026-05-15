@@ -2,7 +2,7 @@ pipeline_execution_policy:
   - name: SAST Policy
     description: Static analysis security testing
     enabled: true
-    pipeline:
+    content:
       stages:
         - security_test
       sast_job:
@@ -12,6 +12,6 @@ pipeline_execution_policy:
   - name: Secret Detection Policy
     description: Detects committed secrets
     enabled: true
-    pipeline:
+    content:
       include:
         - local: pipelines/secret-detection.gitlab-ci.yml

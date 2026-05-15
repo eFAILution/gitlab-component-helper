@@ -28,7 +28,7 @@ const DEFAULT_STAGES = ['.pre', 'build', 'test', 'deploy', '.post'];
 const RESERVED_KEYWORDS = new Set([
     'image', 'services', 'stages', 'types', 'before_script', 'after_script',
     'variables', 'cache', 'include', 'pages', 'workflow', 'default', 'spec',
-    'pipeline_execution_policy'
+    'pipeline_execution_policy', 'content'
 ]);
 
 export class PipelineParser {
@@ -132,10 +132,14 @@ export class PipelineParser {
         // the visualizer alongside the rest of the pipeline.
         if (parsed.pipeline_execution_policy && Array.isArray(parsed.pipeline_execution_policy)) {
             for (const policy of parsed.pipeline_execution_policy) {
-                if (!policy || !policy.pipeline || typeof policy.pipeline !== 'object') {
+                if (!policy) continue;
+                
+                // GitLab PEPs use 'content' for the embedded pipeline, but we support
+                // 'pipeline' as a fallback (used in some documentation/earlier versions).
+                const pipelineDoc = policy.content || policy.pipeline;
+                if (!pipelineDoc || typeof pipelineDoc !== 'object') {
                     continue;
                 }
-                const pipelineDoc = policy.pipeline;
                 const policyLabel = policy.name
                     ? `PEP: ${policy.name} (${sourceName})`
                     : `PEP (${sourceName})`;
@@ -185,15 +189,23 @@ export class PipelineParser {
 
         try {
             if (typeof inc === 'string') {
-                // simple local include or remote?
                 if (inc.startsWith('http')) {
                     targetUrl = inc;
                     targetName = inc;
+                } else if (inc.includes('@')) {
+                    // String shorthand for component: 'group/project/component@1.0.0'
+                    inc = { component: inc };
+                } else if (inc.includes(':')) {
+                    // String shorthand for project: 'group/project:file.yml'
+                    const [project, file] = inc.split(':');
+                    inc = { project, file };
                 } else {
                     await this.resolveLocalInclude(inc, currentSource, depth, context, componentOrigin);
                     return;
                 }
-            } else if (inc.local) {
+            }
+
+            if (inc.local) {
                 await this.resolveLocalInclude(inc.local, currentSource, depth, context, componentOrigin);
                 return;
             } else if (inc.component) {
@@ -232,6 +244,22 @@ export class PipelineParser {
                     `templates/${parsedUrl.name}.yml`,
                     `templates/template.yml`
                 ];
+
+                // Local Redirect: If this component is in the current project, try resolving locally first.
+                // This handles the case where a PEP or pipeline refers to its own files via component syntax.
+                if (context?.projectPath && parsedUrl.path === context.projectPath && 
+                    parsedUrl.gitlabInstance === (context.gitlabInstance || 'gitlab.com')) {
+                    for (const templatePath of combinations) {
+                        const resolved = await this.tryResolveLocal(templatePath, currentSource, context);
+                        if (resolved) {
+                            if (!this.includedSources.includes(resolved.path)) {
+                                this.includedSources.push(resolved.path);
+                            }
+                            await this.parseRecursive(resolved.content, resolved.path, depth, context);
+                            return;
+                        }
+                    }
+                }
 
                 let fetched = false;
                 const cacheManager = getComponentCacheManager();
@@ -283,6 +311,19 @@ export class PipelineParser {
                     targetName = `project:${projectPath}:${expandedFile}`;
                     const ref = inc.ref || 'HEAD';
                     const cleanFile = expandedFile.replace(/^\//, '');
+
+                    // Local Redirect: If this project include is in the current project, try resolving locally first.
+                    if (context?.projectPath && projectPath === context.projectPath && 
+                        gitlabInstance === (context.gitlabInstance || 'gitlab.com')) {
+                        const resolved = await this.tryResolveLocal(cleanFile, currentSource, context);
+                        if (resolved) {
+                            if (!this.includedSources.includes(resolved.path)) {
+                                this.includedSources.push(resolved.path);
+                            }
+                            await this.parseRecursive(resolved.content, resolved.path, depth, context);
+                            continue; // Move to next file in inc.file array
+                        }
+                    }
                     
                     try {
                         const cacheManager = getComponentCacheManager();
@@ -332,6 +373,51 @@ export class PipelineParser {
         }
     }
 
+    /**
+     * Helper to try resolving a path locally without side-effects (errors)
+     */
+    private async tryResolveLocal(inc: string, currentSource: string, context?: any): Promise<{path: string, content: string} | undefined> {
+        const cleanInc = inc.startsWith('/') ? inc.substring(1) : inc;
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+
+        const candidates: string[] = [];
+        // Absolute path
+        if (path.isAbsolute(inc)) {
+            candidates.push(path.normalize(inc));
+        } else {
+            // Workspace relative
+            if (workspaceFolders && workspaceFolders.length > 0) {
+                candidates.push(path.normalize(path.join(workspaceFolders[0].uri.fsPath, cleanInc)));
+            }
+            // currentSource relative
+            if (path.isAbsolute(currentSource)) {
+                candidates.push(path.normalize(path.join(path.dirname(currentSource), cleanInc)));
+            }
+        }
+
+        for (const candidate of candidates) {
+            try {
+                // Security check: must be inside workspace OR currentSource is absolute
+                if (workspaceFolders && workspaceFolders.length > 0) {
+                    const isInside = workspaceFolders.some(f => {
+                        const relative = path.relative(f.uri.fsPath, candidate);
+                        return !relative.startsWith('..') && !path.isAbsolute(relative);
+                    });
+                    if (!isInside && !path.isAbsolute(currentSource)) {
+                        continue;
+                    }
+                }
+
+                await fs.promises.access(candidate, fs.constants.R_OK);
+                const content = await fs.promises.readFile(candidate, 'utf8');
+                return { path: candidate, content };
+            } catch {
+                continue;
+            }
+        }
+        return undefined;
+    }
+
     private async resolveLocalInclude(inc: string, currentSource: string, depth: number, context?: any, componentOrigin?: { gitlabInstance: string; projectPath: string; ref: string }) {
         try {
             // If we're inside a fetched component/project template, resolve local: via GitLab API
@@ -356,74 +442,14 @@ export class PipelineParser {
                 return;
             }
 
-            // Absolute inc paths (e.g. from alwaysInclude) are used as-is and don't
-            // need workspace resolution. Relative paths must be resolved from the repo
-            // root and require an open workspace folder.
-            if (path.isAbsolute(inc)) {
-                const localPath = path.normalize(inc);
-
-                // Enforce workspace boundary when workspaceFolders is available, but skip
-                // the check when no workspace is open — absolute paths from settings are
-                // user-configured and trusted in that context.
-                const workspaceFolders = vscode.workspace.workspaceFolders;
-                if (workspaceFolders && workspaceFolders.length > 0) {
-                    const isInsideWorkspace = workspaceFolders.some(f => {
-                        const relative = path.relative(f.uri.fsPath, localPath);
-                        return !relative.startsWith('..') && !path.isAbsolute(relative);
-                    });
-                    if (!isInsideWorkspace) {
-                        this.errors.push(`Access denied: local include ${inc} resolves outside the workspace boundaries.`);
-                        return;
-                    }
+            const resolved = await this.tryResolveLocal(inc, currentSource, context);
+            if (resolved) {
+                if (!this.includedSources.includes(resolved.path)) {
+                    this.includedSources.push(resolved.path);
                 }
-
-                const localContent = await fs.promises.readFile(localPath, 'utf8');
-                if (!this.includedSources.includes(localPath)) {
-                    this.includedSources.push(localPath);
-                }
-                await this.parseRecursive(localContent, localPath, depth, context);
-
-            } else if (path.isAbsolute(currentSource)) {
-                // Relative inc: resolve using a prioritised list of candidate paths.
-                //
-                // GitLab CI semantics say local: is repo-root-relative (candidate 1),
-                // but when the including file is a PEP from a separate repo/directory
-                // the workspace root is wrong.  Fall back to the directory of the
-                // including file (candidate 2) so policy-project includes still resolve.
-                const cleanInc = inc.startsWith('/') ? inc.substring(1) : inc;
-                const workspaceFolders = vscode.workspace.workspaceFolders;
-
-                const candidates: string[] = [];
-                if (workspaceFolders && workspaceFolders.length > 0) {
-                    candidates.push(path.normalize(path.join(workspaceFolders[0].uri.fsPath, cleanInc)));
-                }
-                const dirRelative = path.normalize(path.join(path.dirname(currentSource), cleanInc));
-                if (!candidates.some(c => c === dirRelative)) {
-                    candidates.push(dirRelative);
-                }
-
-                let resolvedPath: string | undefined;
-                for (const candidate of candidates) {
-                    try {
-                        await fs.promises.access(candidate, fs.constants.R_OK);
-                        resolvedPath = candidate;
-                        break;
-                    } catch { /* try next candidate */ }
-                }
-
-                if (!resolvedPath) {
-                    this.errors.push(`Cannot find local file ${inc} (checked workspace root and relative to ${path.basename(currentSource)})`);
-                    return;
-                }
-
-                const localContent = await fs.promises.readFile(resolvedPath, 'utf8');
-                if (!this.includedSources.includes(resolvedPath)) {
-                    this.includedSources.push(resolvedPath);
-                }
-                await this.parseRecursive(localContent, resolvedPath, depth, context);
-
+                await this.parseRecursive(resolved.content, resolved.path, depth, context);
             } else {
-                this.errors.push(`Cannot resolve local file ${inc} because current source is not a local file.`);
+                this.errors.push(`Cannot find local file ${inc} (checked workspace root and relative to ${path.basename(currentSource)})`);
             }
         } catch (err) {
             this.errors.push(`Failed to read local file ${inc}: ${err instanceof Error ? err.message : String(err)}`);
