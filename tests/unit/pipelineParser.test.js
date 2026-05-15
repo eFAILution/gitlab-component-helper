@@ -217,13 +217,60 @@ pipeline_execution_policy:
         failed++;
     }
 
+    console.log('\nTest 5: alwaysInclude with absolute PEP path does not corrupt the main pipeline YAML');
+    // Temporarily give the vscode mock a real workspace folder so resolveLocalInclude
+    // can validate absolute paths against workspace boundaries.
+    const projectRoot = path.resolve(__dirname, '../../');
+    vscodeMock.workspace.workspaceFolders = [{ uri: { fsPath: projectRoot } }];
+    try {
+        const complexFixture = path.join(projectRoot, 'tests/fixtures/complex-pipeline.gitlab-ci.yml');
+        const pepFixture    = path.join(projectRoot, 'tests/fixtures/pep-policy.gitlab-ci.yml');
+
+        const complexContent = fs.readFileSync(complexFixture, 'utf8');
+
+        // The key scenario: PEP file is passed as an extraInclude (what alwaysInclude does).
+        // Previously this was injected as a YAML string, causing duplicate-key corruption.
+        const extraIncludes = [{ local: pepFixture }];
+
+        const parser = new PipelineParser(10);
+        const graph = await parser.parse(complexContent, complexFixture, {}, extraIncludes);
+
+        // 1. The main file must parse cleanly — no YAML corruption errors
+        const parseErrors = graph.errors.filter(e => e.includes('Failed to parse YAML'));
+        assert.strictEqual(parseErrors.length, 0,
+            `YAML parse errors must be zero. Got: ${parseErrors.join('; ')}`);
+
+        const jobNames = graph.stages.flatMap(s => s.jobs).map(j => j.name);
+
+        // 2. Jobs from the complex pipeline main file must be present
+        assert.ok(jobNames.includes('main_app_lint'),   'main_app_lint must be present from complex pipeline');
+        assert.ok(jobNames.includes('main_app_deploy'), 'main_app_deploy must be present from complex pipeline');
+
+        // 3. Jobs from the PEP file must also be present
+        assert.ok(jobNames.includes('sast_job'),              'sast_job must be extracted from PEP policy');
+        assert.ok(jobNames.includes('secret_detection_job'),  'secret_detection_job must be extracted from PEP policy');
+
+        // 4. The top-level pipeline_execution_policy key must NOT appear as a job name
+        assert.ok(!jobNames.includes('pipeline_execution_policy'),
+            'pipeline_execution_policy must not be treated as a job');
+
+        console.log('alwaysInclude + complex pipeline: PASS ✅');
+        passed++;
+    } catch (e) {
+        console.error('alwaysInclude + complex pipeline: FAIL ❌', e.message);
+        failed++;
+    } finally {
+        // Restore mock so subsequent tests are unaffected
+        vscodeMock.workspace.workspaceFolders = [];
+    }
+
     // Cleanup
     if (fs.existsSync(tempFile)) {
         fs.unlinkSync(tempFile);
     }
 
     console.log(`\n=== Pipeline Parser Test Summary ===`);
-    console.log(`Total tests: 4`);
+    console.log(`Total tests: 5`);
     console.log(`Passed: ${passed} ✅`);
     console.log(`Failed: ${failed} ${failed > 0 ? '❌' : ''}`);
 

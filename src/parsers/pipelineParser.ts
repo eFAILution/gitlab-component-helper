@@ -43,12 +43,21 @@ export class PipelineParser {
         this.maxDepth = maxDepth;
     }
 
-    public async parse(content: string, sourceName: string, context?: any): Promise<PipelineGraph> {
+    public async parse(content: string, sourceName: string, context?: any, extraIncludes?: any[]): Promise<PipelineGraph> {
         this.visitedSources.clear();
         this.allJobs = [];
         this.customStages = [];
         this.includedSources = [sourceName];
         this.errors = [];
+
+        // Resolve any always-include entries first, before the main file.
+        // These are passed as parsed include objects so we avoid string-injection
+        // issues (duplicate YAML keys, backslash escaping on Windows paths, etc.).
+        if (extraIncludes && extraIncludes.length > 0) {
+            for (const inc of extraIncludes) {
+                await this.resolveInclude(inc, sourceName, 1, context);
+            }
+        }
 
         await this.parseRecursive(content, sourceName, 0, context);
 
@@ -127,7 +136,14 @@ export class PipelineParser {
                     continue;
                 }
                 const pipelineDoc = policy.pipeline;
-                const policyLabel = policy.name ? `PEP: ${policy.name}` : `PEP (${sourceName})`;
+                const policyLabel = policy.name
+                    ? `PEP: ${policy.name} (${sourceName})`
+                    : `PEP (${sourceName})`;
+
+                // Register the policy so it appears in the "Included Sources" panel
+                if (!this.includedSources.includes(policyLabel)) {
+                    this.includedSources.push(policyLabel);
+                }
 
                 // Extract stages declared inside the policy pipeline
                 if (pipelineDoc.stages && Array.isArray(pipelineDoc.stages)) {
@@ -340,18 +356,45 @@ export class PipelineParser {
                 return;
             }
 
-            // Otherwise resolve relative to the workspace root (GitLab CI semantics: local: is always repo-root-relative)
-            if (path.isAbsolute(currentSource)) {
+            // Absolute inc paths (e.g. from alwaysInclude) are used as-is and don't
+            // need workspace resolution. Relative paths must be resolved from the repo
+            // root and require an open workspace folder.
+            if (path.isAbsolute(inc)) {
+                const localPath = path.normalize(inc);
+
+                // Enforce workspace boundary when workspaceFolders is available, but skip
+                // the check when no workspace is open — absolute paths from settings are
+                // user-configured and trusted in that context.
+                const workspaceFolders = vscode.workspace.workspaceFolders;
+                if (workspaceFolders && workspaceFolders.length > 0) {
+                    const isInsideWorkspace = workspaceFolders.some(f => {
+                        const relative = path.relative(f.uri.fsPath, localPath);
+                        return !relative.startsWith('..') && !path.isAbsolute(relative);
+                    });
+                    if (!isInsideWorkspace) {
+                        this.errors.push(`Access denied: local include ${inc} resolves outside the workspace boundaries.`);
+                        return;
+                    }
+                }
+
+                const localContent = await fs.promises.readFile(localPath, 'utf8');
+                if (!this.includedSources.includes(localPath)) {
+                    this.includedSources.push(localPath);
+                }
+                await this.parseRecursive(localContent, localPath, depth, context);
+
+            } else if (path.isAbsolute(currentSource)) {
+                // Relative inc resolved from workspace repo root (GitLab CI semantics:
+                // local: is repo-root-relative, not relative to the including file).
                 const workspaceFolders = vscode.workspace.workspaceFolders;
                 if (!workspaceFolders || workspaceFolders.length === 0) {
                     this.errors.push(`Cannot resolve local file ${inc}: no workspace open.`);
                     return;
                 }
 
-                // GitLab resolves local: paths from the repo root, not from the including file's directory
                 const repoRoot = workspaceFolders[0].uri.fsPath;
                 const cleanInc = inc.startsWith('/') ? inc.substring(1) : inc;
-                const localPath = path.join(repoRoot, cleanInc);
+                const localPath = path.normalize(path.join(repoRoot, cleanInc));
 
                 const isInsideWorkspace = workspaceFolders.some(f => {
                     const relative = path.relative(f.uri.fsPath, localPath);
@@ -361,16 +404,18 @@ export class PipelineParser {
                     this.errors.push(`Access denied: local include ${inc} resolves outside the workspace boundaries.`);
                     return;
                 }
-                
+
                 const localContent = await fs.promises.readFile(localPath, 'utf8');
-                const targetName = `local:${inc}`;
-                this.includedSources.push(targetName);
+                if (!this.includedSources.includes(localPath)) {
+                    this.includedSources.push(localPath);
+                }
                 await this.parseRecursive(localContent, localPath, depth, context);
+
             } else {
                 this.errors.push(`Cannot resolve local file ${inc} because current source is not a local file.`);
             }
         } catch (err) {
-            this.errors.push(`Failed to read local file ${inc}`);
+            this.errors.push(`Failed to read local file ${inc}: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
 
