@@ -27,7 +27,8 @@ export interface PipelineGraph {
 const DEFAULT_STAGES = ['.pre', 'build', 'test', 'deploy', '.post'];
 const RESERVED_KEYWORDS = new Set([
     'image', 'services', 'stages', 'types', 'before_script', 'after_script',
-    'variables', 'cache', 'include', 'pages', 'workflow', 'default', 'spec'
+    'variables', 'cache', 'include', 'pages', 'workflow', 'default', 'spec',
+    'pipeline_execution_policy'
 ]);
 
 export class PipelineParser {
@@ -114,6 +115,50 @@ export class PipelineParser {
                 await this.resolveInclude(inc, sourceName, depth + 1, context, componentOrigin);
             }
         }
+
+        // 4. Handle GitLab Pipeline Execution Policies (PEP).
+        // A PEP file has a top-level `pipeline_execution_policy` array. Each entry
+        // has a `pipeline` key which is an embedded CI document with its own
+        // stages, jobs, and includes. We extract them all here so they appear in
+        // the visualizer alongside the rest of the pipeline.
+        if (parsed.pipeline_execution_policy && Array.isArray(parsed.pipeline_execution_policy)) {
+            for (const policy of parsed.pipeline_execution_policy) {
+                if (!policy || !policy.pipeline || typeof policy.pipeline !== 'object') {
+                    continue;
+                }
+                const pipelineDoc = policy.pipeline;
+                const policyLabel = policy.name ? `PEP: ${policy.name}` : `PEP (${sourceName})`;
+
+                // Extract stages declared inside the policy pipeline
+                if (pipelineDoc.stages && Array.isArray(pipelineDoc.stages)) {
+                    for (const stage of pipelineDoc.stages) {
+                        if (!this.customStages.includes(stage)) {
+                            this.customStages.push(stage);
+                        }
+                    }
+                }
+
+                // Extract inline jobs from the policy pipeline
+                for (const key of Object.keys(pipelineDoc)) {
+                    if (RESERVED_KEYWORDS.has(key) || key.startsWith('.') || key === 'stages') {
+                        continue;
+                    }
+                    const jobObj = pipelineDoc[key];
+                    if (jobObj && typeof jobObj === 'object') {
+                        const stage = jobObj.stage || 'test';
+                        this.allJobs.push({ name: key, stage, source: policyLabel });
+                    }
+                }
+
+                // Resolve includes declared inside the policy pipeline
+                if (pipelineDoc.include) {
+                    const pepIncludes = Array.isArray(pipelineDoc.include) ? pipelineDoc.include : [pipelineDoc.include];
+                    for (const inc of pepIncludes) {
+                        await this.resolveInclude(inc, sourceName, depth + 1, context, componentOrigin);
+                    }
+                }
+            }
+        }
     }
 
     private async resolveInclude(inc: any, currentSource: string, depth: number, context?: any, componentOrigin?: { gitlabInstance: string; projectPath: string; ref: string }) {
@@ -163,7 +208,7 @@ export class PipelineParser {
                 let version = parsedUrl.version || 'main';
                 if (version === '[current-branch-or-sha]') {
                     version = 'HEAD';
-                    this.errors.push(`Replaced missing variable $CI_COMMIT_SHA with HEAD for component ${inc.component}. <a href="command:workbench.action.openSettings?%22gitlabComponentHelper.customVariables%22">Click here to set custom variables</a>`);
+                    this.errors.push(`Replaced missing variable $CI_COMMIT_SHA with HEAD for component ${inc.component}. Click here to set custom variables [action:openCustomVariables]`);
                 }
 
                 const combinations = [

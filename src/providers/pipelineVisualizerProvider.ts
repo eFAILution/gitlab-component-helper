@@ -184,8 +184,17 @@ export class PipelineVisualizerProvider {
             mermaidCode += `  ${stageIds[i]} --> ${stageIds[i + 1]}\n`;
         }
 
+        const renderError = (e: string): string => {
+            // Replace known action sentinels with clickable VS Code command links.
+            // All other content is HTML-escaped before substitution so there is no XSS surface.
+            return escapeHtml(e).replace(
+                /\[action:openCustomVariables\]/g,
+                `<a href="command:workbench.action.openSettings?%22gitlabComponentHelper.customVariables%22">set custom variables</a>`
+            );
+        };
+
         const errorsHtml = graph.errors.length > 0
-            ? `<div class="errors"><h3>Warnings:</h3><ul>${graph.errors.map(e => `<li>${escapeHtml(e)}</li>`).join('')}</ul></div>`
+            ? `<div class="errors"><h3>Warnings:</h3><ul>${graph.errors.map(e => `<li>${renderError(e)}</li>`).join('')}</ul></div>`
             : '';
 
         const includesHtml = graph.includedSources.length > 0

@@ -5,8 +5,8 @@ stages:
   - deploy
 
 include:
-  # 1. Local file include (PEP file)
-  - local: pep.gitlab-ci.yml
+  # # 1. Local file include (PEP file)
+  # - local: pep.gitlab-ci.yml
 
   # 2. Component file includes
   - component: gitlab.com/components/secret-detection/secret-detection@1.1.2

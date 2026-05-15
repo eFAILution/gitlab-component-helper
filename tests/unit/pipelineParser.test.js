@@ -168,13 +168,62 @@ job3:
     }
 
 
+    console.log('\nTest 4: Pipeline Execution Policy (PEP) documents are parsed correctly');
+    try {
+        const parser = new PipelineParser(10);
+        const pepYaml = `
+pipeline_execution_policy:
+  - name: SAST Policy
+    enabled: true
+    pipeline:
+      stages:
+        - security_test
+      sast_job:
+        stage: security_test
+        script: echo "running SAST"
+  - name: Secret Detection Policy
+    enabled: true
+    pipeline:
+      stages:
+        - secret_scan
+      secret_detection_job:
+        stage: secret_scan
+        script: echo "running secret detection"
+`;
+        const graph = await parser.parse(pepYaml, 'security-policies.yml');
+        const stageNames = graph.stages.map(s => s.name);
+        const jobNames = graph.stages.flatMap(s => s.jobs).map(j => j.name);
+
+        // The top-level pipeline_execution_policy key must NOT appear as a job
+        assert.ok(!jobNames.includes('pipeline_execution_policy'),
+            'pipeline_execution_policy must not be treated as a job');
+
+        // Stages from both policies must be present
+        assert.ok(stageNames.includes('security_test'), 'security_test stage must be present');
+        assert.ok(stageNames.includes('secret_scan'), 'secret_scan stage must be present');
+
+        // Jobs from both policies must be extracted
+        assert.ok(jobNames.includes('sast_job'), 'sast_job must be extracted from SAST policy');
+        assert.ok(jobNames.includes('secret_detection_job'), 'secret_detection_job must be extracted from Secret Detection policy');
+
+        // Job sources should identify the policy they came from
+        const sastJob = graph.stages.flatMap(s => s.jobs).find(j => j.name === 'sast_job');
+        assert.ok(sastJob?.source.includes('SAST Policy'), `sast_job source should reference policy name, got: ${sastJob?.source}`);
+
+        console.log('PEP document parsing: PASS ✅');
+        passed++;
+    } catch (e) {
+        console.error('PEP document parsing: FAIL ❌', e.message);
+        failed++;
+    }
+
     // Cleanup
     if (fs.existsSync(tempFile)) {
         fs.unlinkSync(tempFile);
     }
 
     console.log(`\n=== Pipeline Parser Test Summary ===`);
-    console.log(`Total tests: 3`);
+    console.log(`Total tests: 4`);
     console.log(`Passed: ${passed} ✅`);
     console.log(`Failed: ${failed} ${failed > 0 ? '❌' : ''}`);
 

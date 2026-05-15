@@ -1,0 +1,20 @@
+pipeline_execution_policy:
+  - name: SAST Policy
+    description: Static analysis security testing
+    enabled: true
+    pipeline:
+      stages:
+        - security_test
+      sast_job:
+        stage: security_test
+        script: echo "running SAST"
+
+  - name: Secret Detection Policy
+    description: Detects committed secrets
+    enabled: true
+    pipeline:
+      stages:
+        - secret_scan
+      secret_detection_job:
+        stage: secret_scan
+        script: echo "running secret detection"
