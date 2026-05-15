@@ -147,6 +147,23 @@ export class ComponentService implements ComponentSource {
     return this.httpClient.fetchJson(url, options);
   }
 
+  public async fetchRawFile(
+    gitlabInstance: string,
+    projectPath: string,
+    filePath: string,
+    ref: string = 'main'
+  ): Promise<string> {
+    const cleanGitlabInstance = this.urlParser.cleanGitLabInstance(gitlabInstance);
+    const url = `https://${cleanGitlabInstance}/api/v4/projects/${encodeURIComponent(
+      projectPath
+    )}/repository/files/${encodeURIComponent(filePath)}/raw?ref=${ref}`;
+
+    const token = await this.getTokenForProject(cleanGitlabInstance, projectPath);
+    const headers = token ? { 'PRIVATE-TOKEN': token } : undefined;
+
+    return this.httpClient.fetchText(url, { headers });
+  }
+
   private async fetchText(url: string): Promise<string> {
     return this.httpClient.fetchText(url);
   }

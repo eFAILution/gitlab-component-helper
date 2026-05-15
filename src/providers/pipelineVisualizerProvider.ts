@@ -2,6 +2,29 @@ import * as vscode from 'vscode';
 import { PipelineParser, PipelineGraph } from '../parsers/pipelineParser';
 import { getComponentService } from '../services/component/componentService';
 
+// Dev Note: these escape and nonce functions are possible insufficient to really prevent XSS attacks. The AI tried but... it really should be checked by a security expert.
+function escapeHtml(unsafe: string): string {
+    return unsafe
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function escapeMermaid(unsafe: string): string {
+    return escapeHtml(unsafe.replace(/\\/g, "/"));
+}
+
+function getNonce() {
+    let text = '';
+    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    for (let i = 0; i < 32; i++) {
+        text += possible.charAt(Math.floor(Math.random() * possible.length));
+    }
+    return text;
+}
+
 export class PipelineVisualizerProvider {
     private panel: vscode.WebviewPanel | undefined;
     private context: vscode.ExtensionContext;
@@ -50,16 +73,23 @@ export class PipelineVisualizerProvider {
                     ? 'template.yml'
                     : `${componentContext.name}.yml`;
 
-                const url = `https://${gitlabInstance}/api/v4/projects/${encodeURIComponent(componentContext.sourcePath)}/repository/files/${encodeURIComponent(`templates/${templateName}`)}/raw?ref=${componentContext.version || 'main'}`;
-
                 try {
-                    content = await componentService.httpClient.fetchText(url);
+                    content = await componentService.fetchRawFile(
+                        gitlabInstance,
+                        componentContext.sourcePath,
+                        `templates/${templateName}`,
+                        componentContext.version || 'main'
+                    );
                     sourceName = componentContext.name;
                 } catch (e) {
                     // Try fallback
-                    const fallbackUrl = `https://${gitlabInstance}/api/v4/projects/${encodeURIComponent(componentContext.sourcePath)}/repository/files/${encodeURIComponent(`templates/${componentContext.name}/template.yml`)}/raw?ref=${componentContext.version || 'main'}`;
                     try {
-                        content = await componentService.httpClient.fetchText(fallbackUrl);
+                        content = await componentService.fetchRawFile(
+                            gitlabInstance,
+                            componentContext.sourcePath,
+                            `templates/${componentContext.name}/template.yml`,
+                            componentContext.version || 'main'
+                        );
                         sourceName = componentContext.name;
                     } catch (err) {
                         throw new Error(`Failed to fetch component template for ${componentContext.name}`);
@@ -76,13 +106,13 @@ export class PipelineVisualizerProvider {
             const parser = new PipelineParser(10); // max depth 10
             const graph = await parser.parse(content, sourceName, parserContext);
 
-            this.panel.webview.html = this.getGraphHtml(graph, sourceName);
+            this.panel.webview.html = this.getGraphHtml(graph, sourceName, this.panel.webview);
         } catch (e) {
             this.panel.webview.html = this.getErrorHtml(e instanceof Error ? e.message : String(e));
         }
     }
 
-    private getGraphHtml(graph: PipelineGraph, sourceName: string): string {
+    private getGraphHtml(graph: PipelineGraph, sourceName: string, webview: vscode.Webview): string {
         let mermaidCode = 'flowchart LR\n';
 
         let prevStageId = '';
@@ -94,7 +124,7 @@ export class PipelineVisualizerProvider {
         visibleStages.forEach((stage, index) => {
             const stageId = `stage_${index}`;
             stageIds.push(stageId);
-            mermaidCode += `  subgraph ${stageId} ["${stage.name}"]\n`;
+            mermaidCode += `  subgraph ${stageId} ["${escapeMermaid(stage.name)}"]\n`;
             mermaidCode += `    direction TB\n`;
 
             if (stage.jobs.length === 0) {
@@ -103,8 +133,7 @@ export class PipelineVisualizerProvider {
             } else {
                 stage.jobs.forEach(job => {
                     const jobId = `job_${job.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
-                    // Use standard characters and <br> for newlines in node labels
-                    mermaidCode += `    ${jobId}["${job.name}<br/><small><i>${job.source}</i></small>"]\n`;
+                    mermaidCode += `    ${jobId}["${escapeMermaid(job.name)}<br/><small><i>${escapeMermaid(job.source)}</i></small>"]\n`;
                 });
             }
             mermaidCode += `  end\n`;
@@ -123,21 +152,26 @@ export class PipelineVisualizerProvider {
         }
 
         const errorsHtml = graph.errors.length > 0
-            ? `<div class="errors"><h3>Warnings:</h3><ul>${graph.errors.map(e => `<li>${e}</li>`).join('')}</ul></div>`
+            ? `<div class="errors"><h3>Warnings:</h3><ul>${graph.errors.map(e => `<li>${escapeHtml(e)}</li>`).join('')}</ul></div>`
             : '';
 
         const includesHtml = graph.includedSources.length > 0
-            ? `<div class="includes"><h3>Included Sources:</h3><ul>${graph.includedSources.map(s => `<li>${s}</li>`).join('')}</ul></div>`
+            ? `<div class="includes"><h3>Included Sources:</h3><ul>${graph.includedSources.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul></div>`
             : '';
+
+        const nonce = getNonce();
+        const mermaidUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'mermaid.min.js'));
+        const svgPanZoomUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'svg-pan-zoom.min.js'));
 
         return `<!DOCTYPE html>
         <html lang="en">
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https:; script-src 'nonce-${nonce}'; style-src ${webview.cspSource} 'unsafe-inline';">
             <title>Pipeline Visualization</title>
-            <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
-            <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+            <script nonce="${nonce}" src="${mermaidUri}"></script>
+            <script nonce="${nonce}" src="${svgPanZoomUri}"></script>
             <style>
                 body {
                     font-family: var(--vscode-font-family);
@@ -194,7 +228,7 @@ export class PipelineVisualizerProvider {
         </head>
         <body>
             <div class="container">
-                <h2>Pipeline: ${sourceName}</h2>
+                <h2>Pipeline: ${escapeHtml(sourceName)}</h2>
                 <div class="graph-container">
                     <div class="mermaid">
                         ${mermaidCode}
@@ -203,7 +237,7 @@ export class PipelineVisualizerProvider {
                 ${includesHtml}
                 ${errorsHtml}
             </div>
-            <script>
+            <script nonce="${nonce}">
                 mermaid.initialize({ startOnLoad: false, theme: 'default' });
                 
                 async function renderGraph() {
