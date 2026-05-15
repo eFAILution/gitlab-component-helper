@@ -2,21 +2,22 @@
 .vscode/**
 .vscode-test/**
 
-# Source and build files
+# Source TypeScript (compiled to out/extension.js via esbuild)
 src/**
 tests/**
 esbuild.js
 
-# TypeScript files (compiled to out/)
-**/*.map
+# TypeScript config and output
+tsconfig.json
+tsconfig.*.json
 **/*.ts
+**/*.map
 
-# Development config files
+# Development config
 .gitignore
+.editorconfig
 .yarnrc
 package-lock.json
-tsconfig.json
-**/tsconfig.json
 .eslintrc.js
 .eslintrc.json
 **/.eslintrc.json
@@ -24,37 +25,51 @@ eslint.config.js
 commitlint.config.js
 .pre-commit-config.yaml
 .yamllint.yml
+.copilotignore
 
 # Git and CI/CD
-**/.git
 .git/**
 .github/**
 .husky/**
 
-# AI and docs (keep README.md and CHANGELOG.md only)
+# AI context (internal dev docs)
 .ai/**
 docs/**
+
+# Dev-only markdown docs (README.md and CHANGELOG.md are kept)
 AGENTS.md
 CACHE_MANAGEMENT.md
 CLAUDE.md
 CONTRIBUTING.md
+COPILOT_COMMITS.md
 DEVELOPERS.md
+PERFORMANCE_OPTIMIZATIONS.md
+SEMANTIC_RELEASE.md
 TODO.md
 vsc-extension-quickstart.md
 
-# Scripts and utilities
+# Release tooling
+.release-it/
+.release-it.json
+.release-it.beta.json
+.releaserc.json
+.releaserc.local.json
 scripts/**
+
+# Misc dev files
+.gitmessage
+commit.diff
+compile.txt
+osv-scanner.toml
 rsync-changes.sh
 sync-changes.sh
+test-example.gitlab-ci.yml
 
-# Test and coverage
-.nyc_output
-coverage
-compile.txt
-
-# Build artifacts
-**/*.backup
+# Build artefacts (packages and intermediate outputs)
 *.vsix
+*.zip
+out-test/**
+vsix_contents/**
 
 # Dependencies
 node_modules/**
@@ -64,13 +79,16 @@ node_modules/**
 .env
 **/.env
 
-# Release config (not needed in package)
-.releaserc.json
-.releaserc.local.json
+# Test and coverage
+.nyc_output
+coverage
 
-# Excluded out/ subdirectories (only keep extension.js)
+# Only the esbuild bundle is needed from out/; no subdirectory chunks
+# (esbuild writes a single out/extension.js — subdirs don't exist after a clean build,
+#  but guard them anyway in case tsc --outDir was used during development)
 out/providers/**
 out/services/**
+out/parsers/**
 out/types/**
 out/utils/**
 out/test/**
