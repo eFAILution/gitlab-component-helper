@@ -54,7 +54,7 @@ export class PipelineParser {
         return this.buildGraph();
     }
 
-    private async parseRecursive(content: string, sourceName: string, depth: number, context?: any) {
+    private async parseRecursive(content: string, sourceName: string, depth: number, context?: any, componentOrigin?: { gitlabInstance: string; projectPath: string; ref: string }) {
         if (depth >= this.maxDepth) {
             this.errors.push(`Max recursion depth (${this.maxDepth}) reached at ${sourceName}`);
             return;
@@ -111,12 +111,12 @@ export class PipelineParser {
         if (parsed.include) {
             const includes = Array.isArray(parsed.include) ? parsed.include : [parsed.include];
             for (const inc of includes) {
-                await this.resolveInclude(inc, sourceName, depth + 1, context);
+                await this.resolveInclude(inc, sourceName, depth + 1, context, componentOrigin);
             }
         }
     }
 
-    private async resolveInclude(inc: any, currentSource: string, depth: number, context?: any) {
+    private async resolveInclude(inc: any, currentSource: string, depth: number, context?: any, componentOrigin?: { gitlabInstance: string; projectPath: string; ref: string }) {
         if (!inc) return;
 
         let targetUrl = '';
@@ -129,11 +129,11 @@ export class PipelineParser {
                     targetUrl = inc;
                     targetName = inc;
                 } else {
-                    await this.resolveLocalInclude(inc, currentSource, depth, context);
+                    await this.resolveLocalInclude(inc, currentSource, depth, context, componentOrigin);
                     return;
                 }
             } else if (inc.local) {
-                await this.resolveLocalInclude(inc.local, currentSource, depth, context);
+                await this.resolveLocalInclude(inc.local, currentSource, depth, context, componentOrigin);
                 return;
             } else if (inc.component) {
                 // Component include
@@ -180,7 +180,13 @@ export class PipelineParser {
                         const content = await cacheManager.fetchAndCacheRawTemplate(parsedUrl.gitlabInstance, parsedUrl.path, templatePath, version);
                         if (content && typeof content === 'string' && !content.includes('{"message":"404 Project Not Found"}')) {
                             this.includedSources.push(targetName);
-                            await this.parseRecursive(content, targetName, depth, context);
+                            // Pass the component's origin so local: includes inside the template resolve via GitLab API
+                            const origin: { gitlabInstance: string; projectPath: string; ref: string } = {
+                                gitlabInstance: parsedUrl.gitlabInstance,
+                                projectPath: parsedUrl.path,
+                                ref: version
+                            };
+                            await this.parseRecursive(content, targetName, depth, context, origin);
                             fetched = true;
                             break;
                         }
@@ -224,7 +230,9 @@ export class PipelineParser {
                             if (!this.includedSources.includes(targetName)) {
                                 this.includedSources.push(targetName);
                             }
-                            await this.parseRecursive(content, targetName, depth, context);
+                            // Pass the project origin so local: includes inside this file resolve via GitLab API
+                            const origin: { gitlabInstance: string; projectPath: string; ref: string } = { gitlabInstance, projectPath, ref };
+                            await this.parseRecursive(content, targetName, depth, context, origin);
                         } else {
                             this.errors.push(`Could not fetch project file ${inc.project}/${file}`);
                         }
@@ -263,22 +271,50 @@ export class PipelineParser {
         }
     }
 
-    private async resolveLocalInclude(inc: string, currentSource: string, depth: number, context?: any) {
+    private async resolveLocalInclude(inc: string, currentSource: string, depth: number, context?: any, componentOrigin?: { gitlabInstance: string; projectPath: string; ref: string }) {
         try {
+            // If we're inside a fetched component/project template, resolve local: via GitLab API
+            if (componentOrigin) {
+                const cleanPath = inc.replace(/^\//, '');
+                const targetName = `local:${inc}`;
+                if (!this.includedSources.includes(targetName)) {
+                    this.includedSources.push(targetName);
+                }
+                const cacheManager = getComponentCacheManager();
+                const content = await cacheManager.fetchAndCacheRawTemplate(
+                    componentOrigin.gitlabInstance,
+                    componentOrigin.projectPath,
+                    cleanPath,
+                    componentOrigin.ref
+                );
+                if (content && typeof content === 'string' && !content.includes('{"message":"404 Project Not Found"}')) {
+                    await this.parseRecursive(content, targetName, depth, context, componentOrigin);
+                } else {
+                    this.errors.push(`Could not fetch local file ${inc} from ${componentOrigin.projectPath}`);
+                }
+                return;
+            }
+
+            // Otherwise resolve relative to the workspace root (GitLab CI semantics: local: is always repo-root-relative)
             if (path.isAbsolute(currentSource)) {
-                const dir = path.dirname(currentSource);
-                const localPath = inc.startsWith('/') ? path.join(dir, inc.substring(1)) : path.resolve(dir, inc);
-                
                 const workspaceFolders = vscode.workspace.workspaceFolders;
-                if (workspaceFolders) {
-                    const isInsideWorkspace = workspaceFolders.some(f => {
-                        const relative = path.relative(f.uri.fsPath, localPath);
-                        return !relative.startsWith('..') && !path.isAbsolute(relative);
-                    });
-                    if (!isInsideWorkspace) {
-                        this.errors.push(`Access denied: local include ${inc} resolves outside the workspace boundaries.`);
-                        return;
-                    }
+                if (!workspaceFolders || workspaceFolders.length === 0) {
+                    this.errors.push(`Cannot resolve local file ${inc}: no workspace open.`);
+                    return;
+                }
+
+                // GitLab resolves local: paths from the repo root, not from the including file's directory
+                const repoRoot = workspaceFolders[0].uri.fsPath;
+                const cleanInc = inc.startsWith('/') ? inc.substring(1) : inc;
+                const localPath = path.join(repoRoot, cleanInc);
+
+                const isInsideWorkspace = workspaceFolders.some(f => {
+                    const relative = path.relative(f.uri.fsPath, localPath);
+                    return !relative.startsWith('..') && !path.isAbsolute(relative);
+                });
+                if (!isInsideWorkspace) {
+                    this.errors.push(`Access denied: local include ${inc} resolves outside the workspace boundaries.`);
+                    return;
                 }
                 
                 const localContent = await fs.promises.readFile(localPath, 'utf8');

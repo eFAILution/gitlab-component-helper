@@ -101,7 +101,32 @@ export class PipelineVisualizerProvider {
 
             const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
             const customVariables = config.get<Record<string, string>>('customVariables', {});
+            const alwaysInclude = config.get<string[]>('visualizer.alwaysInclude', []);
             const parserContext = componentContext ? { ...componentContext, customVariables } : { customVariables };
+
+            // Inject alwaysInclude entries as synthetic include directives prepended to the content.
+            // We do this by building a small YAML snippet and prepending it, so the parser's existing
+            // resolution logic (local, component, project) handles everything uniformly.
+            if (alwaysInclude.length > 0) {
+                const syntheticIncludes = alwaysInclude.map(entry => {
+                    if (entry.startsWith('component:')) {
+                        return `  - component: ${entry.slice('component:'.length)}`;
+                    }
+                    if (entry.startsWith('project:')) {
+                        // Format: project:group/path:file.yml@ref
+                        const parts = entry.slice('project:'.length).split(':');
+                        const project = parts[0];
+                        const fileAndRef = parts[1] || '';
+                        const atIdx = fileAndRef.lastIndexOf('@');
+                        const file = atIdx >= 0 ? fileAndRef.slice(0, atIdx) : fileAndRef;
+                        const ref = atIdx >= 0 ? fileAndRef.slice(atIdx + 1) : 'HEAD';
+                        return `  - project: ${project}\n    file: ${file}\n    ref: ${ref}`;
+                    }
+                    // Default: treat as a local path
+                    return `  - local: ${entry}`;
+                }).join('\n');
+                content = `include:\n${syntheticIncludes}\n${content}`;
+            }
 
             const parser = new PipelineParser(10); // max depth 10
             const graph = await parser.parse(content, sourceName, parserContext);

@@ -244,6 +244,15 @@
             "template.yaml"
           ],
           "description": "Filenames recognised inside per-component subfolders, e.g. 'templates/foo/template.yml'."
+        },
+        "gitlabComponentHelper.visualizer.alwaysInclude": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Files or components to automatically inject into every pipeline visualization, without needing an explicit `include:` in the YAML file.\n\nEach entry can be:\n- A **local path** relative to the workspace root: `\"ci/pep.gitlab-ci.yml\"`\n- A **component reference**: `\"component:gitlab.com/my-group/pep/pep@1.0.0\"`\n- A **project file**: `\"project:my-group/pep:pipelines/pipeline.yaml@main\"`\n\nThis is useful for PEP or shared policy files that apply to every pipeline in your workspace.",
+          "items": {
+            "type": "string"
+          },
+          "scope": "resource"
         }
       }
     },
