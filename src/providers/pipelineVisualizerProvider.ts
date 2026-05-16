@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { PipelineParser, PipelineGraph } from '../parsers/pipelineParser';
+import { PipelineParser, PipelineGraph, PipelineJob, PipelineStage } from '../parsers/pipelineParser';
 import { getComponentService } from '../services/component/componentService';
 
 // Dev Note: these escape and nonce functions are possible insufficient to really prevent XSS attacks. The AI tried but... it really should be checked by a security expert.
@@ -103,7 +103,20 @@ export class PipelineVisualizerProvider {
             const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
             const customVariables = config.get<Record<string, string>>('customVariables', {});
             const alwaysInclude = config.get<string[]>('visualizer.alwaysInclude', []);
-            const parserContext = componentContext ? { ...componentContext, customVariables } : { customVariables };
+            const gitlabUrl = config.get<string>('gitlabUrl', 'https://gitlab.com');
+            const projectPath = config.get<string>('projectPath', '');
+
+            // Ensure gitlabInstance is just the hostname for comparison
+            let gitlabInstance = 'gitlab.com';
+            try {
+                gitlabInstance = new URL(gitlabUrl).hostname;
+            } catch {
+                gitlabInstance = gitlabUrl.replace(/^https?:\/\//, '').split('/')[0];
+            }
+
+            const parserContext = componentContext 
+                ? { ...componentContext, customVariables } 
+                : { gitlabInstance, projectPath, customVariables };
 
             // Build structured include objects for alwaysInclude entries.
             // We pass these directly to parser.parse() as pre-parsed objects rather than
@@ -156,7 +169,7 @@ export class PipelineVisualizerProvider {
                 mermaidCode += `    style empty_${stageId} fill:none,stroke:none\n`;
             } else {
                 const jobIds: string[] = [];
-                stage.jobs.forEach(job => {
+                stage.jobs.forEach((job: PipelineJob) => {
                     const jobId = `job_${job.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
                     jobIds.push(jobId);
                     mermaidCode += `    ${jobId}["${escapeMermaid(job.name)}<br/><small><i>${escapeMermaid(job.source)}</i></small>"]\n`;
@@ -192,12 +205,33 @@ export class PipelineVisualizerProvider {
             );
         };
 
+        const renderIncludeTree = (node: any, depth: number = 0, isLast: boolean = true, prefix: string = ''): string => {
+            let html = '';
+            const name = node.name;
+            
+            if (depth > 0) {
+                const connector = isLast ? '└── ' : '├── ';
+                html += `<div class="tree-line">${prefix}${connector}${escapeHtml(name)}</div>`;
+            } else {
+                html += `<div class="tree-line root-node">${escapeHtml(name)}</div>`;
+            }
+
+            const newPrefix = depth === 0 ? '' : prefix + (isLast ? '&nbsp;&nbsp;&nbsp;&nbsp;' : '│&nbsp;&nbsp;&nbsp;');
+            
+            if (node.children && node.children.length > 0) {
+                node.children.forEach((child: any, index: number) => {
+                    html += renderIncludeTree(child, depth + 1, index === node.children.length - 1, newPrefix);
+                });
+            }
+            return html;
+        };
+
         const errorsHtml = graph.errors.length > 0
             ? `<div class="errors"><h3>Warnings:</h3><ul>${graph.errors.map(e => `<li>${renderError(e)}</li>`).join('')}</ul></div>`
             : '';
 
-        const includesHtml = graph.includedSources.length > 0
-            ? `<div class="includes"><h3>Included Sources:</h3><ul>${graph.includedSources.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul></div>`
+        const includesHtml = graph.includeTree
+            ? `<div class="includes"><h3>Included Sources:</h3><div class="tree">${renderIncludeTree(graph.includeTree)}</div></div>`
             : '';
 
         const nonce = getNonce();
@@ -257,10 +291,24 @@ export class PipelineVisualizerProvider {
                     border-radius: 4px;
                 }
                 .includes {
-                    background-color: rgba(0,120,255,0.1);
-                    border: 1px solid blue;
+                    background-color: rgba(0,120,255,0.05);
+                    border: 1px solid rgba(0,120,255,0.3);
                     padding: 10px;
                     border-radius: 4px;
+                }
+                .tree {
+                    font-family: 'Courier New', Courier, monospace;
+                    font-size: 13px;
+                    line-height: 1.4;
+                    white-space: pre;
+                }
+                .tree-line {
+                    margin-bottom: 2px;
+                }
+                .root-node {
+                    font-weight: bold;
+                    color: var(--vscode-editor-foreground);
+                    margin-bottom: 5px;
                 }
                 h2, h3 {
                     margin-top: 0;

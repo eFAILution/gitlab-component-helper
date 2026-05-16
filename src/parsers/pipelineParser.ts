@@ -18,9 +18,15 @@ export interface PipelineStage {
     isImplicit: boolean;
 }
 
+export interface IncludeNode {
+    name: string;
+    children: IncludeNode[];
+}
+
 export interface PipelineGraph {
     stages: PipelineStage[];
     includedSources: string[];
+    includeTree: IncludeNode;
     errors: string[];
 }
 
@@ -37,6 +43,7 @@ export class PipelineParser {
     private allJobs: PipelineJob[] = [];
     private customStages: string[] = [];
     private includedSources: string[] = [];
+    private includeTree: IncludeNode = { name: 'root', children: [] };
     private errors: string[] = [];
 
     constructor(maxDepth: number = 10) {
@@ -48,23 +55,22 @@ export class PipelineParser {
         this.allJobs = [];
         this.customStages = [];
         this.includedSources = [sourceName];
+        this.includeTree = { name: sourceName, children: [] };
         this.errors = [];
 
         // Resolve any always-include entries first, before the main file.
-        // These are passed as parsed include objects so we avoid string-injection
-        // issues (duplicate YAML keys, backslash escaping on Windows paths, etc.).
         if (extraIncludes && extraIncludes.length > 0) {
             for (const inc of extraIncludes) {
-                await this.resolveInclude(inc, sourceName, 1, context);
+                await this.resolveInclude(inc, sourceName, 1, this.includeTree, context);
             }
         }
 
-        await this.parseRecursive(content, sourceName, 0, context);
+        await this.parseRecursive(content, sourceName, 0, this.includeTree, context);
 
         return this.buildGraph();
     }
 
-    private async parseRecursive(content: string, sourceName: string, depth: number, context?: any, componentOrigin?: { gitlabInstance: string; projectPath: string; ref: string }) {
+    private async parseRecursive(content: string, sourceName: string, depth: number, parentNode: IncludeNode, context?: any, componentOrigin?: { gitlabInstance: string; projectPath: string; ref: string }) {
         if (depth >= this.maxDepth) {
             this.errors.push(`Max recursion depth (${this.maxDepth}) reached at ${sourceName}`);
             return;
@@ -121,7 +127,7 @@ export class PipelineParser {
         if (parsed.include) {
             const includes = Array.isArray(parsed.include) ? parsed.include : [parsed.include];
             for (const inc of includes) {
-                await this.resolveInclude(inc, sourceName, depth + 1, context, componentOrigin);
+                await this.resolveInclude(inc, sourceName, depth + 1, parentNode, context, componentOrigin);
             }
         }
 
@@ -133,7 +139,7 @@ export class PipelineParser {
         if (parsed.pipeline_execution_policy && Array.isArray(parsed.pipeline_execution_policy)) {
             for (const policy of parsed.pipeline_execution_policy) {
                 if (!policy) continue;
-                
+
                 // GitLab PEPs use 'content' for the embedded pipeline, but we support
                 // 'pipeline' as a fallback (used in some documentation/earlier versions).
                 const pipelineDoc = policy.content || policy.pipeline;
@@ -174,14 +180,14 @@ export class PipelineParser {
                 if (pipelineDoc.include) {
                     const pepIncludes = Array.isArray(pipelineDoc.include) ? pipelineDoc.include : [pipelineDoc.include];
                     for (const inc of pepIncludes) {
-                        await this.resolveInclude(inc, sourceName, depth + 1, context, componentOrigin);
+                        await this.resolveInclude(inc, sourceName, depth + 1, parentNode, context, componentOrigin);
                     }
                 }
             }
         }
     }
 
-    private async resolveInclude(inc: any, currentSource: string, depth: number, context?: any, componentOrigin?: { gitlabInstance: string; projectPath: string; ref: string }) {
+    private async resolveInclude(inc: any, currentSource: string, depth: number, parentNode: IncludeNode, context?: any, componentOrigin?: { gitlabInstance: string; projectPath: string; ref: string }) {
         if (!inc) return;
 
         let targetUrl = '';
@@ -192,27 +198,27 @@ export class PipelineParser {
                 if (inc.startsWith('http')) {
                     targetUrl = inc;
                     targetName = inc;
-                } else if (inc.includes('@')) {
+                } else if (!path.isAbsolute(inc) && inc.includes('@')) {
                     // String shorthand for component: 'group/project/component@1.0.0'
                     inc = { component: inc };
-                } else if (inc.includes(':')) {
+                } else if (!path.isAbsolute(inc) && inc.includes(':')) {
                     // String shorthand for project: 'group/project:file.yml'
                     const [project, file] = inc.split(':');
                     inc = { project, file };
                 } else {
-                    await this.resolveLocalInclude(inc, currentSource, depth, context, componentOrigin);
+                    await this.resolveLocalInclude(inc, currentSource, depth, parentNode, context, componentOrigin);
                     return;
                 }
             }
 
             if (inc.local) {
-                await this.resolveLocalInclude(inc.local, currentSource, depth, context, componentOrigin);
+                await this.resolveLocalInclude(inc.local, currentSource, depth, parentNode, context, componentOrigin);
                 return;
             } else if (inc.component) {
                 // Component include
                 // e.g., gitlab.com/my-group/my-project/my-component@1.0.0
                 let componentUrl = inc.component;
-                
+
                 // Expand variables like $CI_SERVER_FQDN
                 componentUrl = expandComponentUrl(componentUrl, {
                     gitlabInstance: context?.gitlabInstance || 'gitlab.com',
@@ -224,7 +230,7 @@ export class PipelineParser {
                 componentUrl = componentUrl.replace(/^https?:\/\//, '');
 
                 targetName = `component:${componentUrl}`;
-                
+
                 // Parse component URL to fetch the raw template
                 const componentService = getComponentService();
                 const parsedUrl = componentService.parseCustomComponentUrl(`https://${componentUrl}`);
@@ -246,16 +252,23 @@ export class PipelineParser {
                 ];
 
                 // Local Redirect: If this component is in the current project, try resolving locally first.
-                // This handles the case where a PEP or pipeline refers to its own files via component syntax.
-                if (context?.projectPath && parsedUrl.path === context.projectPath && 
-                    parsedUrl.gitlabInstance === (context.gitlabInstance || 'gitlab.com')) {
+                // We also try this if the parent file is local (no componentOrigin) to allow local experimentation.
+                const normalizedParsedPath = parsedUrl.path.toLowerCase().replace(/\.git$/, '').replace(/^\//, '').replace(/\/$/, '');
+                const normalizedContextPath = context?.projectPath?.toLowerCase().replace(/\.git$/, '').replace(/^\//, '').replace(/\/$/, '');
+
+                const isCurrentProject = context?.projectPath && normalizedParsedPath === normalizedContextPath &&
+                    parsedUrl.gitlabInstance.toLowerCase() === (context.gitlabInstance || 'gitlab.com').toLowerCase();
+
+                if (isCurrentProject || !componentOrigin) {
                     for (const templatePath of combinations) {
                         const resolved = await this.tryResolveLocal(templatePath, currentSource, context);
                         if (resolved) {
                             if (!this.includedSources.includes(resolved.path)) {
                                 this.includedSources.push(resolved.path);
                             }
-                            await this.parseRecursive(resolved.content, resolved.path, depth, context);
+                            const node = { name: resolved.path, children: [] };
+                            parentNode.children.push(node);
+                            await this.parseRecursive(resolved.content, resolved.path, depth, node, context);
                             return;
                         }
                     }
@@ -263,19 +276,20 @@ export class PipelineParser {
 
                 let fetched = false;
                 const cacheManager = getComponentCacheManager();
-                
+
                 for (const templatePath of combinations) {
                     try {
                         const content = await cacheManager.fetchAndCacheRawTemplate(parsedUrl.gitlabInstance, parsedUrl.path, templatePath, version);
                         if (content && typeof content === 'string' && !content.includes('{"message":"404 Project Not Found"}')) {
                             this.includedSources.push(targetName);
-                            // Pass the component's origin so local: includes inside the template resolve via GitLab API
                             const origin: { gitlabInstance: string; projectPath: string; ref: string } = {
                                 gitlabInstance: parsedUrl.gitlabInstance,
                                 projectPath: parsedUrl.path,
                                 ref: version
                             };
-                            await this.parseRecursive(content, targetName, depth, context, origin);
+                            const node = { name: targetName, children: [] };
+                            parentNode.children.push(node);
+                            await this.parseRecursive(content, targetName, depth, node, context, origin);
                             fetched = true;
                             break;
                         }
@@ -283,7 +297,7 @@ export class PipelineParser {
                         // Continue trying next combination
                     }
                 }
-                
+
                 if (!fetched) {
                     this.errors.push(`Could not fetch component ${componentUrl}`);
                 }
@@ -296,35 +310,43 @@ export class PipelineParser {
                     projectPath: context?.projectPath,
                     customVariables: context?.customVariables
                 });
-                
+
                 const files = Array.isArray(inc.file) ? inc.file : [inc.file];
                 const gitlabInstance = context?.gitlabInstance || 'gitlab.com';
                 const componentService = getComponentService();
-                
+
                 for (const file of files) {
                     let expandedFile = expandGitLabVariables(typeof file === 'string' ? file : String(file), {
                         gitlabInstance: context?.gitlabInstance || 'gitlab.com',
                         projectPath: context?.projectPath,
                         customVariables: context?.customVariables
                     });
-                    
+
                     targetName = `project:${projectPath}:${expandedFile}`;
                     const ref = inc.ref || 'HEAD';
                     const cleanFile = expandedFile.replace(/^\//, '');
 
                     // Local Redirect: If this project include is in the current project, try resolving locally first.
-                    if (context?.projectPath && projectPath === context.projectPath && 
-                        gitlabInstance === (context.gitlabInstance || 'gitlab.com')) {
+                    // We also try this if the parent file is local (no componentOrigin) to allow local experimentation.
+                    const normalizedProjPath = projectPath.toLowerCase().replace(/\.git$/, '').replace(/^\//, '').replace(/\/$/, '');
+                    const normalizedContextPath = context?.projectPath?.toLowerCase().replace(/\.git$/, '').replace(/^\//, '').replace(/\/$/, '');
+
+                    const isCurrentProject = context?.projectPath && normalizedProjPath === normalizedContextPath &&
+                        gitlabInstance.toLowerCase() === (context.gitlabInstance || 'gitlab.com').toLowerCase();
+
+                    if (isCurrentProject || !componentOrigin) {
                         const resolved = await this.tryResolveLocal(cleanFile, currentSource, context);
                         if (resolved) {
                             if (!this.includedSources.includes(resolved.path)) {
                                 this.includedSources.push(resolved.path);
                             }
-                            await this.parseRecursive(resolved.content, resolved.path, depth, context);
+                            const node = { name: resolved.path, children: [] };
+                            parentNode.children.push(node);
+                            await this.parseRecursive(resolved.content, resolved.path, depth, node, context);
                             continue; // Move to next file in inc.file array
                         }
                     }
-                    
+
                     try {
                         const cacheManager = getComponentCacheManager();
                         const content = await cacheManager.fetchAndCacheRawTemplate(gitlabInstance, projectPath, cleanFile, ref);
@@ -334,7 +356,9 @@ export class PipelineParser {
                             }
                             // Pass the project origin so local: includes inside this file resolve via GitLab API
                             const origin: { gitlabInstance: string; projectPath: string; ref: string } = { gitlabInstance, projectPath, ref };
-                            await this.parseRecursive(content, targetName, depth, context, origin);
+                            const node = { name: targetName, children: [] };
+                            parentNode.children.push(node);
+                            await this.parseRecursive(content, targetName, depth, node, context, origin);
                         } else {
                             this.errors.push(`Could not fetch project file ${inc.project}/${file}`);
                         }
@@ -365,7 +389,9 @@ export class PipelineParser {
                 const service = getComponentService();
                 const content = await service.httpClient.fetchText(targetUrl);
                 if (content) {
-                    await this.parseRecursive(content, targetName, depth, context);
+                    const node = { name: targetName, children: [] };
+                    parentNode.children.push(node);
+                    await this.parseRecursive(content, targetName, depth, node, context);
                 }
             }
         } catch (e) {
@@ -376,7 +402,7 @@ export class PipelineParser {
     /**
      * Helper to try resolving a path locally without side-effects (errors)
      */
-    private async tryResolveLocal(inc: string, currentSource: string, context?: any): Promise<{path: string, content: string} | undefined> {
+    private async tryResolveLocal(inc: string, currentSource: string, context?: any): Promise<{ path: string, content: string } | undefined> {
         const cleanInc = inc.startsWith('/') ? inc.substring(1) : inc;
         const workspaceFolders = vscode.workspace.workspaceFolders;
 
@@ -418,7 +444,7 @@ export class PipelineParser {
         return undefined;
     }
 
-    private async resolveLocalInclude(inc: string, currentSource: string, depth: number, context?: any, componentOrigin?: { gitlabInstance: string; projectPath: string; ref: string }) {
+    private async resolveLocalInclude(inc: string, currentSource: string, depth: number, parentNode: IncludeNode, context?: any, componentOrigin?: { gitlabInstance: string; projectPath: string; ref: string }) {
         try {
             // If we're inside a fetched component/project template, resolve local: via GitLab API
             if (componentOrigin) {
@@ -435,7 +461,9 @@ export class PipelineParser {
                     componentOrigin.ref
                 );
                 if (content && typeof content === 'string' && !content.includes('{"message":"404 Project Not Found"}')) {
-                    await this.parseRecursive(content, targetName, depth, context, componentOrigin);
+                    const node = { name: targetName, children: [] };
+                    parentNode.children.push(node);
+                    await this.parseRecursive(content, targetName, depth, node, context, componentOrigin);
                 } else {
                     this.errors.push(`Could not fetch local file ${inc} from ${componentOrigin.projectPath}`);
                 }
@@ -447,7 +475,9 @@ export class PipelineParser {
                 if (!this.includedSources.includes(resolved.path)) {
                     this.includedSources.push(resolved.path);
                 }
-                await this.parseRecursive(resolved.content, resolved.path, depth, context);
+                const node = { name: resolved.path, children: [] };
+                parentNode.children.push(node);
+                await this.parseRecursive(resolved.content, resolved.path, depth, node, context);
             } else {
                 this.errors.push(`Cannot find local file ${inc} (checked workspace root and relative to ${path.basename(currentSource)})`);
             }
@@ -460,7 +490,7 @@ export class PipelineParser {
         // Build final list of stages. If customStages is empty, use DEFAULT_STAGES
         // Actually, GitLab merges custom stages with .pre and .post.
         const finalStages: PipelineStage[] = [];
-        
+
         let orderedStages = [...this.customStages];
         if (orderedStages.length === 0) {
             orderedStages = [...DEFAULT_STAGES];
@@ -495,6 +525,7 @@ export class PipelineParser {
         return {
             stages: finalStages,
             includedSources: this.includedSources,
+            includeTree: this.includeTree,
             errors: this.errors
         };
     }

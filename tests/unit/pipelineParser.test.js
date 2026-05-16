@@ -48,6 +48,7 @@ const vscodeMock = {
 Module.prototype.require = function (id) {
     if (id === 'vscode') { return vscodeMock; }
     if (id.includes('componentService')) { return { getComponentService: () => mockComponentService }; }
+    if (id.includes('componentCacheManager')) { return { getComponentCacheManager: () => ({ getComponents: async () => [], fetchAndCacheRawTemplate: async () => null }) }; }
     return originalRequire.apply(this, arguments);
 };
 
@@ -64,7 +65,7 @@ async function runTests() {
         outfile: tempFile,
         format: 'cjs',
         platform: 'node',
-        external: ['vscode']
+        external: ['vscode', '*/componentService', '*/componentCacheManager']
     });
 
     const { PipelineParser } = originalRequire.apply(module, [tempFile]);
@@ -272,13 +273,69 @@ pipeline_execution_policy:
         failed++;
     }
 
+    console.log('\nTest 6: Windows absolute paths are not misidentified as project shorthands');
+    try {
+        const parser = new PipelineParser(10);
+        // Mock a Windows-style absolute path include
+        const windowsPath = 'C:\\dev\\project\\ci-template.yml';
+        
+        // We use a mock fs.readFileSync inside resolveLocalInclude indirectly
+        // But the primary check is whether it calls resolveLocalInclude vs hitting the project branch.
+        // If it hits the project branch, it will try to fetch via API and fail with a specific error.
+        
+        // Let's use a non-existent absolute path and check the error message.
+        // It should say "Cannot find local file" (local branch) 
+        // NOT "Could not fetch project file" (project branch).
+        const graph = await parser.parse('stages: [test]', 'main.yml', {}, [{ local: windowsPath }]);
+        
+        const hasProjectError = graph.errors.some(e => e.includes('Could not fetch project file'));
+        const hasLocalError = graph.errors.some(e => e.includes('Cannot find local file'));
+        
+        assert.strictEqual(hasProjectError, false, 'Should not be identified as a project include');
+        assert.strictEqual(hasLocalError, true, 'Should be identified as a (missing) local include');
+        
+        console.log('Windows path handling: PASS ✅');
+        passed++;
+    } catch (e) {
+        console.error('Windows path handling: FAIL ❌', e.message);
+        failed++;
+    }
+
+    console.log('\nTest 7: Include tree captures hierarchical relationships');
+    try {
+        const parser = new PipelineParser(10);
+        // Using the mocked remote-a.yml (which includes remote-b.yml)
+        const yaml = `include:\n  - remote: https://example.com/remote-a.yml`;
+        const graph = await parser.parse(yaml, 'main.yml');
+        
+        // Expected Structure:
+        // main.yml
+        //   └── remote-a.yml
+        //         └── remote-b.yml
+        
+        assert.strictEqual(graph.errors.length, 0, `Should have no errors, got: ${graph.errors.join('; ')}`);
+        assert.strictEqual(graph.includeTree.name, 'main.yml');
+        assert.strictEqual(graph.includeTree.children.length, 1);
+        const aNode = graph.includeTree.children[0];
+        assert.ok(aNode.name.includes('remote-a.yml'), 'aNode name should contain remote-a.yml');
+        assert.strictEqual(aNode.children.length, 1, 'aNode should have 1 child (remote-b.yml)');
+        const bNode = aNode.children[0];
+        assert.ok(bNode.name.includes('remote-b.yml'), 'bNode name should contain remote-b.yml');
+        
+        console.log('Include tree: PASS ✅');
+        passed++;
+    } catch (e) {
+        console.error('Include tree: FAIL ❌', e.message);
+        failed++;
+    }
+
     // Cleanup
     if (fs.existsSync(tempFile)) {
         fs.unlinkSync(tempFile);
     }
 
     console.log(`\n=== Pipeline Parser Test Summary ===`);
-    console.log(`Total tests: 5`);
+    console.log(`Total tests: 7`);
     console.log(`Passed: ${passed} ✅`);
     console.log(`Failed: ${failed} ${failed > 0 ? '❌' : ''}`);
 

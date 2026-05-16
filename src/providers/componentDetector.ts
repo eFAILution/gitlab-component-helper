@@ -339,7 +339,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
       return {
         name: cachedComponent.name,
         description: cachedComponent.description +
-                    `\n\n**Note:** Showing cached version ${cachedComponent.version}, but you requested ${requestedVersion}. Component details may differ between versions.`,
+          `\n\n**Note:** Showing cached version ${cachedComponent.version}, but you requested ${requestedVersion}. Component details may differ between versions.`,
         parameters: cachedComponent.parameters,
         version: requestedVersion,
         source: `${cachedComponent.gitlabInstance}/${cachedComponent.sourcePath}`,
@@ -861,192 +861,192 @@ function parseAnyRemoteUrl(remoteUrl: string): { gitlabInstance: string; project
  * Detect if we're in a non-GitLab repository (GitHub, Bitbucket, etc.)
  */
 async function detectNonGitLabRepository(workspaceFolder: vscode.WorkspaceFolder): Promise<{ hostname: string; projectPath: string; type: string } | null> {
-    try {
-        logger.debug(`[ComponentDetector] Detecting non-GitLab repository for workspace: ${workspaceFolder.uri.fsPath}`, 'ComponentDetector');
+  try {
+    logger.debug(`[ComponentDetector] Detecting non-GitLab repository for workspace: ${workspaceFolder.uri.fsPath}`, 'ComponentDetector');
 
-        // First try VS Code's Git extension API
-        const gitExtension = vscode.extensions.getExtension('vscode.git');
-        if (gitExtension) {
-            const git = gitExtension.exports.getAPI(1);
-            if (git && git.repositories.length > 0) {
-                logger.debug(`[ComponentDetector] Found ${git.repositories.length} Git repositories via VS Code Git API`, 'ComponentDetector');
+    // First try VS Code's Git extension API
+    const gitExtension = vscode.extensions.getExtension('vscode.git');
+    if (gitExtension) {
+      const git = gitExtension.exports.getAPI(1);
+      if (git && git.repositories.length > 0) {
+        logger.debug(`[ComponentDetector] Found ${git.repositories.length} Git repositories via VS Code Git API`, 'ComponentDetector');
 
-                // Find a repository that contains or is contained by the workspace folder
-                let repo = git.repositories.find((r: any) =>
-                    workspaceFolder.uri.fsPath.startsWith(r.rootUri.fsPath) ||
-                    r.rootUri.fsPath.startsWith(workspaceFolder.uri.fsPath)
-                );
+        // Find a repository that contains or is contained by the workspace folder
+        let repo = git.repositories.find((r: any) =>
+          workspaceFolder.uri.fsPath.startsWith(r.rootUri.fsPath) ||
+          r.rootUri.fsPath.startsWith(workspaceFolder.uri.fsPath)
+        );
 
-                if (!repo) {
-                    repo = git.repositories[0];
-                    logger.debug(`[ComponentDetector] No matching repository found, using first available: ${repo.rootUri.fsPath}`, 'ComponentDetector');
-                } else {
-                    logger.debug(`[ComponentDetector] Using Git repository: ${repo.rootUri.fsPath}`, 'ComponentDetector');
-                }
-
-                // Get remote URLs from VS Code Git API
-                const remotes = repo.state.remotes;
-                const origin = remotes.find((r: any) => r.name === 'origin') || remotes[0];
-
-                if (origin && origin.fetchUrl) {
-                    logger.debug(`[ComponentDetector] Found origin remote via VS Code Git API: ${origin.fetchUrl}`, 'ComponentDetector');
-                    return await parseAndClassifyRepository(origin.fetchUrl);
-                }
-            }
+        if (!repo) {
+          repo = git.repositories[0];
+          logger.debug(`[ComponentDetector] No matching repository found, using first available: ${repo.rootUri.fsPath}`, 'ComponentDetector');
+        } else {
+          logger.debug(`[ComponentDetector] Using Git repository: ${repo.rootUri.fsPath}`, 'ComponentDetector');
         }
 
-        // Fallback to direct Git commands if VS Code Git API doesn't work
-        logger.debug(`[ComponentDetector] VS Code Git API not available or no repositories found, trying direct Git commands`, 'ComponentDetector');
-        return await detectRepositoryViaGitCommands(workspaceFolder.uri.fsPath);
+        // Get remote URLs from VS Code Git API
+        const remotes = repo.state.remotes;
+        const origin = remotes.find((r: any) => r.name === 'origin') || remotes[0];
 
-    } catch (error) {
-        logger.debug(`[ComponentDetector] Error detecting non-GitLab repository: ${error}`, 'ComponentDetector');
-        return null;
+        if (origin && origin.fetchUrl) {
+          logger.debug(`[ComponentDetector] Found origin remote via VS Code Git API: ${origin.fetchUrl}`, 'ComponentDetector');
+          return await parseAndClassifyRepository(origin.fetchUrl);
+        }
+      }
     }
+
+    // Fallback to direct Git commands if VS Code Git API doesn't work
+    logger.debug(`[ComponentDetector] VS Code Git API not available or no repositories found, trying direct Git commands`, 'ComponentDetector');
+    return await detectRepositoryViaGitCommands(workspaceFolder.uri.fsPath);
+
+  } catch (error) {
+    logger.debug(`[ComponentDetector] Error detecting non-GitLab repository: ${error}`, 'ComponentDetector');
+    return null;
+  }
 }
 
 /**
  * Use direct Git commands to detect repository information
  */
 async function detectRepositoryViaGitCommands(workspacePath: string): Promise<{ hostname: string; projectPath: string; type: string } | null> {
-    try {
-        // First, check if we're in a Git repository
-        const isGitRepo = await new Promise<boolean>((resolve) => {
-            const gitCheck = spawn('git', ['rev-parse', '--is-inside-work-tree'], {
-                cwd: workspacePath,
-                stdio: 'pipe'
-            });
+  try {
+    // First, check if we're in a Git repository
+    const isGitRepo = await new Promise<boolean>((resolve) => {
+      const gitCheck = spawn('git', ['rev-parse', '--is-inside-work-tree'], {
+        cwd: workspacePath,
+        stdio: 'pipe'
+      });
 
-            gitCheck.on('exit', (code: number | null) => {
-                resolve(code === 0);
-            });
+      gitCheck.on('exit', (code: number | null) => {
+        resolve(code === 0);
+      });
 
-            gitCheck.on('error', () => {
-                resolve(false);
-            });
-        });
+      gitCheck.on('error', () => {
+        resolve(false);
+      });
+    });
 
-        if (!isGitRepo) {
-            logger.debug(`[ComponentDetector] Not inside a Git repository`, 'ComponentDetector');
-            return null;
-        }
-
-        logger.debug(`[ComponentDetector] Confirmed we're in a Git repository`, 'ComponentDetector');
-
-        // Get the remote origin URL
-        const remoteUrl = await new Promise<string | null>((resolve) => {
-            const gitRemote = spawn('git', ['remote', 'get-url', 'origin'], {
-                cwd: workspacePath,
-                stdio: 'pipe'
-            });
-
-            let output = '';
-            gitRemote.stdout.on('data', (data: Buffer) => {
-                output += data.toString();
-            });
-
-            gitRemote.on('exit', (code: number | null) => {
-                if (code === 0 && output.trim()) {
-                    resolve(output.trim());
-                } else {
-                    resolve(null);
-                }
-            });
-
-            gitRemote.on('error', () => {
-                resolve(null);
-            });
-        });
-
-        if (!remoteUrl) {
-            logger.debug(`[ComponentDetector] No origin remote found`, 'ComponentDetector');
-            return null;
-        }
-
-        logger.debug(`[ComponentDetector] Found origin remote via Git command: ${remoteUrl}`, 'ComponentDetector');
-        return await parseAndClassifyRepository(remoteUrl);
-
-    } catch (error) {
-        logger.debug(`[ComponentDetector] Error using Git commands: ${error}`, 'ComponentDetector');
-        return null;
+    if (!isGitRepo) {
+      logger.debug(`[ComponentDetector] Not inside a Git repository`, 'ComponentDetector');
+      return null;
     }
+
+    logger.debug(`[ComponentDetector] Confirmed we're in a Git repository`, 'ComponentDetector');
+
+    // Get the remote origin URL
+    const remoteUrl = await new Promise<string | null>((resolve) => {
+      const gitRemote = spawn('git', ['remote', 'get-url', 'origin'], {
+        cwd: workspacePath,
+        stdio: 'pipe'
+      });
+
+      let output = '';
+      gitRemote.stdout.on('data', (data: Buffer) => {
+        output += data.toString();
+      });
+
+      gitRemote.on('exit', (code: number | null) => {
+        if (code === 0 && output.trim()) {
+          resolve(output.trim());
+        } else {
+          resolve(null);
+        }
+      });
+
+      gitRemote.on('error', () => {
+        resolve(null);
+      });
+    });
+
+    if (!remoteUrl) {
+      logger.debug(`[ComponentDetector] No origin remote found`, 'ComponentDetector');
+      return null;
+    }
+
+    logger.debug(`[ComponentDetector] Found origin remote via Git command: ${remoteUrl}`, 'ComponentDetector');
+    return await parseAndClassifyRepository(remoteUrl);
+
+  } catch (error) {
+    logger.debug(`[ComponentDetector] Error using Git commands: ${error}`, 'ComponentDetector');
+    return null;
+  }
 }
 
 /**
  * Parse and classify a Git remote URL
  */
 async function parseAndClassifyRepository(remoteUrl: string): Promise<{ hostname: string; projectPath: string; type: string } | null> {
-    try {
-        const repoInfo = parseNonGitLabRemoteUrl(remoteUrl);
-        if (!repoInfo) {
-            logger.debug(`[ComponentDetector] Failed to parse remote URL: ${remoteUrl}`, 'ComponentDetector');
-            return null;
-        }
-
-        logger.debug(`[ComponentDetector] Parsed repository info: hostname=${repoInfo.hostname}, projectPath=${repoInfo.projectPath}`, 'ComponentDetector');
-
-        // Check if this is NOT a GitLab repository
-        const isGitLab = repoInfo.hostname.toLowerCase().includes('gitlab');
-        logger.debug(`[ComponentDetector] Is GitLab repository: ${isGitLab}`, 'ComponentDetector');
-
-        if (!isGitLab) {
-            let type = 'Git Repository';
-            if (repoInfo.hostname.includes('github')) {
-                type = 'GitHub';
-            } else if (repoInfo.hostname.includes('bitbucket')) {
-                type = 'Bitbucket';
-            }
-
-            logger.debug(`[ComponentDetector] Detected non-GitLab repository: ${repoInfo.hostname} (${type})`, 'ComponentDetector');
-            return {
-                hostname: repoInfo.hostname,
-                projectPath: repoInfo.projectPath,
-                type: type
-            };
-        }
-
-        logger.debug(`[ComponentDetector] This is a GitLab repository, not returning non-GitLab info`, 'ComponentDetector');
-        return null;
-    } catch (error) {
-        logger.debug(`[ComponentDetector] Error parsing and classifying repository: ${error}`, 'ComponentDetector');
-        return null;
+  try {
+    const repoInfo = parseNonGitLabRemoteUrl(remoteUrl);
+    if (!repoInfo) {
+      logger.debug(`[ComponentDetector] Failed to parse remote URL: ${remoteUrl}`, 'ComponentDetector');
+      return null;
     }
+
+    logger.debug(`[ComponentDetector] Parsed repository info: hostname=${repoInfo.hostname}, projectPath=${repoInfo.projectPath}`, 'ComponentDetector');
+
+    // Check if this is NOT a GitLab repository
+    const isGitLab = repoInfo.hostname.toLowerCase().includes('gitlab');
+    logger.debug(`[ComponentDetector] Is GitLab repository: ${isGitLab}`, 'ComponentDetector');
+
+    if (!isGitLab) {
+      let type = 'Git Repository';
+      if (repoInfo.hostname.includes('github')) {
+        type = 'GitHub';
+      } else if (repoInfo.hostname.includes('bitbucket')) {
+        type = 'Bitbucket';
+      }
+
+      logger.debug(`[ComponentDetector] Detected non-GitLab repository: ${repoInfo.hostname} (${type})`, 'ComponentDetector');
+      return {
+        hostname: repoInfo.hostname,
+        projectPath: repoInfo.projectPath,
+        type: type
+      };
+    }
+
+    logger.debug(`[ComponentDetector] This is a GitLab repository, not returning non-GitLab info`, 'ComponentDetector');
+    return null;
+  } catch (error) {
+    logger.debug(`[ComponentDetector] Error parsing and classifying repository: ${error}`, 'ComponentDetector');
+    return null;
+  }
 }
 
 /**
  * Parse any Git remote URL to extract hostname and project path (for detection purposes)
  */
 function parseNonGitLabRemoteUrl(remoteUrl: string): { hostname: string; projectPath: string } | null {
-    try {
-        // Handle both HTTPS and SSH URLs
-        let hostname: string;
-        let projectPath: string;
+  try {
+    // Handle both HTTPS and SSH URLs
+    let hostname: string;
+    let projectPath: string;
 
-        if (remoteUrl.startsWith('https://')) {
-            const url = new URL(remoteUrl);
-            hostname = url.hostname;
-            projectPath = url.pathname.substring(1).replace(/\.git$/, '');
-        } else if (remoteUrl.startsWith('git@')) {
-            // git@github.com:owner/repo.git
-            const match = remoteUrl.match(/git@([^:]+):(.+?)(?:\.git)?$/);
-            if (match) {
-                hostname = match[1];
-                projectPath = match[2];
-            } else {
-                return null;
-            }
-        } else {
-            return null;
-        }
-
-        // Return any valid-looking Git repository info
-        if (hostname && projectPath.includes('/')) {
-            return { hostname, projectPath };
-        }
-
+    if (remoteUrl.startsWith('https://')) {
+      const url = new URL(remoteUrl);
+      hostname = url.hostname;
+      projectPath = url.pathname.substring(1).replace(/\.git$/, '');
+    } else if (remoteUrl.startsWith('git@')) {
+      // git@github.com:owner/repo.git
+      const match = remoteUrl.match(/git@([^:]+):(.+?)(?:\.git)?$/);
+      if (match) {
+        hostname = match[1];
+        projectPath = match[2];
+      } else {
         return null;
-    } catch (error) {
-        logger.debug(`[ComponentDetector] Error parsing remote URL for detection: ${error}`, 'ComponentDetector');
-        return null;
+      }
+    } else {
+      return null;
     }
+
+    // Return any valid-looking Git repository info
+    if (hostname && projectPath.includes('/')) {
+      return { hostname, projectPath };
+    }
+
+    return null;
+  } catch (error) {
+    logger.debug(`[ComponentDetector] Error parsing remote URL for detection: ${error}`, 'ComponentDetector');
+    return null;
+  }
 }
