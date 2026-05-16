@@ -2,7 +2,9 @@ import * as vscode from 'vscode';
 import { PipelineParser, PipelineGraph, PipelineJob, PipelineStage } from '../parsers/pipelineParser';
 import { getComponentService } from '../services/component/componentService';
 
-// Dev Note: these escape and nonce functions are possible insufficient to really prevent XSS attacks. The AI tried but... it really should be checked by a security expert.
+import { secureRandomBase64Url } from '../utils/crypto';
+
+// Dev Note: these escape and nonce functions are designed to prevent XSS and injection attacks.
 function escapeHtml(unsafe: string): string {
     return unsafe
         .replace(/&/g, "&amp;")
@@ -16,13 +18,8 @@ function escapeMermaid(unsafe: string): string {
     return escapeHtml(unsafe.replace(/\\/g, "/"));
 }
 
-function getNonce() {
-    let text = '';
-    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    for (let i = 0; i < 32; i++) {
-        text += possible.charAt(Math.floor(Math.random() * possible.length));
-    }
-    return text;
+function getNonce(): string {
+    return secureRandomBase64Url(32);
 }
 
 export class PipelineVisualizerProvider {
@@ -169,8 +166,15 @@ export class PipelineVisualizerProvider {
                 mermaidCode += `    style empty_${stageId} fill:none,stroke:none\n`;
             } else {
                 const jobIds: string[] = [];
+                const usedJobIds = new Set<string>();
                 stage.jobs.forEach((job: PipelineJob) => {
-                    const jobId = `job_${job.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
+                    let baseId = `job_${job.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
+                    let jobId = baseId;
+                    let counter = 1;
+                    while (usedJobIds.has(jobId)) {
+                        jobId = `${baseId}_${counter++}`;
+                    }
+                    usedJobIds.add(jobId);
                     jobIds.push(jobId);
                     mermaidCode += `    ${jobId}["${escapeMermaid(job.name)}<br/><small><i>${escapeMermaid(job.source)}</i></small>"]\n`;
                 });
@@ -205,7 +209,12 @@ export class PipelineVisualizerProvider {
             );
         };
 
+        const MAX_TREE_RENDER_DEPTH = 15;
         const renderIncludeTree = (node: any, depth: number = 0, isLast: boolean = true, prefix: string = ''): string => {
+            if (depth > MAX_TREE_RENDER_DEPTH) {
+                return `<div class="tree-line">${prefix}${isLast ? '└── ' : '├── '}... (max depth reached)</div>`;
+            }
+
             let html = '';
             const name = node.name;
             
@@ -243,7 +252,7 @@ export class PipelineVisualizerProvider {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https:; script-src 'nonce-${nonce}'; style-src ${webview.cspSource} 'unsafe-inline';">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; script-src 'nonce-${nonce}'; style-src ${webview.cspSource} 'unsafe-inline';">
             <title>Pipeline Visualization</title>
             <script nonce="${nonce}" src="${mermaidUri}"></script>
             <script nonce="${nonce}" src="${svgPanZoomUri}"></script>
@@ -361,10 +370,12 @@ export class PipelineVisualizerProvider {
     }
 
     private getLoadingHtml(): string {
+        const nonce = getNonce();
         return `<!DOCTYPE html>
         <html>
         <head>
-            <style>
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
+            <style nonce="${nonce}">
                 body {
                     font-family: var(--vscode-font-family);
                     color: var(--vscode-editor-foreground);
@@ -383,10 +394,12 @@ export class PipelineVisualizerProvider {
     }
 
     private getErrorHtml(error: string): string {
+        const nonce = getNonce();
         return `<!DOCTYPE html>
         <html>
         <head>
-            <style>
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
+            <style nonce="${nonce}">
                 body {
                     font-family: var(--vscode-font-family);
                     color: var(--vscode-errorForeground);

@@ -1,5 +1,6 @@
 import * as yaml from 'js-yaml';
 import * as vscode from 'vscode';
+import * as crypto from 'crypto';
 
 // Cache for parsed YAML documents to avoid re-parsing
 const parseCache = new Map<string, { content: string; parsed: any; timestamp: number }>();
@@ -17,8 +18,8 @@ const GITLAB_SCHEMA = yaml.DEFAULT_SCHEMA.extend([referenceType]);
 
 export function parseYaml(text: string): any {
   try {
-    // Generate a simple hash of the content for caching
-    const contentHash = text.length + text.substring(0, 100) + text.substring(text.length - 100);
+    // Generate a secure hash of the content for caching
+    const contentHash = crypto.createHash('sha256').update(text).digest('hex');
     const now = Date.now();
 
     // Check cache first
