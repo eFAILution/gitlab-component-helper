@@ -48,3 +48,8 @@ sync-changes.sh
 
 # AICaC validation artifacts
 validation_output.txt
+
+# Not usually in this project, but annoyed me
+*.zip
+vsix_contents/
+*.diff

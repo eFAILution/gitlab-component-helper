@@ -69,6 +69,7 @@ export class PipelineParser {
     private includedSources: string[] = [];
     private includeTree: IncludeNode = { name: 'root', children: [] };
     private errors: string[] = [];
+    private allowedRoots: string[] | null = null;
 
     constructor(maxDepth: number = 10) {
         this.maxDepth = maxDepth;
@@ -81,6 +82,7 @@ export class PipelineParser {
         this.includedSources = [sourceName];
         this.includeTree = { name: sourceName, children: [] };
         this.errors = [];
+        this.allowedRoots = null; // Clear cached allowed roots for the new parsing run
 
         // Resolve any always-include entries first, before the main file.
         if (extraIncludes && extraIncludes.length > 0) {
@@ -430,18 +432,27 @@ export class PipelineParser {
         return e instanceof Error ? e.message : String(e);
     }
 
-    private isPathAllowed(candidate: string): boolean {
+    private getAllowedRoots(): string[] {
+        if (this.allowedRoots !== null) {
+            return this.allowedRoots;
+        }
+
         const workspaceFolders = vscode.workspace.workspaceFolders;
         const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
         const trustedRootsConfig = config.get<string | string[]>('trustedIncludeRoot', []);
         const extraRoots = Array.isArray(trustedRootsConfig) ? trustedRootsConfig : [trustedRootsConfig];
 
-        const allowedRoots = [
+        this.allowedRoots = [
             ...(workspaceFolders?.map(f => f.uri.fsPath) || []),
             ...extraRoots.filter(r => r && typeof r === 'string').map(r => path.resolve(r))
         ];
 
-        return allowedRoots.some(root => {
+        return this.allowedRoots;
+    }
+
+    private isPathAllowed(candidate: string): boolean {
+        const allowed = this.getAllowedRoots();
+        return allowed.some(root => {
             const relative = path.relative(root, candidate);
             return !relative.startsWith('..') && !path.isAbsolute(relative);
         });
@@ -471,13 +482,21 @@ export class PipelineParser {
 
         for (const candidate of candidates) {
             try {
-                if (!this.isPathAllowed(candidate)) {
+                // Resolve symlinks to prevent path traversal and local file inclusion
+                let realCandidate = candidate;
+                try {
+                    realCandidate = await fs.promises.realpath(candidate);
+                } catch {
+                    // File may not exist yet, access checks below will handle it
+                }
+
+                if (!this.isPathAllowed(realCandidate)) {
                     continue;
                 }
 
-                await fs.promises.access(candidate, fs.constants.R_OK);
-                const content = await fs.promises.readFile(candidate, 'utf8');
-                return { path: candidate, content };
+                await fs.promises.access(realCandidate, fs.constants.R_OK);
+                const content = await fs.promises.readFile(realCandidate, 'utf8');
+                return { path: realCandidate, content };
             } catch {
                 continue;
             }
