@@ -70,6 +70,7 @@ export class PipelineParser {
     private includeTree: IncludeNode = { name: 'root', children: [] };
     private errors: string[] = [];
     private allowedRoots: string[] | null = null;
+    private entryDirectory: string | null = null;
 
     constructor(maxDepth: number = 10) {
         this.maxDepth = maxDepth;
@@ -83,6 +84,12 @@ export class PipelineParser {
         this.includeTree = { name: sourceName, children: [] };
         this.errors = [];
         this.allowedRoots = null; // Clear cached allowed roots for the new parsing run
+
+        if (path.isAbsolute(sourceName)) {
+            this.entryDirectory = path.dirname(sourceName);
+        } else {
+            this.entryDirectory = null;
+        }
 
         // Resolve any always-include entries first, before the main file.
         if (extraIncludes && extraIncludes.length > 0) {
@@ -442,18 +449,31 @@ export class PipelineParser {
         const trustedRootsConfig = config.get<string | string[]>('trustedIncludeRoot', []);
         const extraRoots = Array.isArray(trustedRootsConfig) ? trustedRootsConfig : [trustedRootsConfig];
 
-        this.allowedRoots = [
+        const rawRoots = [
             ...(workspaceFolders?.map(f => f.uri.fsPath) || []),
+            ...(this.entryDirectory ? [this.entryDirectory] : []),
             ...extraRoots.filter(r => r && typeof r === 'string').map(r => path.resolve(r))
         ];
+
+        this.allowedRoots = rawRoots.map(root => {
+            try {
+                return fs.realpathSync(root);
+            } catch {
+                return root;
+            }
+        });
 
         return this.allowedRoots;
     }
 
     private isPathAllowed(candidate: string): boolean {
         const allowed = this.getAllowedRoots();
+        const isWindows = process.platform === 'win32';
+        const normCandidate = isWindows ? candidate.toLowerCase() : candidate;
+
         return allowed.some(root => {
-            const relative = path.relative(root, candidate);
+            const normRoot = isWindows ? root.toLowerCase() : root;
+            const relative = path.relative(normRoot, normCandidate);
             return !relative.startsWith('..') && !path.isAbsolute(relative);
         });
     }
