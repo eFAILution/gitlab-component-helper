@@ -287,27 +287,23 @@ export class PipelineParser {
                     `templates/template.yml`
                 ];
 
-                // Local Redirect: If this component is in the current project, try resolving locally first.
-                // We also try this if the parent file is local (no componentOrigin) to allow local experimentation.
-                const normalizedParsedPath = parsedUrl.path.toLowerCase().replace(/\.git$/, '').replace(/^\//, '').replace(/\/$/, '');
-                const normalizedContextPath = context?.projectPath?.toLowerCase().replace(/\.git$/, '').replace(/^\//, '').replace(/\/$/, '');
-
-                const isCurrentProject = context?.projectPath && normalizedParsedPath === normalizedContextPath &&
-                    parsedUrl.gitlabInstance.toLowerCase() === (context.gitlabInstance || 'gitlab.com').toLowerCase();
-
-                if (isCurrentProject || !componentOrigin) {
-                    for (const templatePath of combinations) {
-                        const resolved = await this.tryResolveLocal(templatePath, currentSource, context);
-                        if (resolved) {
-                            if (!this.includedSources.includes(resolved.path)) {
-                                this.includedSources.push(resolved.path);
-                            }
-                            const node = { name: resolved.path, children: [] };
-                            parentNode.children.push(node);
-                            await this.parseRecursive(resolved.content, resolved.path, depth, node, context);
-                            return;
+                // Local Redirect: Try resolving locally first to allow local overrides/experimentation.
+                let resolvedLocally = false;
+                for (const templatePath of combinations) {
+                    const resolved = await this.tryResolveLocal(templatePath, currentSource, context);
+                    if (resolved) {
+                        if (!this.includedSources.includes(resolved.path)) {
+                            this.includedSources.push(resolved.path);
                         }
+                        const node = { name: resolved.path, children: [] };
+                        parentNode.children.push(node);
+                        await this.parseRecursive(resolved.content, resolved.path, depth, node, context);
+                        resolvedLocally = true;
+                        break;
                     }
+                }
+                if (resolvedLocally) {
+                    return;
                 }
 
                 let fetched = false;
@@ -362,25 +358,16 @@ export class PipelineParser {
                     const ref = directive.ref || 'HEAD';
                     const cleanFile = expandedFile.replace(/^\//, '');
 
-                    // Local Redirect: If this project include is in the current project, try resolving locally first.
-                    // We also try this if the parent file is local (no componentOrigin) to allow local experimentation.
-                    const normalizedProjPath = projectPath.toLowerCase().replace(/\.git$/, '').replace(/^\//, '').replace(/\/$/, '');
-                    const normalizedContextPath = context?.projectPath?.toLowerCase().replace(/\.git$/, '').replace(/^\//, '').replace(/\/$/, '');
-
-                    const isCurrentProject = context?.projectPath && normalizedProjPath === normalizedContextPath &&
-                        gitlabInstance.toLowerCase() === (context.gitlabInstance || 'gitlab.com').toLowerCase();
-
-                    if (isCurrentProject || !componentOrigin) {
-                        const resolved = await this.tryResolveLocal(cleanFile, currentSource, context);
-                        if (resolved) {
-                            if (!this.includedSources.includes(resolved.path)) {
-                                this.includedSources.push(resolved.path);
-                            }
-                            const node = { name: resolved.path, children: [] };
-                            parentNode.children.push(node);
-                            await this.parseRecursive(resolved.content, resolved.path, depth, node, context);
-                            continue; // Move to next file in directive.file array
+                    // Local Redirect: Try resolving locally first to allow local overrides/experimentation.
+                    const resolved = await this.tryResolveLocal(cleanFile, currentSource, context);
+                    if (resolved) {
+                        if (!this.includedSources.includes(resolved.path)) {
+                            this.includedSources.push(resolved.path);
                         }
+                        const node = { name: resolved.path, children: [] };
+                        parentNode.children.push(node);
+                        await this.parseRecursive(resolved.content, resolved.path, depth, node, context);
+                        continue; // Move to next file in directive.file array
                     }
 
                     try {
@@ -490,7 +477,12 @@ export class PipelineParser {
         if (path.isAbsolute(inc)) {
             candidates.push(path.normalize(inc));
         } else {
-            // Workspace relative
+            // Check allowed/trusted roots first (this includes workspace folders, entryDirectory, and trustedIncludeRoot)
+            const allowedRoots = this.getAllowedRoots();
+            for (const root of allowedRoots) {
+                candidates.push(path.normalize(path.join(root, cleanInc)));
+            }
+            // Workspace relative (fallback)
             if (workspaceFolders && workspaceFolders.length > 0) {
                 candidates.push(path.normalize(path.join(workspaceFolders[0].uri.fsPath, cleanInc)));
             }
@@ -526,6 +518,18 @@ export class PipelineParser {
 
     private async resolveLocalInclude(inc: string, currentSource: string, depth: number, parentNode: IncludeNode, context?: ParserContext, componentOrigin?: ComponentOrigin) {
         try {
+            // Try resolving locally first, allowing local overrides and workspace matching
+            const resolved = await this.tryResolveLocal(inc, currentSource, context);
+            if (resolved) {
+                if (!this.includedSources.includes(resolved.path)) {
+                    this.includedSources.push(resolved.path);
+                }
+                const node = { name: resolved.path, children: [] };
+                parentNode.children.push(node);
+                await this.parseRecursive(resolved.content, resolved.path, depth, node, context);
+                return;
+            }
+
             // If we're inside a fetched component/project template, resolve local: via GitLab API
             if (componentOrigin) {
                 const cleanPath = inc.replace(/^\//, '');
@@ -550,17 +554,7 @@ export class PipelineParser {
                 return;
             }
 
-            const resolved = await this.tryResolveLocal(inc, currentSource, context);
-            if (resolved) {
-                if (!this.includedSources.includes(resolved.path)) {
-                    this.includedSources.push(resolved.path);
-                }
-                const node = { name: resolved.path, children: [] };
-                parentNode.children.push(node);
-                await this.parseRecursive(resolved.content, resolved.path, depth, node, context);
-            } else {
-                this.errors.push(`Cannot find local file ${inc} (checked workspace root and relative to ${path.basename(currentSource)})`);
-            }
+            this.errors.push(`Cannot find local file ${inc} (checked workspace root and relative to ${path.basename(currentSource)})`);
         } catch (err) {
             this.errors.push(`Failed to read local file ${inc}: ${err instanceof Error ? err.message : String(err)}`);
         }
