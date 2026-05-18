@@ -253,6 +253,24 @@
             "type": "string"
           },
           "scope": "resource"
+        },
+        "gitlabComponentHelper.projectPath": {
+          "type": "string",
+          "default": "",
+          "description": "The GitLab project path for the current workspace (e.g., 'my-group/my-project'). Required for resolving project-relative includes in the visualizer.",
+          "scope": "resource"
+        },
+        "gitlabComponentHelper.trustedIncludeRoot": {
+          "type": [
+            "string",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Additional local directories that are trusted for `local:` includes in the visualizer. By default, only the current workspace folders are trusted. Use this if your Pipeline Execution Policy (PEP) or other includes reside in a folder outside your primary workspace.",
+          "scope": "resource"
         }
       }
     },
