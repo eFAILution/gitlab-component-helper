@@ -665,6 +665,37 @@ export function activate(context: vscode.ExtensionContext) {
 
     logger.debug('[Extension] Registering PEP control commands...', 'Extension');
     
+    // Helper function for safe configuration updates to bypass the VS Code binary file bug
+    async function safeUpdateConfig(config: vscode.WorkspaceConfiguration, section: string, value: any, successMessage?: string, clearMessage?: string) {
+      try {
+        await config.update(section, value, vscode.ConfigurationTarget.Workspace);
+        if (value) {
+          if (successMessage) vscode.window.showInformationMessage(successMessage);
+        } else {
+          if (clearMessage) vscode.window.showInformationMessage(clearMessage);
+        }
+      } catch (err) {
+        const action = await vscode.window.showWarningMessage(
+          `Failed to save to Workspace Settings (usually located in .vscode/settings.json). Would you like to try saving to your Global User Settings instead?`,
+          'Save Globally', 'Cancel'
+        );
+        if (action === 'Save Globally') {
+          try {
+            await config.update(section, value, vscode.ConfigurationTarget.Global);
+            vscode.window.showInformationMessage(`Saved successfully to Global User Settings!`);
+          } catch (globalErr) {
+            vscode.window.showErrorMessage(
+              `Failed to save globally. Please open your User settings.json and manually ${value ? `set "gitlabComponentHelper.${section}" to "${value}"` : `delete "gitlabComponentHelper.${section}"`}.`
+            );
+          }
+        } else {
+            vscode.window.showErrorMessage(
+              `Save cancelled. To do this manually, open your Workspace settings.json and ${value ? `set "gitlabComponentHelper.${section}" to "${value}"` : `delete "gitlabComponentHelper.${section}"`}.`
+            );
+        }
+      }
+    }
+
     context.subscriptions.push(
       vscode.commands.registerCommand('gitlab-component-helper.setProjectPath', async () => {
         const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
@@ -676,8 +707,7 @@ export function activate(context: vscode.ExtensionContext) {
         });
         
         if (newPath !== undefined && newPath !== currentPath) {
-          await config.update('projectPath', newPath, vscode.ConfigurationTarget.Workspace);
-          vscode.window.showInformationMessage(`GitLab project path set to: ${newPath}`);
+          await safeUpdateConfig(config, 'projectPath', newPath, `GitLab project path set to: ${newPath}`, 'GitLab project path cleared.');
         }
       })
     );
@@ -693,12 +723,7 @@ export function activate(context: vscode.ExtensionContext) {
         });
         
         if (newOverride !== undefined && newOverride !== currentOverride) {
-          await config.update('visualizer.pepProjectPathOverride', newOverride, vscode.ConfigurationTarget.Workspace);
-          if (newOverride) {
-            vscode.window.showInformationMessage(`Linked Policy Project Override set to: ${newOverride}`);
-          } else {
-            vscode.window.showInformationMessage('Linked Policy Project Override cleared.');
-          }
+          await safeUpdateConfig(config, 'visualizer.pepProjectPathOverride', newOverride, `Linked Policy Project Override set to: ${newOverride}`, 'Linked Policy Project Override cleared.');
         }
       })
     );
