@@ -134,6 +134,9 @@ export class PipelineVisualizerProvider {
                     const ref = atIdx >= 0 ? fileAndRef.slice(atIdx + 1) : 'HEAD';
                     return { project, file, ref };
                 }
+                if (entry.startsWith('local:')) {
+                    return { local: entry.slice('local:'.length) };
+                }
                 // Default: treat as a local path (absolute paths work correctly since
                 // resolveLocalInclude handles absolute paths via fs.existsSync)
                 return { local: entry };
