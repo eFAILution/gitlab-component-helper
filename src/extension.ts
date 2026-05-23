@@ -648,27 +648,30 @@ export function activate(context: vscode.ExtensionContext) {
                 rawYaml = require('fs').readFileSync(localOverrides[0], 'utf-8');
                 vscode.window.showInformationMessage('GraphQL policy list failed. Falling back to parsing local PEP override file.');
               } catch (e) {
-                // ignore
+                logger.error(`[Extension] Failed to read local PEP override ${localOverrides[0]}: ${e}`, 'Extension');
+                vscode.window.showWarningMessage(`Failed to read local PEP override file: ${localOverrides[0]}`);
               }
             } else if (pepOverride) {
               try {
                 rawYaml = await service.fetchRawFile(gitlabInstance, pepOverride, '.gitlab/security-policies/policy.yml', 'HEAD');
                 vscode.window.showInformationMessage(`GraphQL policy list failed. Falling back to parsing policy.yml from override: ${pepOverride}`);
               } catch (e) {
-                // ignore
+                logger.error(`[Extension] Failed to fetch policy.yml from override project ${pepOverride}: ${e}`, 'Extension');
+                vscode.window.showWarningMessage(`Failed to fetch policy.yml from override project '${pepOverride}'. Please check the path and your access tokens.`);
               }
             }
 
             if (rawYaml) {
               try {
                 const parsed = parseYaml(rawYaml);
-                if (parsed.pipeline_execution_policy && Array.isArray(parsed.pipeline_execution_policy)) {
+                if (parsed && parsed.pipeline_execution_policy && Array.isArray(parsed.pipeline_execution_policy)) {
                   policies = parsed.pipeline_execution_policy
                     .map((p: any) => p.name)
                     .filter(Boolean);
                 }
               } catch (e) {
                 logger.error(`[Extension] Failed to parse YAML for policy override: ${e}`, 'Extension');
+                vscode.window.showWarningMessage('Failed to parse policy.yml. The file may contain invalid YAML syntax.');
               }
             }
           }
@@ -677,7 +680,7 @@ export function activate(context: vscode.ExtensionContext) {
           const policyItems = policies.map(p => ({ label: `$(shield) ${p}`, value: p }));
 
           if (policyItems.length === 0) {
-            vscode.window.showInformationMessage('No active Pipeline Execution Policies found for this project.');
+            vscode.window.showInformationMessage('No active Pipeline Execution Policies found. If you are using Instance/Group level policies, please set a Linked Policy Project Override first.');
             return;
           }
 
@@ -687,11 +690,10 @@ export function activate(context: vscode.ExtensionContext) {
           );
 
           if (pick !== undefined) {
-            await config.update('visualizer.activePolicyOverride', pick.value, vscode.ConfigurationTarget.Workspace);
             if (pick.value) {
-              vscode.window.showInformationMessage(`Active Policy Override set to: ${pick.value}`);
+              await safeUpdateConfig(config, 'visualizer.activePolicyOverride', pick.value, `Active Policy Override set to: ${pick.value}`);
             } else {
-              vscode.window.showInformationMessage('Active Policy Override cleared. All policies will be shown.');
+              await safeUpdateConfig(config, 'visualizer.activePolicyOverride', '', undefined, 'Active Policy Override cleared. All policies will be shown.');
             }
           }
         });
@@ -779,8 +781,7 @@ export function activate(context: vscode.ExtensionContext) {
           alwaysInclude = alwaysInclude.filter(inc => !require('path').isAbsolute(inc));
 
           alwaysInclude.push(uris[0].fsPath);
-          await config.update('visualizer.alwaysInclude', alwaysInclude, vscode.ConfigurationTarget.Workspace);
-          vscode.window.showInformationMessage(`Local PEP override set to: ${uris[0].fsPath}`);
+          await safeUpdateConfig(config, 'visualizer.alwaysInclude', alwaysInclude, `Local PEP override set to: ${uris[0].fsPath}`);
         }
       })
     );
@@ -791,7 +792,7 @@ export function activate(context: vscode.ExtensionContext) {
         let updated = false;
 
         if (config.get<string>('visualizer.activePolicyOverride', '') !== '') {
-          await config.update('visualizer.activePolicyOverride', '', vscode.ConfigurationTarget.Workspace);
+          await safeUpdateConfig(config, 'visualizer.activePolicyOverride', '');
           updated = true;
         }
 
@@ -800,7 +801,7 @@ export function activate(context: vscode.ExtensionContext) {
         alwaysInclude = alwaysInclude.filter(inc => !require('path').isAbsolute(inc));
 
         if (alwaysInclude.length !== originalLength) {
-          await config.update('visualizer.alwaysInclude', alwaysInclude, vscode.ConfigurationTarget.Workspace);
+          await safeUpdateConfig(config, 'visualizer.alwaysInclude', alwaysInclude);
           updated = true;
         }
 
