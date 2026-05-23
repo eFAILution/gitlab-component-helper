@@ -277,6 +277,12 @@
           "description": "The GitLab project path for the current workspace (e.g., 'my-group/my-project'). Required for resolving project-relative includes in the visualizer.",
           "scope": "resource"
         },
+        "gitlabComponentHelper.visualizer.pepProjectPathOverride": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Explicitly set the path to your Security Policy Project (PEP) to bypass GraphQL auto-discovery. Useful for Instance-level policies (e.g. `compliance-group/policy-repo`).",
+          "scope": "resource"
+        },
         "gitlabComponentHelper.trustedIncludeRoot": {
           "type": [
             "string",
@@ -297,8 +303,13 @@
         "title": "GitLab CI: Browse Components"
       },
       {
+        "command": "gitlab-component-helper.setLinkedProjectOverride",
+        "title": "GitLab CI: Set Linked Policy Project (PEP)"
+      },
+      {
         "command": "gitlab-component-helper.visualizePipeline",
-        "title": "GitLab CI: Visualize Pipeline Stages"
+        "title": "GitLab CI: Visualize Pipeline",
+        "icon": "$(git-merge)"
       },
       {
         "command": "gitlab-component-helper.refreshComponents",

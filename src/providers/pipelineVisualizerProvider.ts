@@ -148,8 +148,17 @@ export class PipelineVisualizerProvider {
             if (projectPathToUse) {
                 const componentService = getComponentService();
                 const token = await componentService.getTokenForProject(gitlabInstance, projectPathToUse);
-                const linkedProject = await componentService.fetchLinkedSecurityPolicyProject(gitlabInstance, projectPathToUse, token || '');
-                pepContext.linkedProject = linkedProject;
+                
+                const pepOverride = config.get<string>('visualizer.pepProjectPathOverride');
+                let linkedProject: string | undefined = undefined;
+
+                if (pepOverride) {
+                    linkedProject = pepOverride;
+                    pepContext.linkedProject = linkedProject;
+                } else {
+                    linkedProject = await componentService.fetchLinkedSecurityPolicyProject(gitlabInstance, projectPathToUse, token || '');
+                    pepContext.linkedProject = linkedProject;
+                }
                 
                 let availablePolicies: string[] = [];
                 try {
@@ -161,7 +170,11 @@ export class PipelineVisualizerProvider {
 
                 if (linkedProject) {
                     includesToProcess.push(`project:${linkedProject}:.gitlab/security-policies/policy.yml`);
-                    pepInfo = `Loaded PEP from linked project '${linkedProject}'.`;
+                    if (pepOverride) {
+                        pepInfo = `Loaded PEP from explicit override project '${linkedProject}'.`;
+                    } else {
+                        pepInfo = `Loaded PEP from linked project '${linkedProject}'.`;
+                    }
                 } else {
                     pepWarning = `No linked Security Policy Project (PEP) was returned by GitLab for '${projectPathToUse}'. Defaulting to local repository fallback.`;
                     // Fallback: check local policy
@@ -328,7 +341,8 @@ export class PipelineVisualizerProvider {
                         <a href="command:gitlab-component-helper.setProjectPath" class="vscode-button" style="display: inline-block; padding: 6px 12px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); text-decoration: none; border-radius: 2px;">Configure Project Path</a>
                     ` : `
                         <div style="margin-bottom: 10px;">
-                            <strong>Linked Project:</strong> ${pepContext.linkedProject ? `<code>${pepContext.linkedProject}</code>` : '<em>None / Local Fallback</em>'}<br/>
+                            <strong>Linked Project:</strong> ${pepContext.linkedProject ? `<code>${pepContext.linkedProject}</code>` : '<em>None / Local Fallback</em>'}
+                            <a href="command:gitlab-component-helper.setLinkedProjectOverride" title="Manually override the linked policy project" style="margin-left: 10px; color: var(--vscode-textLink-foreground); text-decoration: none; font-size: 12px;">[Set Policy Project]</a><br/>
                             <strong>Server Policies:</strong> ${pepContext.availablePolicies.length > 0 ? pepContext.availablePolicies.join(', ') : '<em>None</em>'}<br/>
                         </div>
                     `}

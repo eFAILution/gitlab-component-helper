@@ -683,6 +683,27 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
+      vscode.commands.registerCommand('gitlab-component-helper.setLinkedProjectOverride', async () => {
+        const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+        const currentOverride = config.get<string>('visualizer.pepProjectPathOverride', '');
+        const newOverride = await vscode.window.showInputBox({
+          prompt: 'Enter the path to your Security Policy Project (e.g. compliance-group/policy-repo)',
+          value: currentOverride,
+          ignoreFocusOut: true
+        });
+        
+        if (newOverride !== undefined && newOverride !== currentOverride) {
+          await config.update('visualizer.pepProjectPathOverride', newOverride, vscode.ConfigurationTarget.Workspace);
+          if (newOverride) {
+            vscode.window.showInformationMessage(`Linked Policy Project Override set to: ${newOverride}`);
+          } else {
+            vscode.window.showInformationMessage('Linked Policy Project Override cleared.');
+          }
+        }
+      })
+    );
+
+    context.subscriptions.push(
       vscode.commands.registerCommand('gitlab-component-helper.selectLocalPepOverride', async () => {
         const uris = await vscode.window.showOpenDialog({
           canSelectMany: false,

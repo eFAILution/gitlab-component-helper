@@ -179,30 +179,72 @@ export class ComponentService implements ComponentSource {
     const cleanGitlabInstance = this.urlParser.cleanGitLabInstance(gitlabInstance);
     const apiBaseUrl = this.urlParser.getApiBaseUrl(cleanGitlabInstance).replace('/api/v4', '/api/graphql');
     
-    const query = `
-      query getPolicyProject($fullPath: ID!) {
-        project(fullPath: $fullPath) {
-          securityPolicyProject {
-            fullPath
-          }
-        }
-      }
-    `;
-
     const headers: Record<string, string> = {};
     if (token) {
       headers['PRIVATE-TOKEN'] = token;
     }
 
     try {
-      const response = await this.httpClient.fetchGraphQL(
+      // First try project level
+      const projectQuery = `
+        query getPolicyProject($fullPath: ID!) {
+          project(fullPath: $fullPath) {
+            securityPolicyProject {
+              fullPath
+            }
+          }
+        }
+      `;
+
+      let response = await this.httpClient.fetchGraphQL(
         apiBaseUrl, 
-        query, 
+        projectQuery, 
         { fullPath: projectPath },
         { headers }
       );
 
-      return response?.data?.project?.securityPolicyProject?.fullPath;
+      let policyProject = response?.data?.project?.securityPolicyProject?.fullPath;
+      if (policyProject) {
+        this.logger.debug(`[ComponentService] Found direct security policy project: ${policyProject}`);
+        return policyProject;
+      }
+
+      // If not found, walk up the namespace (groups) to find inherited policies
+      const pathSegments = projectPath.split('/');
+      pathSegments.pop(); // Remove the project name to get the parent group
+
+      const groupQuery = `
+        query getPolicyGroup($fullPath: ID!) {
+          group(fullPath: $fullPath) {
+            securityPolicyProject {
+              fullPath
+            }
+          }
+        }
+      `;
+
+      while (pathSegments.length > 0) {
+        const groupPath = pathSegments.join('/');
+        this.logger.debug(`[ComponentService] Checking parent group for policy project: ${groupPath}`);
+        
+        response = await this.httpClient.fetchGraphQL(
+          apiBaseUrl, 
+          groupQuery, 
+          { fullPath: groupPath },
+          { headers }
+        );
+
+        policyProject = response?.data?.group?.securityPolicyProject?.fullPath;
+        if (policyProject) {
+          this.logger.debug(`[ComponentService] Found inherited security policy project from ${groupPath}: ${policyProject}`);
+          return policyProject;
+        }
+
+        pathSegments.pop();
+      }
+
+      this.logger.debug(`[ComponentService] No security policy project found for ${projectPath} or its parent groups`);
+      return undefined;
     } catch (error) {
       this.logger.error(`Error fetching linked security policy project: ${error}`);
       return undefined;
