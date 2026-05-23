@@ -4,6 +4,7 @@ import { PipelineParser, PipelineGraph, PipelineJob, PipelineStage } from '../pa
 import { getComponentService } from '../services/component/componentService';
 
 import { secureRandomBase64Url } from '../utils/crypto';
+import { getContrastColor } from '../utils/colorUtils';
 
 // Dev Note: these escape and nonce functions are designed to prevent XSS and injection attacks.
 function escapeHtml(unsafe: string): string {
@@ -26,6 +27,9 @@ function getNonce(): string {
 export class PipelineVisualizerProvider {
     private panel: vscode.WebviewPanel | undefined;
     private context: vscode.ExtensionContext;
+    private graph: PipelineGraph | undefined;
+    private hiddenSources = new Set<string>();
+    private sourceColors = new Map<string, string>();
 
     constructor(context: vscode.ExtensionContext) {
         this.context = context;
@@ -49,6 +53,17 @@ export class PipelineVisualizerProvider {
 
             this.panel.onDidDispose(() => {
                 this.panel = undefined;
+            });
+
+            this.panel.webview.onDidReceiveMessage(message => {
+                if (message.type === 'updateFilters') {
+                    this.hiddenSources = new Set(message.hiddenSources);
+                    this.sourceColors = new Map(Object.entries(message.colors));
+                    if (this.graph) {
+                        const newMermaidCode = this.generateMermaidCode(this.graph, this.hiddenSources, this.sourceColors);
+                        this.panel?.webview.postMessage({ type: 'rerender', mermaidCode: newMermaidCode });
+                    }
+                }
             });
         }
 
@@ -104,7 +119,7 @@ export class PipelineVisualizerProvider {
             const activePolicyOverride = config.get<string>('visualizer.activePolicyOverride', '');
             const gitlabUrl = config.get<string>('gitlabUrl', 'https://gitlab.com');
             let projectPath = config.get<string>('projectPath', '');
-            
+
             // Try to auto-discover project path from local .git/config if not set in VS Code settings
             if (!projectPath && sourceName && require('path').isAbsolute(sourceName)) {
                 try {
@@ -148,7 +163,7 @@ export class PipelineVisualizerProvider {
             if (projectPathToUse) {
                 const componentService = getComponentService();
                 const token = await componentService.getTokenForProject(gitlabInstance, projectPathToUse);
-                
+
                 const pepOverride = config.get<string>('visualizer.pepProjectPathOverride');
                 let linkedProject: string | undefined = undefined;
 
@@ -159,7 +174,7 @@ export class PipelineVisualizerProvider {
                     linkedProject = await componentService.fetchLinkedSecurityPolicyProject(gitlabInstance, projectPathToUse, token || '');
                     pepContext.linkedProject = linkedProject;
                 }
-                
+
                 let availablePolicies: string[] = [];
                 try {
                     availablePolicies = await componentService.fetchPipelineExecutionPolicies(gitlabInstance, projectPathToUse, token || '');
@@ -227,13 +242,50 @@ export class PipelineVisualizerProvider {
                 graph.errors.push(`ℹ️ Info: ${pepInfo}`);
             }
 
-            this.panel.webview.html = this.getGraphHtml(graph, sourceName, this.panel.webview, activePolicyOverride, pepContext);
+            this.graph = graph;
+            this.panel.webview.html = this.getWebviewHtml(graph, sourceName, this.panel.webview, activePolicyOverride, pepContext);
         } catch (e) {
             this.panel.webview.html = this.getErrorHtml(e instanceof Error ? e.message : String(e));
         }
     }
 
-    private getGraphHtml(graph: PipelineGraph, sourceName: string, webview: vscode.Webview, activePolicyOverride?: string, pepContext?: any): string {
+    // Normalize a node name (which may include a Local Override) to the raw source path used in jobs
+    private normalizeSource(nodeName: string): string {
+        const match = nodeName.match(/\(Local Override: (.*?)\)$/);
+        const raw = match ? match[1] : nodeName;
+        // Convert Windows backslashes to forward slashes for consistent matching
+        return raw.replace(/\\\\/g, '/');
+    }
+
+
+    private generateMermaidCode(graph: PipelineGraph, hiddenSources: Set<string>, sourceColors: Map<string, string>): string {
+        const effectiveHidden = new Set<string>();
+        const effectiveColors = new Map<string, string>();
+
+        if (graph.includeTree) {
+            const traverse = (node: any, parentHidden: boolean, parentColor: string | undefined) => {
+                const source = this.normalizeSource(node.name);
+                const isHidden = parentHidden || hiddenSources.has(source);
+                const color = (sourceColors.has(source) && sourceColors.get(source) !== '#ffffff')
+                    ? sourceColors.get(source)
+                    : parentColor;
+
+                if (isHidden) {
+                    effectiveHidden.add(source);
+                }
+                if (color) {
+                    effectiveColors.set(source, color);
+                }
+
+                if (node.children) {
+                    for (const child of node.children) {
+                        traverse(child, isHidden, color);
+                    }
+                }
+            };
+            traverse(graph.includeTree, false, undefined);
+        }
+
         let mermaidCode = 'flowchart LR\n';
 
         const stageIds: string[] = [];
@@ -243,17 +295,25 @@ export class PipelineVisualizerProvider {
 
         visibleStages.forEach((stage, index) => {
             const stageId = `stage_${index}`;
+
+            // Only add stage subgraph if it has jobs after filtering, or if it's an explicit stage
+            const visibleJobs = stage.jobs.filter(job => !effectiveHidden.has(job.source));
+
+            if (visibleJobs.length === 0 && stage.isImplicit) {
+                return; // Skip implicit stages with no visible jobs
+            }
+
             stageIds.push(stageId);
             mermaidCode += `  subgraph ${stageId} ["${escapeMermaid(stage.name)}"]\n`;
             mermaidCode += `    direction TB\n`;
 
-            if (stage.jobs.length === 0) {
+            if (visibleJobs.length === 0) {
                 mermaidCode += `    empty_${stageId}[No jobs]\n`;
                 mermaidCode += `    style empty_${stageId} fill:none,stroke:none\n`;
             } else {
                 const jobIds: string[] = [];
                 const usedJobIds = new Set<string>();
-                stage.jobs.forEach((job: PipelineJob) => {
+                visibleJobs.forEach((job: PipelineJob) => {
                     let baseId = `job_${job.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
                     let jobId = baseId;
                     let counter = 1;
@@ -263,6 +323,13 @@ export class PipelineVisualizerProvider {
                     usedJobIds.add(jobId);
                     jobIds.push(jobId);
                     mermaidCode += `    ${jobId}["${escapeMermaid(job.name)}<br/><small><i>${escapeMermaid(job.source)}</i></small>"]\n`;
+
+                    // Apply color if configured
+                    const color = effectiveColors.get(job.source);
+                    if (color && color !== '#ffffff') {
+                        const textColor = getContrastColor(color);
+                        mermaidCode += `    style ${jobId} fill:${color},stroke:#333,stroke-width:2px,color:${textColor}\n`;
+                    }
                 });
                 // Chain jobs with invisible links to force vertical (TB) stacking.
                 // Mermaid's subgraph direction TB is unreliable inside an LR parent;
@@ -286,6 +353,12 @@ export class PipelineVisualizerProvider {
             mermaidCode += `  ${stageIds[i]} --> ${stageIds[i + 1]}\n`;
         }
 
+        return mermaidCode;
+    }
+
+    private getWebviewHtml(graph: PipelineGraph, sourceName: string, webview: vscode.Webview, activePolicyOverride?: string, pepContext?: any): string {
+        const mermaidCode = this.generateMermaidCode(graph, this.hiddenSources, this.sourceColors);
+
         const renderError = (e: string): string => {
             // Replace known action sentinels with clickable VS Code command links.
             // All other content is HTML-escaped before substitution so there is no XSS surface.
@@ -296,9 +369,15 @@ export class PipelineVisualizerProvider {
         };
 
         const MAX_TREE_RENDER_DEPTH = 15;
-        const renderIncludeTree = (node: any, depth: number = 0, isLast: boolean = true, prefix: string = ''): string => {
+        const renderIncludeTree = (
+            node: any,
+            depth: number = 0,
+            isLast: boolean = true,
+            prefix: string = '',
+            parentSource: string = ''
+        ): string => {
             if (depth > MAX_TREE_RENDER_DEPTH) {
-                return `<div class="tree-line">${prefix}${isLast ? '└── ' : '├── '}... (max depth reached)</div>`;
+                return `<div class="tree-line"><span class="tree-text">${prefix}${isLast ? '└── ' : '├── '}... (max depth reached)</span></div>`;
             }
 
             let html = '';
@@ -310,18 +389,31 @@ export class PipelineVisualizerProvider {
                 displayName = displayName.replace(/\(Local Override: (.*?)\)/, '<span style="color: var(--vscode-charts-orange); font-style: italic;">(Local Override: $1)</span>');
             }
 
+            const source = this.normalizeSource(name);
+            const isChecked = !this.hiddenSources.has(source) ? 'checked' : '';
+            const colorValue = this.sourceColors.get(source) || '#ffffff';
+            const hasColor = colorValue !== '#ffffff';
+            const styleString = hasColor ? `border-left: 4px solid ${colorValue}; padding-left: 4px;` : '';
+
+            const controls = `<span class="tree-controls" style="display: flex; gap: 8px; align-items: center; margin-left: 10px; flex-shrink: 0; white-space: nowrap;">
+                <input type="checkbox" class="source-toggle" data-source="${escapeHtml(source)}" data-parent="${escapeHtml(parentSource)}" ${isChecked} title="Toggle visibility">
+                <input type="color" class="source-color" data-source="${escapeHtml(source)}" value="${colorValue}" title="Set job color" style="padding: 0; width: 20px; height: 20px; border: none; background: none; cursor: pointer;">
+                <button class="apply-color" data-source="${escapeHtml(source)}" title="Apply color" style="background:none; border:none; color:var(--vscode-button-foreground); cursor:pointer; font-size:14px; padding:0; margin-left:2px;">✓</button>
+                <button class="reset-color" data-source="${escapeHtml(source)}" title="Clear color" style="background:none; border:none; color:var(--vscode-errorForeground); cursor:pointer; font-size:14px; padding:0; margin-top:-2px;">×</button>
+            </span>`;
+
             if (depth > 0) {
                 const connector = isLast ? '└── ' : '├── ';
-                html += `<div class="tree-line">${prefix}${connector}${displayName}</div>`;
+                html += `<div class="tree-line" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; ${styleString}"><span class="tree-text" style="flex-grow: 1;">${prefix}${connector}${displayName}</span>${controls}</div>`;
             } else {
-                html += `<div class="tree-line root-node">${displayName}</div>`;
+                html += `<div class="tree-line root-node" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; ${styleString}"><span class="tree-text" style="flex-grow: 1;">${displayName}</span>${controls}</div>`;
             }
 
             const newPrefix = depth === 0 ? '' : prefix + (isLast ? '&nbsp;&nbsp;&nbsp;&nbsp;' : '│&nbsp;&nbsp;&nbsp;');
 
             if (node.children && node.children.length > 0) {
                 node.children.forEach((child: any, index: number) => {
-                    html += renderIncludeTree(child, depth + 1, index === node.children.length - 1, newPrefix);
+                    html += renderIncludeTree(child, depth + 1, index === node.children.length - 1, newPrefix, source);
                 });
             }
             return html;
@@ -469,20 +561,30 @@ export class PipelineVisualizerProvider {
                 ${errorsHtml}
             </div>
             <script nonce="${nonce}">
+                const vscode = acquireVsCodeApi();
                 mermaid.initialize({ startOnLoad: false, theme: 'default' });
                 
+                let panZoomInstance = null;
+
                 async function renderGraph() {
                     try {
-                        await mermaid.run();
+                        const container = document.querySelector('.mermaid');
+                        container.removeAttribute('data-processed');
+                        
+                        await mermaid.run({ querySelector: '.mermaid' });
                         
                         // After Mermaid renders, initialize svg-pan-zoom
-                        const svg = document.querySelector('.mermaid svg');
+                        const svg = container.querySelector('svg');
                         if (svg) {
                             // Ensure SVG takes up the full container space for panning
                             svg.style.width = '100%';
                             svg.style.height = '100%';
                             
-                            svgPanZoom(svg, {
+                            if (panZoomInstance) {
+                                panZoomInstance.destroy();
+                            }
+                            
+                            panZoomInstance = svgPanZoom(svg, {
                                 zoomEnabled: true,
                                 controlIconsEnabled: true,
                                 fit: true,
@@ -497,6 +599,93 @@ export class PipelineVisualizerProvider {
                 }
                 
                 renderGraph();
+
+                function sendUpdate() {
+                    const hiddenSources = [];
+                    document.querySelectorAll('.source-toggle').forEach(el => {
+                        if (!el.checked) {
+                            hiddenSources.push(el.getAttribute('data-source'));
+                        }
+                    });
+                    
+                    const colors = {};
+                    document.querySelectorAll('.source-color').forEach(el => {
+                        if (el.value && el.value !== '#ffffff') {
+                            colors[el.getAttribute('data-source')] = el.value;
+                        }
+                    });
+                    
+                    document.querySelectorAll('.tree-line').forEach(line => {
+                        const picker = line.querySelector('.source-color');
+                        if (picker && picker.value && picker.value !== '#ffffff') {
+                            line.style.borderLeft = '4px solid ' + picker.value;
+                            line.style.paddingLeft = '4px';
+                        } else {
+                            line.style.borderLeft = '';
+                            line.style.paddingLeft = '';
+                        }
+                    });
+
+                    vscode.postMessage({
+                        type: 'updateFilters',
+                        hiddenSources: hiddenSources,
+                        colors: colors
+                    });
+                }
+                
+                // Initial sync so the extension knows the current UI state on load
+                sendUpdate();
+
+                // Cascade toggle: when a parent is (un)checked, apply same state to all descendants
+                function cascadeToggle(source, checked) {
+                    const children = Array.from(document.querySelectorAll('.source-toggle[data-parent="' + CSS.escape(source) + '"]'));
+                    children.forEach(child => {
+                        child.checked = checked;
+                        const childSource = child.getAttribute('data-source');
+                        cascadeToggle(childSource, checked);
+                    });
+                }
+                // Attach event listeners for checkboxes
+                document.querySelectorAll('.source-toggle').forEach(el => {
+                    // Left-click (change) – cascade state to all descendants
+                    el.addEventListener('change', (e) => {
+                        const target = e.target;
+                        const src = target.getAttribute('data-source');
+                        const checked = target.checked;
+                        if (src) {
+                            cascadeToggle(src, checked);
+                        }
+                        sendUpdate();
+                    });
+                });
+                
+                // Colour pickers now require explicit Apply click
+                document.querySelectorAll('.apply-color').forEach(el => {
+                    el.addEventListener('click', (e) => {
+                        // When Apply is clicked, we simply call sendUpdate to push the current colour value
+                        sendUpdate();
+                    });
+                });
+
+                document.querySelectorAll('.reset-color').forEach(el => {
+                    el.addEventListener('click', (e) => {
+                        const source = e.target.getAttribute('data-source');
+                        const picker = document.querySelector('.source-color[data-source="' + CSS.escape(source) + '"]');
+                        if (picker) {
+                            picker.value = '#ffffff';
+                            sendUpdate();
+                        }
+                    });
+                });
+
+                window.addEventListener('message', event => {
+                    const message = event.data;
+                    if (message.type === 'rerender') {
+                        const container = document.querySelector('.mermaid');
+                        container.innerHTML = message.mermaidCode;
+                        renderGraph();
+                    }
+                });
             </script>
         </body>
         </html>`;
