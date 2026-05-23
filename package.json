@@ -334,7 +334,23 @@
       },
       {
         "command": "gitlab-component-helper.selectPolicyOverride",
-        "title": "GitLab CI: Select Active Policy Override"
+        "title": "GitLab CI: Select Active Policy Override",
+        "category": "GitLab CI"
+      },
+      {
+        "command": "gitlab-component-helper.setProjectPath",
+        "title": "GitLab CI: Set Active Project Path",
+        "category": "GitLab CI"
+      },
+      {
+        "command": "gitlab-component-helper.selectLocalPepOverride",
+        "title": "GitLab CI: Select Local PEP File Override",
+        "category": "GitLab CI"
+      },
+      {
+        "command": "gitlab-component-helper.clearPepOverrides",
+        "title": "GitLab CI: Clear PEP Overrides",
+        "category": "GitLab CI"
       }
     ],
     "menus": {

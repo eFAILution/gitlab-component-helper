@@ -663,6 +663,74 @@ export function activate(context: vscode.ExtensionContext) {
       })
     );
 
+    logger.debug('[Extension] Registering PEP control commands...', 'Extension');
+    
+    context.subscriptions.push(
+      vscode.commands.registerCommand('gitlab-component-helper.setProjectPath', async () => {
+        const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+        const currentPath = config.get<string>('projectPath', '');
+        const newPath = await vscode.window.showInputBox({
+          prompt: 'Enter your GitLab project path (e.g. group/project)',
+          value: currentPath,
+          ignoreFocusOut: true
+        });
+        
+        if (newPath !== undefined && newPath !== currentPath) {
+          await config.update('projectPath', newPath, vscode.ConfigurationTarget.Workspace);
+          vscode.window.showInformationMessage(`GitLab project path set to: ${newPath}`);
+        }
+      })
+    );
+
+    context.subscriptions.push(
+      vscode.commands.registerCommand('gitlab-component-helper.selectLocalPepOverride', async () => {
+        const uris = await vscode.window.showOpenDialog({
+          canSelectMany: false,
+          openLabel: 'Select Local Policy',
+          filters: { 'YAML': ['yml', 'yaml'] }
+        });
+
+        if (uris && uris.length > 0) {
+          const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+          let alwaysInclude = config.get<string[]>('visualizer.alwaysInclude', []);
+          
+          // Remove existing absolute paths (which represent local file overrides)
+          alwaysInclude = alwaysInclude.filter(inc => !require('path').isAbsolute(inc));
+          
+          alwaysInclude.push(uris[0].fsPath);
+          await config.update('visualizer.alwaysInclude', alwaysInclude, vscode.ConfigurationTarget.Workspace);
+          vscode.window.showInformationMessage(`Local PEP override set to: ${uris[0].fsPath}`);
+        }
+      })
+    );
+
+    context.subscriptions.push(
+      vscode.commands.registerCommand('gitlab-component-helper.clearPepOverrides', async () => {
+        const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+        let updated = false;
+        
+        if (config.get<string>('visualizer.activePolicyOverride', '') !== '') {
+          await config.update('visualizer.activePolicyOverride', '', vscode.ConfigurationTarget.Workspace);
+          updated = true;
+        }
+        
+        let alwaysInclude = config.get<string[]>('visualizer.alwaysInclude', []);
+        const originalLength = alwaysInclude.length;
+        alwaysInclude = alwaysInclude.filter(inc => !require('path').isAbsolute(inc));
+        
+        if (alwaysInclude.length !== originalLength) {
+            await config.update('visualizer.alwaysInclude', alwaysInclude, vscode.ConfigurationTarget.Workspace);
+            updated = true;
+        }
+        
+        if (updated) {
+            vscode.window.showInformationMessage('All PEP overrides cleared.');
+        } else {
+            vscode.window.showInformationMessage('No active PEP overrides to clear.');
+        }
+      })
+    );
+
     logger.info('[Extension] All commands registered successfully!', 'Extension');
     logger.info('[Extension] Extension activation completed successfully!', 'Extension');
 

@@ -103,7 +103,20 @@ export class PipelineVisualizerProvider {
             const alwaysInclude = config.get<string[]>('visualizer.alwaysInclude', []);
             const activePolicyOverride = config.get<string>('visualizer.activePolicyOverride', '');
             const gitlabUrl = config.get<string>('gitlabUrl', 'https://gitlab.com');
-            const projectPath = config.get<string>('projectPath', '');
+            let projectPath = config.get<string>('projectPath', '');
+            
+            // Try to auto-discover project path from local .git/config if not set in VS Code settings
+            if (!projectPath && sourceName && require('path').isAbsolute(sourceName)) {
+                try {
+                    const { getProjectPathFromLocalFile } = require('../utils/gitUtils');
+                    const discoveredPath = await getProjectPathFromLocalFile(sourceName);
+                    if (discoveredPath) {
+                        projectPath = discoveredPath;
+                    }
+                } catch (e) {
+                    // Ignore
+                }
+            }
 
             // Ensure gitlabInstance is just the hostname for comparison
             let gitlabInstance = 'gitlab.com';
@@ -123,15 +136,25 @@ export class PipelineVisualizerProvider {
 
             const projectPathToUse = componentContext?.projectPath || projectPath;
 
+            const pepContext = {
+                projectPathConfigured: !!projectPathToUse,
+                linkedProject: undefined as string | undefined,
+                availablePolicies: [] as string[],
+                activePolicyOverride: activePolicyOverride,
+                localOverrides: alwaysInclude.filter(inc => require('path').isAbsolute(inc))
+            };
+
             // Fetch linked policy project if available
             if (projectPathToUse) {
                 const componentService = getComponentService();
                 const token = await componentService.getTokenForProject(gitlabInstance, projectPathToUse);
                 const linkedProject = await componentService.fetchLinkedSecurityPolicyProject(gitlabInstance, projectPathToUse, token || '');
+                pepContext.linkedProject = linkedProject;
                 
                 let availablePolicies: string[] = [];
                 try {
                     availablePolicies = await componentService.fetchPipelineExecutionPolicies(gitlabInstance, projectPathToUse, token || '');
+                    pepContext.availablePolicies = availablePolicies;
                 } catch (e) {
                     // Ignore errors fetching policies list
                 }
@@ -191,13 +214,13 @@ export class PipelineVisualizerProvider {
                 graph.errors.push(`ℹ️ Info: ${pepInfo}`);
             }
 
-            this.panel.webview.html = this.getGraphHtml(graph, sourceName, this.panel.webview, activePolicyOverride);
+            this.panel.webview.html = this.getGraphHtml(graph, sourceName, this.panel.webview, activePolicyOverride, pepContext);
         } catch (e) {
             this.panel.webview.html = this.getErrorHtml(e instanceof Error ? e.message : String(e));
         }
     }
 
-    private getGraphHtml(graph: PipelineGraph, sourceName: string, webview: vscode.Webview, activePolicyOverride?: string): string {
+    private getGraphHtml(graph: PipelineGraph, sourceName: string, webview: vscode.Webview, activePolicyOverride?: string, pepContext?: any): string {
         let mermaidCode = 'flowchart LR\n';
 
         const stageIds: string[] = [];
@@ -295,6 +318,37 @@ export class PipelineVisualizerProvider {
             ? `<div class="errors"><h3>Warnings:</h3><ul>${graph.errors.map(e => `<li>${renderError(e)}</li>`).join('')}</ul></div>`
             : '';
 
+        let pepPanelHtml = '';
+        if (pepContext) {
+            pepPanelHtml = `
+                <div class="pep-panel" style="background-color: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-widget-border); padding: 15px; margin-bottom: 20px; border-radius: 4px;">
+                    <h3 style="margin-top: 0; margin-bottom: 15px;">🛡️ Pipeline Execution Policies (PEP)</h3>
+                    ${!pepContext.projectPathConfigured ? `
+                        <p style="color: var(--vscode-editorWarning-foreground); margin-bottom: 10px;">⚠️ Project Path not configured. Cannot discover server PEPs.</p>
+                        <a href="command:gitlab-component-helper.setProjectPath" class="vscode-button" style="display: inline-block; padding: 6px 12px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); text-decoration: none; border-radius: 2px;">Configure Project Path</a>
+                    ` : `
+                        <div style="margin-bottom: 10px;">
+                            <strong>Linked Project:</strong> ${pepContext.linkedProject ? `<code>${pepContext.linkedProject}</code>` : '<em>None / Local Fallback</em>'}<br/>
+                            <strong>Server Policies:</strong> ${pepContext.availablePolicies.length > 0 ? pepContext.availablePolicies.join(', ') : '<em>None</em>'}<br/>
+                        </div>
+                    `}
+                    
+                    <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--vscode-widget-border);">
+                        <strong style="display: block; margin-bottom: 5px;">Active Overrides:</strong>
+                        ${pepContext.activePolicyOverride ? `• Server Policy: <code>${pepContext.activePolicyOverride}</code><br/>` : ''}
+                        ${pepContext.localOverrides.map((path: string) => `• Local File: <code>${path}</code><br/>`).join('')}
+                        ${!pepContext.activePolicyOverride && pepContext.localOverrides.length === 0 ? '<em>None</em><br/>' : ''}
+                    </div>
+
+                    <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                        <a href="command:gitlab-component-helper.selectPolicyOverride" style="padding: 6px 12px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); text-decoration: none; border-radius: 2px; font-size: 13px;">Select Server Policy</a>
+                        <a href="command:gitlab-component-helper.selectLocalPepOverride" style="padding: 6px 12px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); text-decoration: none; border-radius: 2px; font-size: 13px;">Select Local File</a>
+                        <a href="command:gitlab-component-helper.clearPepOverrides" style="padding: 6px 12px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); text-decoration: none; border-radius: 2px; font-size: 13px;">Clear Overrides</a>
+                    </div>
+                </div>
+            `;
+        }
+
         const includesHtml = graph.includeTree
             ? `<div class="includes"><h3>Included Sources:</h3><div class="tree">${renderIncludeTree(graph.includeTree)}</div></div>`
             : '';
@@ -390,6 +444,7 @@ export class PipelineVisualizerProvider {
         <body>
             <div class="container">
                 <h2>Pipeline: ${escapeHtml(sourceName)}</h2>
+                ${pepPanelHtml}
                 ${activePolicyOverride ? `<div class="info-banner"><strong>🛡️ Active Policy Override:</strong> ${escapeHtml(activePolicyOverride)} <small>(Other policies are being ignored)</small></div>` : ''}
                 <div class="graph-container">
                     <div class="mermaid">
