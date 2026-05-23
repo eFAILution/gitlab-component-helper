@@ -189,12 +189,17 @@ export class ComponentService implements ComponentSource {
       }
     `;
 
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['PRIVATE-TOKEN'] = token;
+    }
+
     try {
       const response = await this.httpClient.fetchGraphQL(
         apiBaseUrl, 
         query, 
         { fullPath: projectPath },
-        { headers: { 'PRIVATE-TOKEN': token } }
+        { headers }
       );
 
       return response?.data?.project?.securityPolicyProject?.fullPath;
@@ -224,12 +229,17 @@ export class ComponentService implements ComponentSource {
       }
     `;
 
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['PRIVATE-TOKEN'] = token;
+    }
+
     try {
       const response = await this.httpClient.fetchGraphQL(
         apiBaseUrl, 
         query, 
         { fullPath: projectPath },
-        { headers: { 'PRIVATE-TOKEN': token } }
+        { headers }
       );
 
       const nodes = response?.data?.project?.pipelineExecutionPolicies?.nodes || [];
