@@ -2,11 +2,11 @@
   "name": "gitlab-component-helper",
   "displayName": "GitLab Component Helper",
   "description": "Provides intellisense for GitLab CI components",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "icon": "images/icon.png",
   "engines": {
     "node": ">=22.0.0",
-    "vscode": ">=1.108.0"
+    "vscode": ">=1.109.0"
   },
   "publisher": "eFAILution",
   "repository": {
@@ -244,6 +244,56 @@
             "template.yaml"
           ],
           "description": "Filenames recognised inside per-component subfolders, e.g. 'templates/foo/template.yml'."
+        },
+        "gitlabComponentHelper.ignoreCertificateErrors": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, ignores SSL/TLS certificate errors (e.g. unable to verify the first certificate) when making HTTP requests to GitLab. Useful for local development servers or self-signed certificates."
+        },
+        "gitlabComponentHelper.visualizer.alwaysInclude": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Files or components to automatically inject into every pipeline visualization, without needing an explicit `include:` in the YAML file.\n\nEach entry can be:\n- A **local path** relative to the workspace root: `\"ci/pep.gitlab-ci.yml\"`\n- A **component reference**: `\"component:gitlab.com/my-group/pep/pep@1.0.0\"`\n- A **project file**: `\"project:my-group/pep:pipelines/pipeline.yaml@main\"`\n\nThis is useful for PEP or shared policy files that apply to every pipeline in your workspace.",
+          "items": {
+            "type": "string"
+          },
+          "scope": "resource"
+        },
+        "gitlabComponentHelper.visualizer.preferLocalIncludes": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When enabled, `project:` and `component:` includes will first check your local workspace for the corresponding files and use them if they exist. This is useful for testing a local copy of a PEP or shared configuration. Disable this to strictly fetch them from the remote GitLab server.",
+          "scope": "resource"
+        },
+        "gitlabComponentHelper.visualizer.activePolicyOverride": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The name of a specific Pipeline Execution Policy (PEP) to isolate and visualize. If set, only this policy will be parsed and injected. You can select this via the `GitLab CI: Select Active Policy Override` command.",
+          "scope": "resource"
+        },
+        "gitlabComponentHelper.projectPath": {
+          "type": "string",
+          "default": "",
+          "description": "The GitLab project path for the current workspace (e.g., 'my-group/my-project'). Required for resolving project-relative includes in the visualizer.",
+          "scope": "resource"
+        },
+        "gitlabComponentHelper.visualizer.pepProjectPathOverride": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Explicitly set the path to your Security Policy Project (PEP) to bypass GraphQL auto-discovery. Useful for Instance-level policies (e.g. `compliance-group/policy-repo`).",
+          "scope": "resource"
+        },
+        "gitlabComponentHelper.trustedIncludeRoot": {
+          "type": [
+            "string",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Additional local directories that are trusted for `local:` includes in the visualizer. By default, only the current workspace folders are trusted. Use this if your Pipeline Execution Policy (PEP) or other includes reside in a folder outside your primary workspace.",
+          "scope": "resource"
         }
       }
     },
@@ -253,8 +303,18 @@
         "title": "GitLab CI: Browse Components"
       },
       {
+        "command": "gitlab-component-helper.generateTroubleshootingReport",
+        "title": "GitLab CI: Generate Troubleshooting Report",
+        "icon": "$(bug)"
+      },
+      {
+        "command": "gitlab-component-helper.setLinkedProjectOverride",
+        "title": "GitLab CI: Set Linked Policy Project (PEP)"
+      },
+      {
         "command": "gitlab-component-helper.visualizePipeline",
-        "title": "GitLab CI: Visualize Pipeline Stages"
+        "title": "GitLab CI: Visualize Pipeline",
+        "icon": "$(git-merge)"
       },
       {
         "command": "gitlab-component-helper.refreshComponents",
@@ -287,17 +347,37 @@
       {
         "command": "gitlab-component-helper.showPerformanceStats",
         "title": "GitLab CI: Show Performance Statistics"
+      },
+      {
+        "command": "gitlab-component-helper.selectPolicyOverride",
+        "title": "GitLab CI: Select Active Policy Override",
+        "category": "GitLab CI"
+      },
+      {
+        "command": "gitlab-component-helper.setProjectPath",
+        "title": "GitLab CI: Set Active Project Path",
+        "category": "GitLab CI"
+      },
+      {
+        "command": "gitlab-component-helper.selectLocalPepOverride",
+        "title": "GitLab CI: Select Local PEP File Override",
+        "category": "GitLab CI"
+      },
+      {
+        "command": "gitlab-component-helper.clearPepOverrides",
+        "title": "GitLab CI: Clear PEP Overrides",
+        "category": "GitLab CI"
       }
     ],
     "menus": {
       "editor/context": [
         {
-          "when": "resourceFilename =~ /gitlab-ci\\.yml$/",
+          "when": "resourceFilename =~ /gitlab-ci\\.ya?ml$/",
           "command": "gitlab-component-helper.browseComponents",
           "group": "navigation"
         },
         {
-          "when": "resourceFilename =~ /gitlab-ci\\.yml$/",
+          "when": "resourceFilename =~ /gitlab-ci\\.ya?ml$/",
           "command": "gitlab-component-helper.visualizePipeline",
           "group": "navigation@2"
         }
@@ -314,7 +394,7 @@
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
     "pretest": "npm run compile",
-    "prepare": "husky && husky install",
+    "prepare": "husky",
     "test": "node tests/run-tests.js",
     "test:unit": "node tests/run-tests.js unit",
     "test:integration": "node tests/run-tests.js integration",
@@ -360,7 +440,7 @@
     "dotenv": "^17.4.2",
     "esbuild": "^0.28.0",
     "eslint": "^10.3.0",
-    "husky": "^8.0.0",
+    "husky": "^9.1.6",
     "is-ci": "^4.0.0",
     "js-yaml": "^4.1.1",
     "mocha": "^11.7.5",

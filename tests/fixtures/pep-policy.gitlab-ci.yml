@@ -1,0 +1,17 @@
+pipeline_execution_policy:
+  - name: SAST Policy
+    description: Static analysis security testing
+    enabled: true
+    content:
+      stages:
+        - security_test
+      sast_job:
+        stage: security_test
+        script: echo "running SAST"
+
+  - name: Secret Detection Policy
+    description: Detects committed secrets
+    enabled: true
+    content:
+      include:
+        - local: pipelines/secret-detection.gitlab-ci.yml

@@ -1,3 +1,4 @@
+import { safeUrlParse } from '../utils/urlUtils';
 import * as vscode from 'vscode';
 import { getComponentUnderCursor } from './componentDetector';
 import { getComponentService } from '../services/component';
@@ -96,7 +97,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
     //   https://gitlab.instance.com/group/project/templateName
     // We'll treat the last path segment as the component/template name, and the rest as the project path
     try {
-      const url = new URL(componentUrlBase);
+      const url = safeUrlParse(componentUrlBase);
       const gitlabInstance = url.host;
       const pathSegments = url.pathname.split('/').filter(Boolean); // remove empty segments
       if (pathSegments.length < 2) {
@@ -591,7 +592,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       const components = await cacheManager.getComponents();
 
       // Parse the component URL to get instance, project path, and component name
-      const url = new URL(componentUrl.split('@')[0]); // Remove version if present
+      const url = safeUrlParse(componentUrl.split('@')[0]); // Remove version if present
       const gitlabInstance = url.host;
       const pathSegments = url.pathname.split('/').filter(Boolean);
 

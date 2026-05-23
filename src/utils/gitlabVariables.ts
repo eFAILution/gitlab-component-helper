@@ -200,8 +200,9 @@ export function expandGitLabVariables(text: string, context?: {
   if (context) {
     if (context.customVariables) {
       for (const [key, value] of Object.entries(context.customVariables)) {
-        expanded = expanded.replace(new RegExp(`\\$${key}\\b`, 'g'), String(value));
-        expanded = expanded.replace(new RegExp(`\\$\\{${key}\\}`, 'g'), String(value));
+        const escapedKey = escapeRegExp(key);
+        expanded = expanded.replace(new RegExp(`\\$${escapedKey}\\b`, 'g'), String(value));
+        expanded = expanded.replace(new RegExp(`\\$\\{${escapedKey}\\}`, 'g'), String(value));
       }
     }
     // Expand common variables based on context
@@ -245,8 +246,9 @@ export function expandComponentUrl(componentUrl: string, context?: {
   if (context) {
     if (context.customVariables) {
       for (const [key, value] of Object.entries(context.customVariables)) {
-        expanded = expanded.replace(new RegExp(`\\$${key}\\b`, 'g'), String(value));
-        expanded = expanded.replace(new RegExp(`\\$\\{${key}\\}`, 'g'), String(value));
+        const escapedKey = escapeRegExp(key);
+        expanded = expanded.replace(new RegExp(`\\$${escapedKey}\\b`, 'g'), String(value));
+        expanded = expanded.replace(new RegExp(`\\$\\{${escapedKey}\\}`, 'g'), String(value));
       }
     }
     // Handle URL expansion carefully to maintain proper URL structure
@@ -350,4 +352,11 @@ export function getVariableCompletions(prefix: string = ''): GitLabVariable[] {
   return GITLAB_PREDEFINED_VARIABLES.filter(v =>
     v.name.includes(upperPrefix) || v.description.toLowerCase().includes(prefix.toLowerCase())
   );
+}
+
+/**
+ * Escapes special characters in a string for use in a regular expression
+ */
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

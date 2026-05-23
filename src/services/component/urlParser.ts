@@ -1,4 +1,5 @@
 import { Logger } from '../../utils/logger';
+import * as vscode from 'vscode';
 
 export interface ParsedComponentUrl {
   gitlabInstance: string;
@@ -21,7 +22,11 @@ export class UrlParser {
    */
   public parseCustomComponentUrl(url: string): ParsedComponentUrl | null {
     try {
-      const urlObj = new URL(url);
+      let parseableUrl = url;
+      if (!url.includes('://')) {
+        parseableUrl = `https://${url}`;
+      }
+      const urlObj = new URL(parseableUrl);
       const gitlabInstance = urlObj.hostname;
 
       const pathParts = urlObj.pathname.split('/').filter(Boolean);
@@ -75,5 +80,30 @@ export class UrlParser {
       clean = clean.replace('http://', '');
     }
     return clean;
+  }
+
+  /**
+   * Get the base API URL for a given instance, using http:// or https:// appropriately.
+   */
+  public getApiBaseUrl(gitlabInstance: string): string {
+    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+    const defaultUrl = config.get<string>('gitlabUrl', 'https://gitlab.com');
+    let protocol = 'https:';
+
+    try {
+      const defaultUrlObj = new URL(defaultUrl);
+      // If the instance matches the configured global URL, use its protocol
+      if (defaultUrlObj.hostname === gitlabInstance || gitlabInstance.includes('home.arpa') || gitlabInstance.includes('localhost')) {
+        protocol = defaultUrlObj.protocol;
+      }
+    } catch {
+      if (defaultUrl.startsWith('http://')) {
+        protocol = 'http:';
+      }
+    }
+
+    // Explicit override for HTTP if gitlabInstance specifically is an http instance
+    // Note: The global gitlabUrl setting acts as the source of truth for the primary instance's protocol.
+    return `${protocol}//${gitlabInstance}/api/v4`;
   }
 }

@@ -1,3 +1,4 @@
+import { safeUrlParse } from '../../utils/urlUtils';
 import * as vscode from 'vscode';
 import { ComponentService } from './componentService';
 
@@ -22,7 +23,7 @@ export function registerAddProjectTokenCommand(
       let gitlabInstance = '';
       let projectPath = '';
       try {
-        const parsed = new URL(url);
+        const parsed = safeUrlParse(url);
         gitlabInstance = parsed.hostname;
         // Remove leading/trailing slashes and join path
         projectPath = parsed.pathname.replace(/^\/+|\/+$/g, '');

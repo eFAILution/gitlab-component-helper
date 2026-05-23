@@ -1,13 +1,13 @@
-version: '2.0'
+version: "2.0"
 schema: https://aicac.dev/schema/v2
 project:
   name: gitlab-component-helper
   type: plugin
   language: typescript
-  node_version: '>=22.0.0'
-  vscode_version: '>=1.109.0'
+  node_version: ">=22.0.0"
+  vscode_version: ">=1.109.0"
   description: VS Code extension providing intellisense for GitLab CI components
-  purpose: Smart autocomplete, hover docs, and component browsing for GitLab CI/CD
+  purpose: Smart autocomplete, hover docs, component browsing, and pipeline visualization for GitLab CI/CD.
 repository:
   url: https://github.com/eFAILution/gitlab-component-helper
   default_branch: main
@@ -36,14 +36,14 @@ context_modules:
   errors: errors.yaml
 dependencies:
   runtime:
-  - vscode: VS Code Extension API
-  - js-yaml: YAML parsing
+    - vscode: VS Code Extension API
+    - js-yaml: YAML parsing
   dev:
-  - typescript: Type-safe development
-  - esbuild: Fast bundling
-  - mocha: Testing framework
-  - husky: Git hooks
-  - semantic-release: Automated releases
+    - typescript: Type-safe development
+    - esbuild: Fast bundling
+    - mocha: Testing framework
+    - husky: Git hooks
+    - semantic-release: Automated releases
 common_tasks:
   compile: npm run compile
   watch: npm run watch
@@ -60,10 +60,11 @@ testing:
   framework: mocha
   runner: tests/run-tests.js
   types:
-  - unit: tests/unit/
-  - integration: tests/integration/
-  - extension_host: tests/extension-host/ (real VS Code via @vscode/test-electron,
-      compiled via tsconfig.test.json)
+    - unit: tests/unit/
+    - integration: tests/integration/
+    - extension_host:
+        tests/extension-host/ (real VS Code via @vscode/test-electron,
+        compiled via tsconfig.test.json)
   scripts:
     test: node tests/run-tests.js
     test_unit: node tests/run-tests.js unit
@@ -73,8 +74,8 @@ testing:
 release:
   automation: release-it
   configs:
-    main: '.release-it.json (requireBranch: main, requireEvenMinor)'
-    beta: '.release-it.beta.json (requireBranch: beta, requireOddMinor, prerelease)'
+    main: ".release-it.json (requireBranch: main, requireEvenMinor)"
+    beta: ".release-it.beta.json (requireBranch: beta, requireOddMinor, prerelease)"
   commit_convention: conventional-commits
   versioning: even-minor on main (e.g. 1.0.x), odd-minor on beta (e.g. 0.9.x)
   scripts:
@@ -83,16 +84,16 @@ release:
     dry_run_main: npm run release:main:dry
     dry_run_beta: npm run release:beta:dry
 constraints:
-- Must work on VS Code 1.102.0+
-- Compatible with Node.js 22+
-- Support both gitlab.com and self-hosted GitLab instances
-- Component data cached for performance
-- Support private GitLab repositories with token auth
+  - Must work on VS Code 1.102.0+
+  - Compatible with Node.js 22+
+  - Support both gitlab.com and self-hosted GitLab instances
+  - Component data cached for performance
+  - Support private GitLab repositories with token auth
 key_features:
-- Component browser with search and filter
-- Smart autocomplete for component URLs and versions
-- Hover documentation with parameter details
-- Input validation with Quick Fix suggestions
-- Multi-source support (multiple GitLab instances)
-- Secure token storage via VS Code SecretStorage
-- Interactive pipeline visualization with Mermaid.js
+  - Component browser with search and filter
+  - Smart autocomplete for component URLs and versions
+  - Hover documentation with parameter details
+  - Input validation with Quick Fix suggestions
+  - Multi-source support (multiple GitLab instances)
+  - Secure token storage via VS Code SecretStorage
+  - Interactive pipeline visualization with Mermaid.js (browse a component → see the pipeline it produces)
