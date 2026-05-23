@@ -636,7 +636,42 @@ export function activate(context: vscode.ExtensionContext) {
           location: vscode.ProgressLocation.Notification,
           title: "Fetching Pipeline Execution Policies..."
         }, async () => {
-          const policies = await service.fetchPipelineExecutionPolicies(gitlabInstance, projectPath, token);
+          let policies = await service.fetchPipelineExecutionPolicies(gitlabInstance, projectPath, token);
+
+          if (policies.length === 0) {
+            const pepOverride = config.get<string>('visualizer.pepProjectPathOverride');
+            const localOverrides = config.get<string[]>('visualizer.alwaysInclude', []).filter(inc => require('path').isAbsolute(inc));
+            
+            let rawYaml: string | undefined;
+            if (localOverrides.length > 0) {
+              try {
+                rawYaml = require('fs').readFileSync(localOverrides[0], 'utf-8');
+                vscode.window.showInformationMessage('GraphQL policy list failed. Falling back to parsing local PEP override file.');
+              } catch (e) {
+                // ignore
+              }
+            } else if (pepOverride) {
+              try {
+                rawYaml = await service.fetchRawFile(gitlabInstance, pepOverride, '.gitlab/security-policies/policy.yml', 'HEAD');
+                vscode.window.showInformationMessage(`GraphQL policy list failed. Falling back to parsing policy.yml from override: ${pepOverride}`);
+              } catch (e) {
+                // ignore
+              }
+            }
+
+            if (rawYaml) {
+              try {
+                const parsed = parseYaml(rawYaml);
+                if (parsed.pipeline_execution_policy && Array.isArray(parsed.pipeline_execution_policy)) {
+                  policies = parsed.pipeline_execution_policy
+                    .map((p: any) => p.name)
+                    .filter(Boolean);
+                }
+              } catch (e) {
+                logger.error(`[Extension] Failed to parse YAML for policy override: ${e}`, 'Extension');
+              }
+            }
+          }
 
           const clearOption = { label: '$(clear-all) Clear Override / Show All', value: '' };
           const policyItems = policies.map(p => ({ label: `$(shield) ${p}`, value: p }));
