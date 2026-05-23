@@ -101,6 +101,7 @@ export class PipelineVisualizerProvider {
             const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
             const customVariables = config.get<Record<string, string>>('customVariables', {});
             const alwaysInclude = config.get<string[]>('visualizer.alwaysInclude', []);
+            const activePolicyOverride = config.get<string>('visualizer.activePolicyOverride', '');
             const gitlabUrl = config.get<string>('gitlabUrl', 'https://gitlab.com');
             const projectPath = config.get<string>('projectPath', '');
 
@@ -112,15 +113,53 @@ export class PipelineVisualizerProvider {
                 gitlabInstance = gitlabUrl.replace(/^https?:\/\//, '').split('/')[0];
             }
 
-            const parserContext = componentContext 
-                ? { ...componentContext, customVariables } 
-                : { gitlabInstance, projectPath, customVariables };
+            const parserContext = componentContext
+                ? { ...componentContext, customVariables, activePolicyOverride }
+                : { gitlabInstance, projectPath, customVariables, activePolicyOverride };
 
-            // Build structured include objects for alwaysInclude entries.
+            let includesToProcess = [...alwaysInclude];
+            let pepWarning: string | undefined;
+            let pepInfo: string | undefined;
+
+            const projectPathToUse = componentContext?.projectPath || projectPath;
+
+            // Fetch linked policy project if available
+            if (projectPathToUse) {
+                const componentService = getComponentService();
+                const token = await componentService.getTokenForProject(gitlabInstance, projectPathToUse);
+                const linkedProject = await componentService.fetchLinkedSecurityPolicyProject(gitlabInstance, projectPathToUse, token || '');
+                
+                let availablePolicies: string[] = [];
+                try {
+                    availablePolicies = await componentService.fetchPipelineExecutionPolicies(gitlabInstance, projectPathToUse, token || '');
+                } catch (e) {
+                    // Ignore errors fetching policies list
+                }
+
+                if (linkedProject) {
+                    includesToProcess.push(`project:${linkedProject}:.gitlab/security-policies/policy.yml`);
+                    pepInfo = `Loaded PEP from linked project '${linkedProject}'.`;
+                } else {
+                    pepWarning = `No linked Security Policy Project (PEP) was returned by GitLab for '${projectPathToUse}'. Defaulting to local repository fallback.`;
+                    // Fallback: check local policy
+                    includesToProcess.push(`project:${projectPathToUse}:.gitlab/security-policies/policy.yml`);
+                }
+
+                if (availablePolicies.length > 0) {
+                    pepInfo = (pepInfo ? pepInfo + ' ' : '') + `Available server policies: ${availablePolicies.join(', ')}.`;
+                    if (activePolicyOverride && !availablePolicies.includes(activePolicyOverride)) {
+                        pepWarning = (pepWarning ? pepWarning + ' ' : '') + `Warning: Active policy override '${activePolicyOverride}' was not found on the server.`;
+                    }
+                }
+            } else {
+                pepWarning = `Cannot automatically discover Pipeline Execution Policies (PEP): 'gitlabComponentHelper.projectPath' is not configured in settings.`;
+            }
+
+            // Build structured include objects for includesToProcess entries.
             // We pass these directly to parser.parse() as pre-parsed objects rather than
             // injecting a YAML string — avoiding duplicate-key corruption and Windows-path
             // backslash escaping issues that the string-injection approach suffered from.
-            const extraIncludes = alwaysInclude.map(entry => {
+            const extraIncludes = includesToProcess.map(entry => {
                 if (entry.startsWith('component:')) {
                     return { component: entry.slice('component:'.length) };
                 }
@@ -145,13 +184,20 @@ export class PipelineVisualizerProvider {
             const parser = new PipelineParser(10); // max depth 10
             const graph = await parser.parse(content, sourceName, parserContext, extraIncludes.length > 0 ? extraIncludes : undefined);
 
-            this.panel.webview.html = this.getGraphHtml(graph, sourceName, this.panel.webview);
+            if (pepWarning) {
+                graph.errors.push(pepWarning);
+            }
+            if (pepInfo) {
+                graph.errors.push(`ℹ️ Info: ${pepInfo}`);
+            }
+
+            this.panel.webview.html = this.getGraphHtml(graph, sourceName, this.panel.webview, activePolicyOverride);
         } catch (e) {
             this.panel.webview.html = this.getErrorHtml(e instanceof Error ? e.message : String(e));
         }
     }
 
-    private getGraphHtml(graph: PipelineGraph, sourceName: string, webview: vscode.Webview): string {
+    private getGraphHtml(graph: PipelineGraph, sourceName: string, webview: vscode.Webview, activePolicyOverride?: string): string {
         let mermaidCode = 'flowchart LR\n';
 
         const stageIds: string[] = [];
@@ -221,16 +267,22 @@ export class PipelineVisualizerProvider {
 
             let html = '';
             const name = node.name;
-            
+            let displayName = escapeHtml(name);
+
+            // Highlight local overrides if present
+            if (displayName.includes('(Local Override:')) {
+                displayName = displayName.replace(/\(Local Override: (.*?)\)/, '<span style="color: var(--vscode-charts-orange); font-style: italic;">(Local Override: $1)</span>');
+            }
+
             if (depth > 0) {
                 const connector = isLast ? '└── ' : '├── ';
-                html += `<div class="tree-line">${prefix}${connector}${escapeHtml(name)}</div>`;
+                html += `<div class="tree-line">${prefix}${connector}${displayName}</div>`;
             } else {
-                html += `<div class="tree-line root-node">${escapeHtml(name)}</div>`;
+                html += `<div class="tree-line root-node">${displayName}</div>`;
             }
 
             const newPrefix = depth === 0 ? '' : prefix + (isLast ? '&nbsp;&nbsp;&nbsp;&nbsp;' : '│&nbsp;&nbsp;&nbsp;');
-            
+
             if (node.children && node.children.length > 0) {
                 node.children.forEach((child: any, index: number) => {
                     html += renderIncludeTree(child, depth + 1, index === node.children.length - 1, newPrefix);
@@ -285,6 +337,13 @@ export class PipelineVisualizerProvider {
                     overflow: hidden; /* svg-pan-zoom handles the panning */
                     position: relative;
                 }
+                .info-banner {
+                    background-color: rgba(255,165,0,0.1);
+                    border: 1px solid orange;
+                    padding: 10px;
+                    border-radius: 4px;
+                    margin-bottom: 5px;
+                }
                 .mermaid {
                     width: 100%;
                     height: 100%;
@@ -331,6 +390,7 @@ export class PipelineVisualizerProvider {
         <body>
             <div class="container">
                 <h2>Pipeline: ${escapeHtml(sourceName)}</h2>
+                ${activePolicyOverride ? `<div class="info-banner"><strong>🛡️ Active Policy Override:</strong> ${escapeHtml(activePolicyOverride)} <small>(Other policies are being ignored)</small></div>` : ''}
                 <div class="graph-container">
                     <div class="mermaid">
                         ${mermaidCode}

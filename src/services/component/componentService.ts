@@ -170,6 +170,76 @@ export class ComponentService implements ComponentSource {
     return this.httpClient.fetchText(url);
   }
 
+  // GraphQL delegation for Policies
+  public async fetchLinkedSecurityPolicyProject(
+    gitlabInstance: string,
+    projectPath: string,
+    token: string
+  ): Promise<string | undefined> {
+    const cleanGitlabInstance = this.urlParser.cleanGitLabInstance(gitlabInstance);
+    const apiBaseUrl = this.urlParser.getApiBaseUrl(cleanGitlabInstance).replace('/api/v4', '/api/graphql');
+    
+    const query = `
+      query getPolicyProject($fullPath: ID!) {
+        project(fullPath: $fullPath) {
+          securityPolicyProject {
+            fullPath
+          }
+        }
+      }
+    `;
+
+    try {
+      const response = await this.httpClient.fetchGraphQL(
+        apiBaseUrl, 
+        query, 
+        { fullPath: projectPath },
+        { headers: { 'PRIVATE-TOKEN': token } }
+      );
+
+      return response?.data?.project?.securityPolicyProject?.fullPath;
+    } catch (error) {
+      this.logger.error(`Error fetching linked security policy project: ${error}`);
+      return undefined;
+    }
+  }
+
+  public async fetchPipelineExecutionPolicies(
+    gitlabInstance: string,
+    projectPath: string,
+    token: string
+  ): Promise<string[]> {
+    const cleanGitlabInstance = this.urlParser.cleanGitLabInstance(gitlabInstance);
+    const apiBaseUrl = this.urlParser.getApiBaseUrl(cleanGitlabInstance).replace('/api/v4', '/api/graphql');
+    
+    const query = `
+      query getPolicies($fullPath: ID!) {
+        project(fullPath: $fullPath) {
+          pipelineExecutionPolicies {
+            nodes {
+              name
+            }
+          }
+        }
+      }
+    `;
+
+    try {
+      const response = await this.httpClient.fetchGraphQL(
+        apiBaseUrl, 
+        query, 
+        { fullPath: projectPath },
+        { headers: { 'PRIVATE-TOKEN': token } }
+      );
+
+      const nodes = response?.data?.project?.pipelineExecutionPolicies?.nodes || [];
+      return nodes.map((node: any) => node.name).filter(Boolean);
+    } catch (error) {
+      this.logger.error(`Error fetching pipeline execution policies: ${error}`);
+      return [];
+    }
+  }
+
   // Local mock components (for fallback/testing)
   private getLocalComponents(): Component[] {
     return [

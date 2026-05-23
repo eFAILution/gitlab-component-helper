@@ -40,6 +40,7 @@ export interface ParserContext {
     gitlabInstance?: string;
     projectPath?: string;
     customVariables?: Record<string, string>;
+    activePolicyOverride?: string;
     serverUrl?: string;
     [key: string]: any;
 }
@@ -70,6 +71,7 @@ export class PipelineParser {
     private includeTree: IncludeNode = { name: 'root', children: [] };
     private errors: string[] = [];
     private allowedRoots: string[] | null = null;
+    private extraAllowedRoots: string[] = [];
     private entryDirectory: string | null = null;
 
     constructor(maxDepth: number = 10) {
@@ -84,6 +86,7 @@ export class PipelineParser {
         this.includeTree = { name: sourceName, children: [] };
         this.errors = [];
         this.allowedRoots = null; // Clear cached allowed roots for the new parsing run
+        this.extraAllowedRoots = [];
 
         if (path.isAbsolute(sourceName)) {
             this.entryDirectory = path.dirname(sourceName);
@@ -93,6 +96,11 @@ export class PipelineParser {
 
         // Resolve any always-include entries first, before the main file.
         if (extraIncludes && extraIncludes.length > 0) {
+            for (const inc of extraIncludes) {
+                if (inc.local && path.isAbsolute(inc.local)) {
+                    this.extraAllowedRoots.push(path.dirname(inc.local));
+                }
+            }
             for (const inc of extraIncludes) {
                 await this.resolveInclude(inc, sourceName, 1, this.includeTree, context);
             }
@@ -172,6 +180,10 @@ export class PipelineParser {
         if (parsed.pipeline_execution_policy && Array.isArray(parsed.pipeline_execution_policy)) {
             for (const policy of parsed.pipeline_execution_policy) {
                 if (!policy) continue;
+
+                if (context?.activePolicyOverride && policy.name !== context.activePolicyOverride) {
+                    continue; // Skip policies that don't match the override
+                }
 
                 // GitLab PEPs use 'content' for the embedded pipeline, but we support
                 // 'pipeline' as a fallback (used in some documentation/earlier versions).
@@ -287,19 +299,25 @@ export class PipelineParser {
                     `templates/template.yml`
                 ];
 
-                // Local Redirect: Try resolving locally first to allow local overrides/experimentation.
+                // Local Redirect: Try resolving locally first if configured to allow local overrides.
                 let resolvedLocally = false;
-                for (const templatePath of combinations) {
-                    const resolved = await this.tryResolveLocal(templatePath, currentSource, context);
-                    if (resolved) {
-                        if (!this.includedSources.includes(resolved.path)) {
-                            this.includedSources.push(resolved.path);
+                const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+                const preferLocal = config.get<boolean>('visualizer.preferLocalIncludes', true);
+
+                if (preferLocal) {
+                    for (const templatePath of combinations) {
+                        const resolved = await this.tryResolveLocal(templatePath, currentSource, context, parsedUrl.path);
+                        if (resolved) {
+                            const nodeName = `${targetName} (Local Override: ${resolved.path})`;
+                            if (!this.includedSources.includes(nodeName)) {
+                                this.includedSources.push(nodeName);
+                            }
+                            const node = { name: nodeName, children: [] };
+                            parentNode.children.push(node);
+                            await this.parseRecursive(resolved.content, resolved.path, depth, node, context);
+                            resolvedLocally = true;
+                            break;
                         }
-                        const node = { name: resolved.path, children: [] };
-                        parentNode.children.push(node);
-                        await this.parseRecursive(resolved.content, resolved.path, depth, node, context);
-                        resolvedLocally = true;
-                        break;
                     }
                 }
                 if (resolvedLocally) {
@@ -358,16 +376,22 @@ export class PipelineParser {
                     const ref = directive.ref || 'HEAD';
                     const cleanFile = expandedFile.replace(/^\//, '');
 
-                    // Local Redirect: Try resolving locally first to allow local overrides/experimentation.
-                    const resolved = await this.tryResolveLocal(cleanFile, currentSource, context);
-                    if (resolved) {
-                        if (!this.includedSources.includes(resolved.path)) {
-                            this.includedSources.push(resolved.path);
+                    // Local Redirect: Try resolving locally first if configured.
+                    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+                    const preferLocal = config.get<boolean>('visualizer.preferLocalIncludes', true);
+
+                    if (preferLocal) {
+                        const resolved = await this.tryResolveLocal(cleanFile, currentSource, context, projectPath);
+                        if (resolved) {
+                            const nodeName = `${targetName} (Local Override: ${resolved.path})`;
+                            if (!this.includedSources.includes(nodeName)) {
+                                this.includedSources.push(nodeName);
+                            }
+                            const node = { name: nodeName, children: [] };
+                            parentNode.children.push(node);
+                            await this.parseRecursive(resolved.content, resolved.path, depth, node, context);
+                            continue; // Move to next file in directive.file array
                         }
-                        const node = { name: resolved.path, children: [] };
-                        parentNode.children.push(node);
-                        await this.parseRecursive(resolved.content, resolved.path, depth, node, context);
-                        continue; // Move to next file in directive.file array
                     }
 
                     try {
@@ -383,10 +407,10 @@ export class PipelineParser {
                             parentNode.children.push(node);
                             await this.parseRecursive(content, targetName, depth, node, context, origin);
                         } else {
-                            this.errors.push(`Could not fetch project file ${directive.project}/${file}`);
+                            this.errors.push(`Could not fetch project file ${directive.project}/${file}. Permission denied or file not found. If this is a restricted PEP file, please provide a local copy and enable the 'visualizer.preferLocalIncludes' setting.`);
                         }
                     } catch (e) {
-                        this.errors.push(`Failed to fetch project file ${directive.project}/${file}: ${this.formatError(e)}`);
+                        this.errors.push(`Failed to fetch project file ${directive.project}/${file}: ${this.formatError(e)}. If this is a restricted PEP file, please provide a local copy and enable the 'visualizer.preferLocalIncludes' setting.`);
                     }
                 }
                 return;
@@ -439,7 +463,8 @@ export class PipelineParser {
         const rawRoots = [
             ...(workspaceFolders?.map(f => f.uri.fsPath) || []),
             ...(this.entryDirectory ? [this.entryDirectory] : []),
-            ...extraRoots.filter(r => r && typeof r === 'string').map(r => path.resolve(r))
+            ...extraRoots.filter(r => r && typeof r === 'string').map(r => path.resolve(r)),
+            ...this.extraAllowedRoots
         ];
 
         this.allowedRoots = rawRoots.map(root => {
@@ -468,7 +493,7 @@ export class PipelineParser {
     /**
      * Helper to try resolving a path locally without side-effects (errors)
      */
-    private async tryResolveLocal(inc: string, currentSource: string, context?: ParserContext): Promise<{ path: string, content: string } | undefined> {
+    private async tryResolveLocal(inc: string, currentSource: string, context?: ParserContext, projectPath?: string): Promise<{ path: string, content: string } | undefined> {
         const cleanInc = inc.startsWith('/') ? inc.substring(1) : inc;
         const workspaceFolders = vscode.workspace.workspaceFolders;
 
@@ -481,14 +506,28 @@ export class PipelineParser {
             const allowedRoots = this.getAllowedRoots();
             for (const root of allowedRoots) {
                 candidates.push(path.normalize(path.join(root, cleanInc)));
+                if (projectPath) {
+                    const projectName = path.basename(projectPath);
+                    candidates.push(path.normalize(path.join(root, projectName, cleanInc)));
+                }
             }
             // Workspace relative (fallback)
             if (workspaceFolders && workspaceFolders.length > 0) {
-                candidates.push(path.normalize(path.join(workspaceFolders[0].uri.fsPath, cleanInc)));
+                for (const folder of workspaceFolders) {
+                    candidates.push(path.normalize(path.join(folder.uri.fsPath, cleanInc)));
+                    if (projectPath) {
+                        const projectName = path.basename(projectPath);
+                        candidates.push(path.normalize(path.join(folder.uri.fsPath, projectName, cleanInc)));
+                    }
+                }
             }
             // currentSource relative
             if (path.isAbsolute(currentSource)) {
                 candidates.push(path.normalize(path.join(path.dirname(currentSource), cleanInc)));
+                if (projectPath) {
+                    const projectName = path.basename(projectPath);
+                    candidates.push(path.normalize(path.join(path.dirname(currentSource), '..', projectName, cleanInc)));
+                }
             }
         }
 

@@ -12,6 +12,9 @@ interface RequestOptions {
   retryAttempts?: number;
   headers?: Record<string, string>;
   retryDelay?: number;
+  method?: string;
+  body?: string;
+  ignoreCertificateErrors?: boolean;
 }
 
 export class HttpClient {
@@ -27,7 +30,8 @@ export class HttpClient {
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
     return {
       timeout: config.get<number>('httpTimeout', 10000),
-      retryAttempts: config.get<number>('retryAttempts', 3)
+      retryAttempts: config.get<number>('retryAttempts', 3),
+      ignoreCertificateErrors: config.get<boolean>('ignoreCertificateErrors', false)
     };
   }
 
@@ -40,9 +44,12 @@ export class HttpClient {
     return statusCode >= 500 || statusCode === 429; // Include rate limiting
   }
 
-  private buildCacheKey(url: string, headers: Record<string, string>): string {
+  private buildCacheKey(url: string, headers: Record<string, string>, method: string = 'GET', body?: string): string {
     // Include auth tokens in cache key to avoid mixing authenticated/unauthenticated responses
     const authToken = headers['Authorization'] || headers['PRIVATE-TOKEN'] || '';
+    if (method === 'POST' && body) {
+      return `${method}|${url}|${authToken}|${body}`;
+    }
     return `${url}|${authToken}`;
   }
 
@@ -65,14 +72,20 @@ export class HttpClient {
       ...options.headers
     };
 
-    const cacheKey = this.buildCacheKey(url, headers);
+    const cacheKey = this.buildCacheKey(url, headers, options.method, options.body);
 
     return this.deduplicator.fetch(cacheKey, async () => {
       for (let attempt = 0; attempt <= retryAttempts; attempt++) {
         try {
-          this.logger.debug(`HTTP Request attempt ${attempt + 1}/${retryAttempts + 1}: ${url}`);
+          this.logger.debug(`HTTP Request attempt ${attempt + 1}/${retryAttempts + 1}: ${options.method || 'GET'} ${url}`);
 
-          const data = await this.makeRequest(url, { timeout, headers });
+          const data = await this.makeRequest(url, { 
+            timeout, 
+            headers,
+            method: options.method,
+            body: options.body,
+            ignoreCertificateErrors: config.ignoreCertificateErrors
+          });
 
           try {
             const jsonData = JSON.parse(data);
@@ -135,14 +148,20 @@ export class HttpClient {
       ...options.headers
     };
 
-    const cacheKey = this.buildCacheKey(url, headers);
+    const cacheKey = this.buildCacheKey(url, headers, options.method, options.body);
 
     return this.deduplicator.fetch(cacheKey, async () => {
       for (let attempt = 0; attempt <= retryAttempts; attempt++) {
         try {
-          this.logger.debug(`HTTP Text Request attempt ${attempt + 1}/${retryAttempts + 1}: ${url}`);
+          this.logger.debug(`HTTP Text Request attempt ${attempt + 1}/${retryAttempts + 1}: ${options.method || 'GET'} ${url}`);
 
-          const data = await this.makeRequest(url, { timeout, headers });
+          const data = await this.makeRequest(url, { 
+            timeout, 
+            headers,
+            method: options.method,
+            body: options.body,
+            ignoreCertificateErrors: config.ignoreCertificateErrors
+          });
 
           this.logger.debug(`HTTP Text Request successful: ${url} (${data.length} chars)`);
           return data;
@@ -177,20 +196,21 @@ export class HttpClient {
     });
   }
 
-  private makeRequest(url: string, options: { timeout: number; headers: Record<string, string> }): Promise<string> {
+  private makeRequest(url: string, options: { timeout: number; headers: Record<string, string>; method?: string; body?: string; ignoreCertificateErrors?: boolean }): Promise<string> {
     return new Promise((resolve, reject) => {
       try {
         const urlObj = safeUrlParse(url);
         const isHttps = urlObj.protocol === 'https:';
         const client = isHttps ? https : http;
 
-        const requestOptions = {
+        const requestOptions: https.RequestOptions = {
           hostname: urlObj.hostname,
           port: urlObj.port || (isHttps ? 443 : 80),
           path: urlObj.pathname + urlObj.search,
-          method: 'GET',
+          method: options.method || 'GET',
           headers: options.headers,
-          timeout: options.timeout
+          timeout: options.timeout,
+          ...(isHttps && options.ignoreCertificateErrors ? { rejectUnauthorized: false } : {})
         };
 
         const req = client.request(requestOptions, (res) => {
@@ -220,6 +240,10 @@ export class HttpClient {
           reject(new NetworkError(error.message, { cause: error }));
         });
 
+        if (options.body) {
+          req.write(options.body);
+        }
+
         req.end();
       } catch (error) {
         reject(new NetworkError(
@@ -242,7 +266,9 @@ export class HttpClient {
           headers: {
             'User-Agent': 'VSCode-GitLabComponentHelper',
             ...options.headers
-          }
+          },
+          method: options.method,
+          body: options.body
         });
         const result = parser(data, url);
         return { result, url };
@@ -284,5 +310,14 @@ export class HttpClient {
   // Clear all pending deduplicated requests
   clearDeduplicatedRequests(): void {
     this.deduplicator.clear();
+  }
+
+  async fetchGraphQL(url: string, query: string, variables: any, options: RequestOptions = {}): Promise<any> {
+    const body = JSON.stringify({ query, variables });
+    const headers = {
+      ...options.headers,
+      'Content-Type': 'application/json'
+    };
+    return this.fetchJson(url, { ...options, method: 'POST', body, headers });
   }
 }

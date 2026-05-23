@@ -245,6 +245,11 @@
           ],
           "description": "Filenames recognised inside per-component subfolders, e.g. 'templates/foo/template.yml'."
         },
+        "gitlabComponentHelper.ignoreCertificateErrors": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, ignores SSL/TLS certificate errors (e.g. unable to verify the first certificate) when making HTTP requests to GitLab. Useful for local development servers or self-signed certificates."
+        },
         "gitlabComponentHelper.visualizer.alwaysInclude": {
           "type": "array",
           "default": [],
@@ -252,6 +257,18 @@
           "items": {
             "type": "string"
           },
+          "scope": "resource"
+        },
+        "gitlabComponentHelper.visualizer.preferLocalIncludes": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When enabled, `project:` and `component:` includes will first check your local workspace for the corresponding files and use them if they exist. This is useful for testing a local copy of a PEP or shared configuration. Disable this to strictly fetch them from the remote GitLab server.",
+          "scope": "resource"
+        },
+        "gitlabComponentHelper.visualizer.activePolicyOverride": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The name of a specific Pipeline Execution Policy (PEP) to isolate and visualize. If set, only this policy will be parsed and injected. You can select this via the `GitLab CI: Select Active Policy Override` command.",
           "scope": "resource"
         },
         "gitlabComponentHelper.projectPath": {
@@ -314,6 +331,10 @@
       {
         "command": "gitlab-component-helper.showPerformanceStats",
         "title": "GitLab CI: Show Performance Statistics"
+      },
+      {
+        "command": "gitlab-component-helper.selectPolicyOverride",
+        "title": "GitLab CI: Select Active Policy Override"
       }
     ],
     "menus": {

@@ -1,4 +1,5 @@
 import { registerAddProjectTokenCommand, getComponentService } from './services/component';
+import { safeUrlParse } from './utils/urlUtils';
 import * as vscode from 'vscode';
 import { HoverProvider } from './providers/hoverProvider';
 import { CompletionProvider } from './providers/completionProvider';
@@ -602,6 +603,63 @@ export function activate(context: vscode.ExtensionContext) {
 
         logger.info('[Extension] Performance statistics displayed', 'Extension');
         vscode.window.showInformationMessage('Performance statistics displayed in output channel');
+      })
+    );
+
+    // Register command to select active policy override
+    logger.debug('[Extension] Registering selectPolicyOverride command...', 'Extension');
+    context.subscriptions.push(
+      vscode.commands.registerCommand('gitlab-component-helper.selectPolicyOverride', async () => {
+        const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+        const projectPath = config.get<string>('projectPath', '');
+        const gitlabUrl = config.get<string>('gitlabUrl', 'https://gitlab.com');
+        let gitlabInstance = 'gitlab.com';
+        try {
+          gitlabInstance = safeUrlParse(gitlabUrl).hostname;
+        } catch {
+          gitlabInstance = gitlabUrl.replace(/^https?:\/\//, '').split('/')[0];
+        }
+
+        if (!projectPath) {
+          vscode.window.showErrorMessage('Please set the "gitlabComponentHelper.projectPath" setting for your workspace first.');
+          return;
+        }
+
+        const service = getComponentService();
+        const token = await service.getTokenForProject(gitlabInstance, projectPath);
+        if (!token) {
+          vscode.window.showErrorMessage('No GitLab token found. Please add a token for your project using "GitLab CI: Add Component Project/Group" first.');
+          return;
+        }
+
+        await vscode.window.withProgress({
+          location: vscode.ProgressLocation.Notification,
+          title: "Fetching Pipeline Execution Policies..."
+        }, async () => {
+          const policies = await service.fetchPipelineExecutionPolicies(gitlabInstance, projectPath, token);
+
+          const clearOption = { label: '$(clear-all) Clear Override / Show All', value: '' };
+          const policyItems = policies.map(p => ({ label: `$(shield) ${p}`, value: p }));
+
+          if (policyItems.length === 0) {
+            vscode.window.showInformationMessage('No active Pipeline Execution Policies found for this project.');
+            return;
+          }
+
+          const pick = await vscode.window.showQuickPick(
+            [clearOption, ...policyItems],
+            { placeHolder: 'Select a Pipeline Execution Policy to visualize', ignoreFocusOut: true }
+          );
+
+          if (pick !== undefined) {
+            await config.update('visualizer.activePolicyOverride', pick.value, vscode.ConfigurationTarget.Workspace);
+            if (pick.value) {
+              vscode.window.showInformationMessage(`Active Policy Override set to: ${pick.value}`);
+            } else {
+              vscode.window.showInformationMessage('Active Policy Override cleared. All policies will be shown.');
+            }
+          }
+        });
       })
     );
 
