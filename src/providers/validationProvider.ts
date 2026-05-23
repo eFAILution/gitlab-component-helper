@@ -1,3 +1,4 @@
+import { safeUrlParse } from '../utils/urlUtils';
 import * as vscode from 'vscode';
 import { getComponentService } from '../services/component';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
@@ -402,7 +403,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
     private isExampleMockComponentUrl(componentUrl: string): boolean {
         try {
-            const parsed = new URL(componentUrl);
+            const parsed = safeUrlParse(componentUrl);
             const isExampleHost = parsed.hostname === 'gitlab.example.com';
             const hasExpectedPath = parsed.pathname.includes('/my-group/my-component');
             return isExampleHost || hasExpectedPath;
@@ -921,7 +922,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
      */
     private parseComponentUrl(url: string): { gitlabInstance: string; projectPath: string; componentName: string; version: string } | null {
         try {
-            const urlObj = new URL(url);
+            const urlObj = safeUrlParse(url);
             const gitlabInstance = urlObj.hostname;
             const pathParts = urlObj.pathname.split('/').filter(part => part.length > 0);
 
@@ -1355,7 +1356,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             let projectPath: string;
 
             if (remoteUrl.startsWith('https://')) {
-                const url = new URL(remoteUrl);
+                const url = safeUrlParse(remoteUrl);
                 gitlabInstance = url.hostname;
                 projectPath = url.pathname.substring(1).replace(/\.git$/, '');
             } else if (remoteUrl.startsWith('git@')) {
@@ -1557,7 +1558,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             let projectPath: string;
 
             if (remoteUrl.startsWith('https://')) {
-                const url = new URL(remoteUrl);
+                const url = safeUrlParse(remoteUrl);
                 hostname = url.hostname;
                 projectPath = url.pathname.substring(1).replace(/\.git$/, '');
             } else if (remoteUrl.startsWith('git@')) {

@@ -1,3 +1,4 @@
+import { safeUrlParse } from '../../utils/urlUtils';
 import * as vscode from 'vscode';
 import { Component } from '../../providers/componentDetector';
 import { HttpClient } from '../../utils/httpClient';
@@ -154,7 +155,8 @@ export class ComponentService implements ComponentSource {
     ref: string = 'main'
   ): Promise<string> {
     const cleanGitlabInstance = this.urlParser.cleanGitLabInstance(gitlabInstance);
-    const url = `https://${cleanGitlabInstance}/api/v4/projects/${encodeURIComponent(
+    const apiBaseUrl = this.urlParser.getApiBaseUrl(cleanGitlabInstance);
+    const url = `${apiBaseUrl}/projects/${encodeURIComponent(
       projectPath
     )}/repository/files/${encodeURIComponent(filePath)}/raw?ref=${ref}`;
 
@@ -244,7 +246,7 @@ export class ComponentService implements ComponentSource {
 
     const gitlabHost = (() => {
       try {
-        return new URL(gitlabUrl).hostname;
+        return safeUrlParse(gitlabUrl).hostname;
       } catch {
         return gitlabUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
       }

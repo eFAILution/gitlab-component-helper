@@ -1,3 +1,4 @@
+import { safeUrlParse } from './urlUtils';
 import * as https from 'https';
 import * as http from 'http';
 import * as vscode from 'vscode';
@@ -51,7 +52,7 @@ export class HttpClient {
       async () => {
         return this.fetchJsonInternal(url, options);
       },
-      { url: new URL(url).hostname + new URL(url).pathname }
+      { url: safeUrlParse(url).hostname + safeUrlParse(url).pathname }
     );
   }
 
@@ -121,7 +122,7 @@ export class HttpClient {
       async () => {
         return this.fetchTextInternal(url, options);
       },
-      { url: new URL(url).hostname + new URL(url).pathname }
+      { url: safeUrlParse(url).hostname + safeUrlParse(url).pathname }
     );
   }
 
@@ -179,7 +180,7 @@ export class HttpClient {
   private makeRequest(url: string, options: { timeout: number; headers: Record<string, string> }): Promise<string> {
     return new Promise((resolve, reject) => {
       try {
-        const urlObj = new URL(url);
+        const urlObj = safeUrlParse(url);
         const isHttps = urlObj.protocol === 'https:';
         const client = isHttps ? https : http;
 

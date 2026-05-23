@@ -1,3 +1,4 @@
+import { safeUrlParse } from '../utils/urlUtils';
 import * as vscode from 'vscode';
 import { PipelineParser, PipelineGraph, PipelineJob, PipelineStage } from '../parsers/pipelineParser';
 import { getComponentService } from '../services/component/componentService';
@@ -106,7 +107,7 @@ export class PipelineVisualizerProvider {
             // Ensure gitlabInstance is just the hostname for comparison
             let gitlabInstance = 'gitlab.com';
             try {
-                gitlabInstance = new URL(gitlabUrl).hostname;
+                gitlabInstance = safeUrlParse(gitlabUrl).hostname;
             } catch {
                 gitlabInstance = gitlabUrl.replace(/^https?:\/\//, '').split('/')[0];
             }

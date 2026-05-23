@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { getComponentService } from '../component';
+import { getComponentService, UrlParser } from '../component';
 import { Logger } from '../../utils/logger';
 import { CachedComponent } from '../../types/cache';
 import { ProjectCache } from './projectCache';
@@ -156,8 +156,9 @@ export class GroupCache {
     const componentService = getComponentService();
 
     try {
-      // Use GitLab Groups API to get all projects in the group
-      const groupApiUrl = `https://${gitlabInstance}/api/v4/groups/${encodeURIComponent(
+      const urlParser = new UrlParser();
+      const apiBaseUrl = urlParser.getApiBaseUrl(gitlabInstance);
+      const groupApiUrl = `${apiBaseUrl}/groups/${encodeURIComponent(
         groupPath
       )}/projects?per_page=100&include_subgroups=true`;
 

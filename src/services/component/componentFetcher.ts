@@ -73,7 +73,11 @@ export class ComponentFetcher {
 
     try {
       // Parse the GitLab component URL
-      const urlObj = new URL(url);
+      let parseableUrl = url;
+      if (!url.includes('://')) {
+        parseableUrl = `https://${url}`;
+      }
+      const urlObj = new URL(parseableUrl);
       const gitlabInstance = urlObj.hostname;
 
       // Extract project path, component name, and version.
@@ -110,7 +114,7 @@ export class ComponentFetcher {
       );
 
       const encodedProjectPath = encodeURIComponent(projectPath);
-      const apiBaseUrl = `https://${gitlabInstance}/api/v4`;
+      const apiBaseUrl = this.urlParser.getApiBaseUrl(gitlabInstance);
 
       let templateContent = '';
       let parameters: Array<{
@@ -124,7 +128,7 @@ export class ComponentFetcher {
       // Try GitLab CI/CD Catalog first
       try {
         const namespaceProject = projectPath;
-        const catalogApiUrl = `https://${gitlabInstance}/api/v4/ci/catalog/${encodeURIComponent(
+        const catalogApiUrl = `${apiBaseUrl}/ci/catalog/${encodeURIComponent(
           namespaceProject
         )}`;
 
@@ -400,7 +404,7 @@ export class ComponentFetcher {
     this.logger.info(`Fetching fresh catalog data from ${cleanGitlabInstance}`);
 
     try {
-      const apiBaseUrl = `https://${cleanGitlabInstance}/api/v4`;
+      const apiBaseUrl = this.urlParser.getApiBaseUrl(cleanGitlabInstance);
       let ref = version || 'main';
       let token = await this.tokenManager.getTokenForProject(cleanGitlabInstance, projectPath);
       let fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
@@ -626,7 +630,7 @@ export class ComponentFetcher {
     gitlabInstance: string,
     projectPath: string
   ): Promise<any> {
-    const apiBaseUrl = `https://${gitlabInstance}/api/v4`;
+    const apiBaseUrl = this.urlParser.getApiBaseUrl(gitlabInstance);
     const token = await this.tokenManager.getTokenForProject(gitlabInstance, projectPath);
     const fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
 

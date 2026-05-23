@@ -1,3 +1,4 @@
+import { safeUrlParse } from '../utils/urlUtils';
 import * as vscode from 'vscode';
 import { getComponentService } from '../services/component';
 import { ComponentCacheManager } from '../services/cache/componentCacheManager';
@@ -2508,7 +2509,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
       const urlWithoutVersion = componentUrl.includes('@') ?
         componentUrl.split('@')[0] : componentUrl;
 
-      const url = new URL(urlWithoutVersion);
+      const url = safeUrlParse(urlWithoutVersion);
       const pathParts = url.pathname.substring(1).split('/');
 
       // Remove the component name (last part)

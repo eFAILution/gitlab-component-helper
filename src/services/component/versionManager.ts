@@ -1,6 +1,7 @@
 import { Logger } from '../../utils/logger';
 import { HttpClient } from '../../utils/httpClient';
 import { TokenManager } from './tokenManager';
+import { UrlParser } from './urlParser';
 
 interface GitLabTag {
   name: string;
@@ -18,10 +19,12 @@ export class VersionManager {
   private logger = Logger.getInstance();
   private httpClient: HttpClient;
   private tokenManager: TokenManager;
+  private urlParser: UrlParser;
 
   constructor(httpClient: HttpClient, tokenManager: TokenManager) {
     this.httpClient = httpClient;
     this.tokenManager = tokenManager;
+    this.urlParser = new UrlParser();
   }
 
   /**
@@ -37,7 +40,7 @@ export class VersionManager {
     const startTime = Date.now();
 
     try {
-      const apiBaseUrl = `https://${gitlabInstance}/api/v4`;
+      const apiBaseUrl = this.urlParser.getApiBaseUrl(gitlabInstance);
       const encodedPath = encodeURIComponent(projectPath);
 
       this.logger.info(`Fetching versions for ${gitlabInstance}/${projectPath}`);
@@ -140,7 +143,8 @@ export class VersionManager {
     this.logger.info(`Fetching tags for ${gitlabInstance}/${projectPath}`);
 
     try {
-      const apiUrl = `https://${gitlabInstance}/api/v4/projects/${encodeURIComponent(
+      const apiBaseUrl = this.urlParser.getApiBaseUrl(gitlabInstance);
+      const apiUrl = `${apiBaseUrl}/projects/${encodeURIComponent(
         projectPath
       )}/repository/tags?per_page=100&order_by=updated&sort=desc`;
 

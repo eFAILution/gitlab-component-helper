@@ -1,3 +1,4 @@
+import { safeUrlParse } from '../utils/urlUtils';
 import * as vscode from 'vscode';
 import { getComponentService } from '../services/component';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
@@ -211,14 +212,14 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
       requestedVersion = urlParts[1];
 
       // Extract project path and component name from base URL
-      const baseUrlObj = new URL(baseUrl);
+      const baseUrlObj = safeUrlParse(baseUrl);
       const fullPath = baseUrlObj.pathname.substring(1); // Remove leading slash
       const pathParts = fullPath.split('/');
       requestedName = pathParts.pop() || ''; // Component name is the last segment
       requestedProjectPath = pathParts.join('/'); // Project path is everything before the component name
     } else {
       // No version specified
-      const requestedUrl = new URL(componentUrl);
+      const requestedUrl = safeUrlParse(componentUrl);
       const fullPath = requestedUrl.pathname.substring(1); // Remove leading slash
       const pathParts = fullPath.split('/');
       requestedName = pathParts.pop() || ''; // Component name is the last segment
@@ -226,7 +227,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
       requestedVersion = undefined;
     }
 
-    const requestedGitlabInstance = new URL(componentUrl.split('@')[0]).hostname;
+    const requestedGitlabInstance = safeUrlParse(componentUrl.split('@')[0]).hostname;
 
     logger.debug(`[ComponentDetector] Looking for component: ${requestedName} from ${requestedGitlabInstance}/${requestedProjectPath}${requestedVersion ? `@${requestedVersion}` : ''}`, 'ComponentDetector');
 
@@ -404,7 +405,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
       version = urlParts[1];
 
       // Extract project path and component name from base URL
-      const baseUrlObj = new URL(baseUrl);
+      const baseUrlObj = safeUrlParse(baseUrl);
       const fullPath = baseUrlObj.pathname.substring(1); // Remove leading slash
       const pathParts = fullPath.split('/');
       componentName = pathParts.pop() || ''; // Component name is the last segment
@@ -412,7 +413,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
       gitlabInstance = baseUrlObj.hostname;
     } else {
       // No version specified
-      const url = new URL(componentUrl);
+      const url = safeUrlParse(componentUrl);
       const fullPath = url.pathname.substring(1); // Remove leading slash
       const pathParts = fullPath.split('/');
       componentName = pathParts.pop() || ''; // Component name is the last segment
@@ -464,7 +465,7 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
 
     // Parse the component URL to extract information
     // GitLab component URLs are: https://gitlab.instance/project/path/component@version
-    const url = new URL(componentUrl);
+    const url = safeUrlParse(componentUrl);
 
     // Split the pathname and check if it contains @ for version
     let projectPath: string;
@@ -478,7 +479,7 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
       version = urlParts[1];
 
       // Extract project path from base URL
-      const baseUrlObj = new URL(baseUrl);
+      const baseUrlObj = safeUrlParse(baseUrl);
       const fullPath = baseUrlObj.pathname.substring(1); // Remove leading slash
       const pathParts = fullPath.split('/');
       componentName = pathParts.pop() || ''; // Component name is the last segment
@@ -742,7 +743,7 @@ function parseGitLabRemoteUrl(remoteUrl: string): { gitlabInstance: string; proj
     let projectPath: string;
 
     if (remoteUrl.startsWith('https://')) {
-      const url = new URL(remoteUrl);
+      const url = safeUrlParse(remoteUrl);
       gitlabInstance = url.hostname;
       projectPath = url.pathname.substring(1).replace(/\.git$/, '');
     } else if (remoteUrl.startsWith('git@')) {
@@ -829,7 +830,7 @@ function parseAnyRemoteUrl(remoteUrl: string): { gitlabInstance: string; project
     let projectPath: string;
 
     if (remoteUrl.startsWith('https://')) {
-      const url = new URL(remoteUrl);
+      const url = safeUrlParse(remoteUrl);
       gitlabInstance = url.hostname;
       projectPath = url.pathname.substring(1).replace(/\.git$/, '');
     } else if (remoteUrl.startsWith('git@')) {
@@ -1023,7 +1024,7 @@ function parseNonGitLabRemoteUrl(remoteUrl: string): { hostname: string; project
     let projectPath: string;
 
     if (remoteUrl.startsWith('https://')) {
-      const url = new URL(remoteUrl);
+      const url = safeUrlParse(remoteUrl);
       hostname = url.hostname;
       projectPath = url.pathname.substring(1).replace(/\.git$/, '');
     } else if (remoteUrl.startsWith('git@')) {
