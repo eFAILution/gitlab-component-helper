@@ -13,6 +13,10 @@ export class Logger {
   private currentLevel: LogLevel = LogLevel.ERROR;
   private isInitialized: boolean = false;
   private isDevelopmentMode: boolean = false;
+  
+  // In-memory ring buffer for troubleshooting reports (stores last 1000 logs)
+  private memoryBuffer: string[] = [];
+  private readonly MAX_BUFFER_SIZE = 1000;
 
   private constructor() {
     // Detect if we're in development mode (extension debugging)
@@ -111,31 +115,46 @@ export class Logger {
     return `[${timestamp}] [${level}] [${component}] ${message}`;
   }
 
+  private addToBuffer(formattedMsg: string): void {
+    this.memoryBuffer.push(formattedMsg);
+    if (this.memoryBuffer.length > this.MAX_BUFFER_SIZE) {
+      this.memoryBuffer.shift();
+    }
+  }
+
+  public getTroubleshootingLogs(): string[] {
+    return [...this.memoryBuffer];
+  }
+
   debug(message: string, component: string = 'ComponentService'): void {
+    const formatted = this.formatMessage('DEBUG', component, message);
+    this.addToBuffer(formatted);
     if (this.shouldLog(LogLevel.DEBUG)) {
-      const formatted = this.formatMessage('DEBUG', component, message);
       outputChannel.appendLine(formatted);
     }
   }
 
   info(message: string, component: string = 'ComponentService'): void {
+    const formatted = this.formatMessage('INFO', component, message);
+    this.addToBuffer(formatted);
     if (this.shouldLog(LogLevel.INFO)) {
-      const formatted = this.formatMessage('INFO', component, message);
       outputChannel.appendLine(formatted);
     }
   }
 
   warn(message: string, component: string = 'ComponentService'): void {
+    const formatted = this.formatMessage('WARN', component, message);
+    this.addToBuffer(formatted);
     if (this.shouldLog(LogLevel.WARN)) {
-      const formatted = this.formatMessage('WARN', component, message);
       outputChannel.appendLine(formatted);
       console.warn(formatted);
     }
   }
 
   error(message: string, component: string = 'ComponentService'): void {
+    const formatted = this.formatMessage('ERROR', component, message);
+    this.addToBuffer(formatted);
     if (this.shouldLog(LogLevel.ERROR)) {
-      const formatted = this.formatMessage('ERROR', component, message);
       outputChannel.appendLine(formatted);
       console.error(formatted);
     }

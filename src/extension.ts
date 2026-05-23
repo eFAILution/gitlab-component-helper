@@ -134,7 +134,7 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.registerCommand('gitlab-component-helper.visualizePipeline', async (componentContext?: any) => {
         const visualizer = new PipelineVisualizerProvider(context);
         const editor = vscode.window.activeTextEditor;
-        
+
         if (componentContext) {
           await visualizer.show(componentContext);
         } else if (editor && (editor.document.languageId === 'yaml' || editor.document.languageId === 'gitlab-ci')) {
@@ -641,7 +641,7 @@ export function activate(context: vscode.ExtensionContext) {
           if (policies.length === 0) {
             const pepOverride = config.get<string>('visualizer.pepProjectPathOverride');
             const localOverrides = config.get<string[]>('visualizer.alwaysInclude', []).filter(inc => require('path').isAbsolute(inc));
-            
+
             let rawYaml: string | undefined;
             if (localOverrides.length > 0) {
               try {
@@ -699,7 +699,7 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     logger.debug('[Extension] Registering PEP control commands...', 'Extension');
-    
+
     // Helper function for safe configuration updates to bypass the VS Code binary file bug
     async function safeUpdateConfig(config: vscode.WorkspaceConfiguration, section: string, value: any, successMessage?: string, clearMessage?: string) {
       try {
@@ -724,9 +724,9 @@ export function activate(context: vscode.ExtensionContext) {
             );
           }
         } else {
-            vscode.window.showErrorMessage(
-              `Save cancelled. To do this manually, open your Workspace settings.json and ${value ? `set "gitlabComponentHelper.${section}" to "${value}"` : `delete "gitlabComponentHelper.${section}"`}.`
-            );
+          vscode.window.showErrorMessage(
+            `Save cancelled. To do this manually, open your Workspace settings.json and ${value ? `set "gitlabComponentHelper.${section}" to "${value}"` : `delete "gitlabComponentHelper.${section}"`}.`
+          );
         }
       }
     }
@@ -740,7 +740,7 @@ export function activate(context: vscode.ExtensionContext) {
           value: currentPath,
           ignoreFocusOut: true
         });
-        
+
         if (newPath !== undefined && newPath !== currentPath) {
           await safeUpdateConfig(config, 'projectPath', newPath, `GitLab project path set to: ${newPath}`, 'GitLab project path cleared.');
         }
@@ -756,7 +756,7 @@ export function activate(context: vscode.ExtensionContext) {
           value: currentOverride,
           ignoreFocusOut: true
         });
-        
+
         if (newOverride !== undefined && newOverride !== currentOverride) {
           await safeUpdateConfig(config, 'visualizer.pepProjectPathOverride', newOverride, `Linked Policy Project Override set to: ${newOverride}`, 'Linked Policy Project Override cleared.');
         }
@@ -774,10 +774,10 @@ export function activate(context: vscode.ExtensionContext) {
         if (uris && uris.length > 0) {
           const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
           let alwaysInclude = config.get<string[]>('visualizer.alwaysInclude', []);
-          
+
           // Remove existing absolute paths (which represent local file overrides)
           alwaysInclude = alwaysInclude.filter(inc => !require('path').isAbsolute(inc));
-          
+
           alwaysInclude.push(uris[0].fsPath);
           await config.update('visualizer.alwaysInclude', alwaysInclude, vscode.ConfigurationTarget.Workspace);
           vscode.window.showInformationMessage(`Local PEP override set to: ${uris[0].fsPath}`);
@@ -789,26 +789,67 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.registerCommand('gitlab-component-helper.clearPepOverrides', async () => {
         const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
         let updated = false;
-        
+
         if (config.get<string>('visualizer.activePolicyOverride', '') !== '') {
           await config.update('visualizer.activePolicyOverride', '', vscode.ConfigurationTarget.Workspace);
           updated = true;
         }
-        
+
         let alwaysInclude = config.get<string[]>('visualizer.alwaysInclude', []);
         const originalLength = alwaysInclude.length;
         alwaysInclude = alwaysInclude.filter(inc => !require('path').isAbsolute(inc));
-        
+
         if (alwaysInclude.length !== originalLength) {
-            await config.update('visualizer.alwaysInclude', alwaysInclude, vscode.ConfigurationTarget.Workspace);
-            updated = true;
+          await config.update('visualizer.alwaysInclude', alwaysInclude, vscode.ConfigurationTarget.Workspace);
+          updated = true;
         }
-        
+
         if (updated) {
-            vscode.window.showInformationMessage('All PEP overrides cleared.');
+          vscode.window.showInformationMessage('All PEP overrides cleared.');
         } else {
-            vscode.window.showInformationMessage('No active PEP overrides to clear.');
+          vscode.window.showInformationMessage('No active PEP overrides to clear.');
         }
+      })
+    );
+
+    context.subscriptions.push(
+      vscode.commands.registerCommand('gitlab-component-helper.generateTroubleshootingReport', async () => {
+        const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+
+        let report = `# GitLab Component Helper - Troubleshooting Report\n\n`;
+        report += `## Environment\n`;
+        report += `- **VS Code Version:** ${vscode.version}\n`;
+        report += `- **OS:** ${process.platform} ${process.arch}\n`;
+        report += `- **Date:** ${new Date().toISOString()}\n\n`;
+
+        report += `## Extension Settings\n`;
+        report += `> *Note: Secrets and tokens are explicitly excluded from this report.*\n\n`;
+        report += `- **gitlabUrl:** \`${config.get<string>('gitlabUrl', '')}\`\n`;
+        report += `- **projectPath:** \`${config.get<string>('projectPath', '')}\`\n`;
+        report += `- **pepProjectPathOverride:** \`${config.get<string>('visualizer.pepProjectPathOverride', '')}\`\n`;
+        report += `- **alwaysInclude:** \`${JSON.stringify(config.get<string[]>('visualizer.alwaysInclude', []))}\`\n`;
+        report += `- **activePolicyOverride:** \`${config.get<string>('visualizer.activePolicyOverride', '')}\`\n`;
+        report += `- **logLevel:** \`${config.get<string>('logLevel', 'INFO')}\`\n\n`;
+
+        report += `## Debug Trace\n`;
+        report += `> *This is a rolling buffer of the last 1000 background events.*\n\n`;
+        report += `\`\`\`log\n`;
+
+        const logs = Logger.getInstance().getTroubleshootingLogs();
+        if (logs.length === 0) {
+          report += `(No background logs collected yet. Try running your command again before generating the report.)\n`;
+        } else {
+          report += logs.join('\n') + '\n';
+        }
+        report += `\`\`\`\n`;
+
+        const document = await vscode.workspace.openTextDocument({
+          content: report,
+          language: 'markdown'
+        });
+        await vscode.window.showTextDocument(document);
+
+        vscode.window.showInformationMessage('Troubleshooting report generated! Please review it and share it with the maintainers.');
       })
     );
 
@@ -920,4 +961,4 @@ async function detectExistingInputs(component: any): Promise<string[]> {
   return existingInputs;
 }
 
-export function deactivate() {}
+export function deactivate() { }

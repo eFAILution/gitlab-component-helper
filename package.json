@@ -303,6 +303,11 @@
         "title": "GitLab CI: Browse Components"
       },
       {
+        "command": "gitlab-component-helper.generateTroubleshootingReport",
+        "title": "GitLab CI: Generate Troubleshooting Report",
+        "icon": "$(bug)"
+      },
+      {
         "command": "gitlab-component-helper.setLinkedProjectOverride",
         "title": "GitLab CI: Set Linked Policy Project (PEP)"
       },
