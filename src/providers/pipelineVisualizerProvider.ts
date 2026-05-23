@@ -398,7 +398,6 @@ export class PipelineVisualizerProvider {
             const controls = `<span class="tree-controls" style="display: flex; gap: 8px; align-items: center; margin-left: 10px; flex-shrink: 0; white-space: nowrap;">
                 <input type="checkbox" class="source-toggle" data-source="${escapeHtml(source)}" data-parent="${escapeHtml(parentSource)}" ${isChecked} title="Toggle visibility">
                 <input type="color" class="source-color" data-source="${escapeHtml(source)}" value="${colorValue}" title="Set job color" style="padding: 0; width: 20px; height: 20px; border: none; background: none; cursor: pointer;">
-                <button class="apply-color" data-source="${escapeHtml(source)}" title="Apply color" style="background:none; border:none; color:var(--vscode-button-foreground); cursor:pointer; font-size:14px; padding:0; margin-left:2px;">✓</button>
                 <button class="reset-color" data-source="${escapeHtml(source)}" title="Clear color" style="background:none; border:none; color:var(--vscode-errorForeground); cursor:pointer; font-size:14px; padding:0; margin-top:-2px;">×</button>
             </span>`;
 
@@ -600,6 +599,16 @@ export class PipelineVisualizerProvider {
                 
                 renderGraph();
 
+                let updateTimeout = null;
+                function sendUpdateDebounced() {
+                    if (updateTimeout) {
+                        clearTimeout(updateTimeout);
+                    }
+                    updateTimeout = setTimeout(() => {
+                        sendUpdate();
+                    }, 250);
+                }
+
                 function sendUpdate() {
                     const hiddenSources = [];
                     document.querySelectorAll('.source-toggle').forEach(el => {
@@ -659,11 +668,10 @@ export class PipelineVisualizerProvider {
                     });
                 });
                 
-                // Colour pickers now require explicit Apply click
-                document.querySelectorAll('.apply-color').forEach(el => {
-                    el.addEventListener('click', (e) => {
-                        // When Apply is clicked, we simply call sendUpdate to push the current colour value
-                        sendUpdate();
+                // Auto-save color as it changes using a debounced update
+                document.querySelectorAll('.source-color').forEach(el => {
+                    el.addEventListener('input', () => {
+                        sendUpdateDebounced();
                     });
                 });
 
