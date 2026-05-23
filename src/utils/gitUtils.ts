@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as vscode from 'vscode';
 
 /**
  * Attempts to extract the GitLab project path (e.g. group/subgroup/project)
@@ -7,20 +8,13 @@ import * as path from 'path';
  */
 export async function getProjectPathFromLocalFile(filePath: string): Promise<string | undefined> {
     try {
-        let currentDir = path.dirname(filePath);
-        let gitConfigPath = '';
-
-        // Traverse up to find .git directory
-        while (currentDir !== path.dirname(currentDir)) {
-            const potentialGitConfig = path.join(currentDir, '.git', 'config');
-            if (fs.existsSync(potentialGitConfig)) {
-                gitConfigPath = potentialGitConfig;
-                break;
-            }
-            currentDir = path.dirname(currentDir);
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath));
+        if (!workspaceFolder) {
+            return undefined;
         }
 
-        if (!gitConfigPath) {
+        const gitConfigPath = path.join(workspaceFolder.uri.fsPath, '.git', 'config');
+        if (!fs.existsSync(gitConfigPath)) {
             return undefined;
         }
 
