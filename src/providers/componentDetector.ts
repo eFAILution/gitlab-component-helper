@@ -669,7 +669,7 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
 /**
  * Get Git repository context for variable expansion
  */
-async function getGitRepositoryContext(): Promise<{
+export async function getGitRepositoryContext(): Promise<{
   gitlabInstance?: string;
   projectPath?: string;
   commitSha?: string;
