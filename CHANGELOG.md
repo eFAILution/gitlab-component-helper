@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.4](https://github.com/eFAILution/gitlab-component-helper/compare/0.10.3...0.10.4) (2026-05-28)
+
+
+### Bug Fixes
+
+* **ci:** skip release-it dry-run for fork PRs ([#119](https://github.com/eFAILution/gitlab-component-helper/issues/119)) ([ef7a600](https://github.com/eFAILution/gitlab-component-helper/commit/ef7a6001837525f8970785924586d4f15befe25d))
+* **completion:** expand GitLab variables in component URLs before parsing ([#114](https://github.com/eFAILution/gitlab-component-helper/issues/114)) ([0999a54](https://github.com/eFAILution/gitlab-component-helper/commit/0999a5452f5c4d4803a8ea1442176d31330b6a90))
+* **deps:** bump engines.vscode to match @types/vscode 1.120 ([#120](https://github.com/eFAILution/gitlab-component-helper/issues/120)) ([e36d203](https://github.com/eFAILution/gitlab-component-helper/commit/e36d203295ea3ae7fdbfb82102aeaeea53bfc6ed)), closes [#118](https://github.com/eFAILution/gitlab-component-helper/issues/118)
+* **syntax:** correct grammar filename to restore syntax highlighting ([#116](https://github.com/eFAILution/gitlab-component-helper/issues/116)) ([8dab15a](https://github.com/eFAILution/gitlab-component-helper/commit/8dab15a25a495b965e45db6c3e9dece46c422931))
+
 ## [0.10.3](https://github.com/eFAILution/gitlab-component-helper/compare/0.10.2...0.10.3) (2026-05-14)
 
 ## [0.10.2](https://github.com/eFAILution/gitlab-component-helper/compare/0.10.1...0.10.2) (2026-05-07)
