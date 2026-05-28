@@ -94,8 +94,9 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
     const variables = detectGitLabVariables(componentUrl);
     logger.debug(`[ComponentDetector] Component URL contains GitLab variables: ${variables.join(', ')}`, 'ComponentDetector');
 
-    // Try to get Git repository context first
-    const gitContext = await getGitRepositoryContext();
+    // Try to get Git repository context first, scoped to the active file so
+    // multi-repo workspaces resolve to the correct GitLab host.
+    const gitContext = await getGitRepositoryContext(document.uri);
     let expandedUrl = componentUrl;
 
     if (gitContext.gitlabInstance && gitContext.projectPath) {
@@ -667,30 +668,41 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
 }
 
 /**
- * Get Git repository context for variable expansion
+ * Get Git repository context for variable expansion.
+ *
+ * When `forUri` is supplied (typically the active document's URI), the lookup
+ * resolves to the repository that contains that specific file. This matters in
+ * multi-repo workspaces where workspaceFolders[0] would otherwise pick the
+ * wrong GitLab host. When `forUri` is omitted, falls back to the workspace
+ * root for compatibility with callers that don't have a document handle.
  */
-export async function getGitRepositoryContext(): Promise<{
+export async function getGitRepositoryContext(forUri?: vscode.Uri): Promise<{
   gitlabInstance?: string;
   projectPath?: string;
   commitSha?: string;
 }> {
   try {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders || workspaceFolders.length === 0) {
-      return {};
-    }
-
-    const workspacePath = workspaceFolders[0].uri.fsPath;
-
     // Use VS Code's Git extension API if available
     const gitExtension = vscode.extensions.getExtension('vscode.git');
     if (gitExtension) {
       const git = gitExtension.exports.getAPI(1);
-      if (git && git.repositories.length > 0) {
-        const repo = git.repositories.find((r: any) =>
-          workspacePath.startsWith(r.rootUri.fsPath)
-        ) || git.repositories[0];
-
+      if (git) {
+        let repo: any = null;
+        if (forUri) {
+          // File-relative lookup. If the file isn't in any tracked repo,
+          // do NOT fall through to workspace[0] — that would re-introduce
+          // the "wrong host" bug we're fixing.
+          repo = git.getRepository(forUri);
+        } else if (git.repositories.length > 0) {
+          const workspaceFolders = vscode.workspace.workspaceFolders;
+          if (!workspaceFolders || workspaceFolders.length === 0) {
+            return {};
+          }
+          const workspacePath = workspaceFolders[0].uri.fsPath;
+          repo = git.repositories.find((r: any) =>
+            workspacePath.startsWith(r.rootUri.fsPath)
+          ) || git.repositories[0];
+        }
         if (repo) {
           // Get remote URLs
           const remotes = repo.state.remotes;

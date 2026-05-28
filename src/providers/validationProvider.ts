@@ -128,8 +128,10 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                 if (containsGitLabVariables(componentUrl)) {
                     this.logger.debug(`[ValidationProvider] Component URL contains variables, expanding: ${componentUrl}`, 'ValidationProvider');
 
-                    // Try to get some context from workspace/git for expansion
-                    const workspaceContext = await this.getWorkspaceContext();
+                    // Try to get some context from workspace/git for expansion.
+                    // Pass the document URI so multi-repo workspaces resolve to
+                    // the GitLab host of the file's containing repo.
+                    const workspaceContext = await this.getWorkspaceContext(document.uri);
 
                     // Only attempt expansion if we have sufficient context
                     if (workspaceContext.gitlabInstance && workspaceContext.projectPath) {
@@ -1209,9 +1211,13 @@ export class ValidationProvider implements vscode.CodeActionProvider {
     }
 
     /**
-     * Get workspace context for GitLab variable expansion
+     * Get workspace context for GitLab variable expansion.
+     *
+     * `forUri` is the URI of the document being validated. When supplied, the
+     * GitLab repo lookup is scoped to the file's containing repo so multi-repo
+     * workspaces resolve to the correct host.
      */
-    private async getWorkspaceContext(): Promise<{
+    private async getWorkspaceContext(forUri?: vscode.Uri): Promise<{
         gitlabInstance?: string;
         projectPath?: string;
         serverUrl?: string;
@@ -1227,7 +1233,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             const workspaceFolder = workspaceFolders[0].uri.fsPath;
 
             // Try to get Git remote information for the current repository
-            const gitContext = await this.getGitRepositoryContext(workspaceFolder);
+            const gitContext = await this.getGitRepositoryContext(workspaceFolder, forUri);
             if (gitContext.gitlabInstance && gitContext.projectPath) {
                 this.logger.debug(`[ValidationProvider] Using Git repository context: ${gitContext.gitlabInstance}/${gitContext.projectPath}`, 'ValidationProvider');
                 return {
@@ -1286,9 +1292,13 @@ export class ValidationProvider implements vscode.CodeActionProvider {
     }
 
     /**
-     * Extract Git repository information from the workspace
+     * Extract Git repository information from the workspace.
+     *
+     * When `forUri` is supplied, the lookup resolves to the repository that
+     * contains that specific file — required for multi-repo workspaces where
+     * workspaceFolders[0] would otherwise pick the wrong GitLab host.
      */
-    private async getGitRepositoryContext(workspacePath: string): Promise<{
+    private async getGitRepositoryContext(workspacePath: string, forUri?: vscode.Uri): Promise<{
         gitlabInstance?: string;
         projectPath?: string;
         commitSha?: string;
@@ -1298,10 +1308,17 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             const gitExtension = vscode.extensions.getExtension('vscode.git');
             if (gitExtension) {
                 const git = gitExtension.exports.getAPI(1);
-                if (git && git.repositories.length > 0) {
-                    const repo = git.repositories.find((r: any) =>
-                        workspacePath.startsWith(r.rootUri.fsPath)
-                    ) || git.repositories[0];
+                if (git) {
+                    let repo: any = null;
+                    if (forUri) {
+                        // File-relative lookup; null if file isn't in any repo.
+                        // Do NOT fall through to workspace[0] here.
+                        repo = git.getRepository(forUri);
+                    } else if (git.repositories.length > 0) {
+                        repo = git.repositories.find((r: any) =>
+                            workspacePath.startsWith(r.rootUri.fsPath)
+                        ) || git.repositories[0];
+                    }
 
                     if (repo) {
                         // Get remote URLs

@@ -493,7 +493,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
 
         // Get the component details from cache - need exact match for the specific template
         this.logger.debug(`[CompletionProvider] Looking up component in cache: ${componentUrl}`, 'CompletionProvider');
-        const component = await this.findComponentInCache(componentUrl);
+        const component = await this.findComponentInCache(componentUrl, document.uri);
         if (!component || !component.parameters) {
           this.logger.debug(`[CompletionProvider] Component not found in cache or has no parameters: ${componentUrl}`, 'CompletionProvider');
           return null;
@@ -584,8 +584,10 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
     }
   }
 
-  // Helper method to find component in cache (similar to validation provider)
-  private async findComponentInCache(componentUrl: string): Promise<any | null> {
+  // Helper method to find component in cache (similar to validation provider).
+  // `forUri` is the active document's URI — used so variable expansion picks
+  // the GitLab host matching the file's containing repo, not workspace[0].
+  private async findComponentInCache(componentUrl: string, forUri?: vscode.Uri): Promise<any | null> {
     try {
       const cacheManager = getComponentCacheManager();
       const components = await cacheManager.getComponents();
@@ -594,7 +596,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       // `new URL()` below throws and we never find the component in the cache.
       let resolvedUrl = componentUrl;
       if (containsGitLabVariables(componentUrl)) {
-        const gitContext = await getGitRepositoryContext();
+        const gitContext = await getGitRepositoryContext(forUri);
         if (gitContext.gitlabInstance) {
           resolvedUrl = expandComponentUrl(componentUrl, {
             gitlabInstance: gitContext.gitlabInstance,
