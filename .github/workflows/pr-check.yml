@@ -13,6 +13,13 @@ jobs:
   release-dry-run:
     name: Release Dry Run
     runs-on: ubuntu-latest
+    # Skip for fork PRs. Release-it's dry-run inspects commits to preview
+    # what would be released — but fork PRs are squash-merged, replacing
+    # the contributor's commits with a maintainer-authored one. So the
+    # dry-run on the fork's commits has no signal about the eventual
+    # release, and `github.head_ref` doesn't resolve to a ref in this repo
+    # anyway, which made the checkout fail every time.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Checkout
         uses: actions/checkout@v6
