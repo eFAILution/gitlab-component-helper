@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
-import { getComponentUnderCursor } from './componentDetector';
+import { getComponentUnderCursor, getGitRepositoryContext } from './componentDetector';
 import { getComponentService } from '../services/component';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
-import { getVariableCompletions, GITLAB_PREDEFINED_VARIABLES } from '../utils/gitlabVariables';
+import { getVariableCompletions, GITLAB_PREDEFINED_VARIABLES, containsGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 
 export class CompletionProvider implements vscode.CompletionItemProvider {
@@ -590,8 +590,27 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       const cacheManager = getComponentCacheManager();
       const components = await cacheManager.getComponents();
 
+      // Expand GitLab variables (e.g. $CI_SERVER_FQDN) before parsing, otherwise
+      // `new URL()` below throws and we never find the component in the cache.
+      let resolvedUrl = componentUrl;
+      if (containsGitLabVariables(componentUrl)) {
+        const gitContext = await getGitRepositoryContext();
+        if (gitContext.gitlabInstance) {
+          resolvedUrl = expandComponentUrl(componentUrl, {
+            gitlabInstance: gitContext.gitlabInstance,
+            projectPath: gitContext.projectPath,
+            serverUrl: `https://${gitContext.gitlabInstance}`,
+            commitSha: gitContext.commitSha || 'main'
+          });
+          this.logger.debug(`[CompletionProvider] Expanded component URL with variables: ${componentUrl} -> ${resolvedUrl}`, 'CompletionProvider');
+        } else {
+          this.logger.debug(`[CompletionProvider] Component URL contains GitLab variables but no Git context available to expand: ${componentUrl}`, 'CompletionProvider');
+          return null;
+        }
+      }
+
       // Parse the component URL to get instance, project path, and component name
-      const url = new URL(componentUrl.split('@')[0]); // Remove version if present
+      const url = new URL(resolvedUrl.split('@')[0]); // Remove version if present
       const gitlabInstance = url.host;
       const pathSegments = url.pathname.split('/').filter(Boolean);
 
