@@ -550,7 +550,18 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     // Initialize the validation provider
-    new ValidationProvider(context);
+    const validationProvider = new ValidationProvider(context);
+
+    // Re-validate open documents when the user changes additional file globs so newly-matched files light up (or stop
+    // being treated as GitLab CI) without reloading the window.
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration('gitlabComponentHelper.additionalFileGlobs')) {
+          logger.info('[Extension] additionalFileGlobs setting changed, re-validating open documents', 'Extension');
+          validationProvider.revalidateOpenDocuments();
+        }
+      })
+    );
 
     // Register command to show performance statistics
     logger.debug('[Extension] Registering showPerformanceStats command...', 'Extension');

@@ -5,16 +5,10 @@ import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-c
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
 import { getVariableCompletions, GITLAB_PREDEFINED_VARIABLES, containsGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
+import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 
 export class CompletionProvider implements vscode.CompletionItemProvider {
   private logger = Logger.getInstance();
-
-  // Helper function to check if file is a GitLab CI file
-  private isGitLabCIFile(document: vscode.TextDocument): boolean {
-    const fileName = document.fileName.toLowerCase();
-    return fileName.endsWith('.gitlab-ci.yml') || fileName.endsWith('.gitlab-ci.yaml') ||
-           fileName.includes('gitlab-ci') || document.languageId === 'gitlab-ci';
-  }
 
   public async provideCompletionItems(
     document: vscode.TextDocument,
@@ -23,7 +17,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
     _context: vscode.CompletionContext
   ): Promise<vscode.CompletionItem[] | vscode.CompletionList | null> {
     // First check if this is a GitLab CI file
-    if (!this.isGitLabCIFile(document)) {
+    if (!isGitLabCIFile(document)) {
       this.logger.debug(`[CompletionProvider] Skipping completion for non-GitLab CI file: ${document.fileName} (language: ${document.languageId})`, 'CompletionProvider');
       return null;
     }

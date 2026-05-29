@@ -125,6 +125,19 @@ Add your favorite sources in VS Code settings:
 ]
 ```
 
+### 📁 Recognising non-canonical CI files
+
+Out of the box the extension activates on `.gitlab-ci.yml`, `.gitlab-ci.yaml`, and anything under a `.gitlab/` directory. If your project keeps included CI configs elsewhere, add their globs to `gitlabComponentHelper.additionalFileGlobs` — these are merged with the built-in defaults:
+
+```jsonc
+"gitlabComponentHelper.additionalFileGlobs": [
+  "**/ci/*.yml",
+  "**/pipelines/**/*.yaml"
+]
+```
+
+Patterns use VS Code's GlobPattern syntax.
+
 ---
 
 ## 🗂️ Component Discovery

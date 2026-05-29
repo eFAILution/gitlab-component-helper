@@ -17,8 +17,10 @@
   "activationEvents": [
     "onLanguage:yaml",
     "onLanguage:shellscript",
-    "workspaceContains:.gitlab-ci.yml",
-    "workspaceContains:.gitlab-ci.yaml"
+    "workspaceContains:**/.gitlab-ci.yml",
+    "workspaceContains:**/.gitlab-ci.yaml",
+    "workspaceContains:**/.gitlab/**/*.yml",
+    "workspaceContains:**/.gitlab/**/*.yaml"
   ],
   "contributes": {
     "languages": [
@@ -236,6 +238,14 @@
             "template.yaml"
           ],
           "description": "Filenames recognised inside per-component subfolders, e.g. 'templates/foo/template.yml'."
+        },
+        "gitlabComponentHelper.additionalFileGlobs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra glob patterns for files that should be treated as GitLab CI files, in addition to the built-in defaults (`**/.gitlab-ci.yml`, `**/.gitlab-ci.yaml`, `**/.gitlab/**/*.yml`, `**/.gitlab/**/*.yaml`). Use this for nested/included CI configs that live elsewhere, e.g. '**/ci/*.yml'. Patterns use VS Code GlobPattern syntax."
         }
       }
     },
@@ -280,7 +290,7 @@
     "menus": {
       "editor/context": [
         {
-          "when": "resourceFilename =~ /gitlab-ci\\.yml$/",
+          "when": "resourceLangId == yaml || resourceLangId == gitlab-ci",
           "command": "gitlab-component-helper.browseComponents",
           "group": "navigation"
         }

@@ -3,21 +3,15 @@ import { getComponentUnderCursor, Component, ComponentParameter, detectIncludeCo
 import { Logger } from '../utils/logger';
 import { getVariableInfo } from '../utils/gitlabVariables';
 import { parseYaml } from '../utils/yamlParser';
+import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 
 export class HoverProvider implements vscode.HoverProvider {
   private logger = Logger.getInstance();
 
-  // Helper function to check if file is a GitLab CI file
-  private isGitLabCIFile(document: vscode.TextDocument): boolean {
-    const fileName = document.fileName.toLowerCase();
-    return fileName.endsWith('.gitlab-ci.yml') || fileName.endsWith('.gitlab-ci.yaml') ||
-           fileName.includes('gitlab-ci') || document.languageId === 'gitlab-ci';
-  }
-
   // Update the hover provider to display component information properly
   public async provideHover(document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Hover | null> {
     // First check if this is a GitLab CI file
-    if (!this.isGitLabCIFile(document)) {
+    if (!isGitLabCIFile(document)) {
       this.logger.debug(`[HoverProvider] Skipping hover for non-GitLab CI file: ${document.fileName} (language: ${document.languageId})`, 'HoverProvider');
       return null;
     }
