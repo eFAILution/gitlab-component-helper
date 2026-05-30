@@ -36,7 +36,18 @@ jobs:
         run: npm run test
 
       - name: Run Mocha unit tests
+        # Writes junit.xml via Mocha's built-in xunit reporter (configured in .mocharc.cjs).
+        # The test-reporter step below parses that file for annotations + check-run summary.
         run: npm run test:mocha
+
+      - name: Publish Mocha test report
+        if: always()
+        uses: dorny/test-reporter@v3.0.0
+        with:
+          name: Mocha unit tests
+          path: junit.xml
+          reporter: java-junit
+          fail-on-error: 'true'
 
       - name: Upload test artifacts on failure
         if: failure()

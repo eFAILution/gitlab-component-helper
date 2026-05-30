@@ -7,18 +7,21 @@
  * files directly without a separate emit step. The spec glob includes both `.ts` and `.js` so the suite can grow
  * either way.
  *
- * Reporter defaults to `spec` for readable local output. In CI we switch to `mocha-reporter-gha` so failures surface
- * as inline GitHub annotations on the PR diff (file + line + message). The `MOCHA_REPORTER` env var overrides both,
- * e.g. for debugging.
+ * Reporter:
+ *  - Locally → `spec` for readable terminal output.
+ *  - In CI (`GITHUB_ACTIONS=true`) → Mocha's built-in `xunit` reporter, writing JUnit XML to `junit.xml`.
+ *  - `MOCHA_REPORTER` env var overrides both, e.g. for debugging.
  */
-const reporter =
-  process.env.MOCHA_REPORTER ||
-  (process.env.GITHUB_ACTIONS === 'true' ? 'mocha-reporter-gha' : 'spec');
+const inCi = process.env.GITHUB_ACTIONS === 'true';
+const override = process.env.MOCHA_REPORTER;
+
+const reporter = override || (inCi ? 'xunit' : 'spec');
 
 module.exports = {
   ui: 'tdd',
   timeout: 5000,
   reporter,
+  'reporter-option': inCi && !override ? ['output=junit.xml'] : undefined,
   require: ['tsx/cjs'],
   extensions: ['ts', 'js'],
   spec: ['tests/unit/url-parsing.test.ts'],
