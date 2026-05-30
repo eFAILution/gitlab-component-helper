@@ -35,6 +35,9 @@ jobs:
       - name: Run tests
         run: npm run test
 
+      - name: Run Mocha unit tests
+        run: npm run test:mocha
+
       - name: Upload test artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v7

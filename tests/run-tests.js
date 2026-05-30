@@ -44,6 +44,10 @@ const testDirectories = [
   { path: path.join(__dirname, 'integration'), type: 'integration' },
 ];
 
+// Files migrated to Mocha mark themselves with this sentinel on the first
+// line so this runner skips them. Mocha owns them via .mocharc.cjs.
+const MOCHA_SENTINEL = '// @mocha';
+
 const testFiles = testDirectories
   .flatMap((dir) => {
     if (!fs.existsSync(dir.path)) return [];
@@ -53,6 +57,7 @@ const testFiles = testDirectories
       .map((f) => ({ path: path.join(dir.path, f), type: dir.type }));
   })
   .filter((f) => !testTypeFilter || f.type === testTypeFilter)
+  .filter((f) => !fs.readFileSync(f.path, 'utf8').startsWith(MOCHA_SENTINEL))
   .sort((a, b) => a.path.localeCompare(b.path));
 
 console.log(`${colors.cyan}=== GitLab Component Helper Tests ===${colors.reset}\n`);
