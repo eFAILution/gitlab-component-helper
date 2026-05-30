@@ -259,11 +259,13 @@ export class ComponentFetcher {
       const project = projectInfo.value;
 
       // Process template result
+      let resolvedTemplatePath: string | undefined;
       if (templateResult.status === 'fulfilled' && templateResult.value) {
-        const { content, parameters: extractedParams } = templateResult.value;
+        const { content, parameters: extractedParams, templatePath } = templateResult.value;
         templateContent = content;
         parameters = extractedParams;
-        this.logger.debug(`Found component template with ${parameters.length} parameters`);
+        resolvedTemplatePath = templatePath;
+        this.logger.debug(`Found component template with ${parameters.length} parameters at ${templatePath}`);
       }
 
       // Build component description with proper fallbacks
@@ -281,7 +283,8 @@ export class ComponentFetcher {
         description: cleanDescription,
         parameters,
         version,
-        source: `${gitlabInstance}/${projectPath}`
+        source: `${gitlabInstance}/${projectPath}`,
+        templatePath: resolvedTemplatePath
       };
 
       this.logger.logPerformance('fetchComponentMetadata (full)', Date.now() - startTime, {
@@ -315,7 +318,7 @@ export class ComponentFetcher {
     componentName: string,
     version: string,
     fetchOptions?: any
-  ): Promise<{ content: string; parameters: any[] } | null> {
+  ): Promise<{ content: string; parameters: any[]; templatePath: string } | null> {
     try {
       const templatePathCandidates = [
         `templates/${componentName}.yml`,
@@ -363,7 +366,7 @@ export class ComponentFetcher {
         );
       });
 
-      return { content: templateContent, parameters: parsedSpec.variables };
+      return { content: templateContent, parameters: parsedSpec.variables, templatePath: resolvedTemplatePath };
     } catch (error) {
       this.logger.debug(`Could not fetch component template: ${error}`);
       return null;
@@ -525,7 +528,8 @@ export class ComponentFetcher {
             name,
             description,
             variables,
-            latest_version: ref
+            latest_version: ref,
+            templatePath: file.path
           };
         },
         batchSize

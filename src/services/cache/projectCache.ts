@@ -63,6 +63,7 @@ export class ProjectCache {
             gitlabInstance: gitlabInstance,
             version: c.latest_version || 'main',
             url: componentUrl,
+            templatePath: c.templatePath,
           };
         });
 
@@ -165,6 +166,7 @@ export class ProjectCache {
         gitlabInstance: gitlabInstance,
         version: version,
         url: `https://${gitlabInstance}/${sourcePath}/${catalogComponent.name}@${version}`,
+        templatePath: catalogComponent.templatePath,
       };
 
       this.logger.info(

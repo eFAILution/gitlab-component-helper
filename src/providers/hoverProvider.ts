@@ -4,6 +4,7 @@ import { Logger } from '../utils/logger';
 import { getVariableInfo } from '../utils/gitlabVariables';
 import { parseYaml } from '../utils/yamlParser';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
+import { templateFileUrlForResolved } from '../utils/templateFileUrl';
 
 export class HoverProvider implements vscode.HoverProvider {
   private logger = Logger.getInstance();
@@ -97,17 +98,20 @@ export class HoverProvider implements vscode.HoverProvider {
 
       hoverContent.appendMarkdown(`${description}\n\n`);
 
-      // Source information with clickable link
-      if (component.context) {
-        const sourceUrl = `https://${component.context.gitlabInstance}/${component.context.path}`;
-        hoverContent.appendMarkdown(`**Source:** [${component.context.gitlabInstance}/${component.context.path}](${sourceUrl})\n\n`);
+      // Source link. When we have a resolved templatePath we link directly to the template (matching the inline editor
+      // link and the Component Browser's "Template File" link). Without templatePath we fall back to plain text
+      if (component.context && component.templatePath) {
+        const sourceUrl = templateFileUrlForResolved({
+          gitlabInstance: component.context.gitlabInstance,
+          projectPath: component.context.path,
+          version: component.version,
+          templatePath: component.templatePath,
+        });
+        hoverContent.appendMarkdown(`**Source:** [${sourceUrl}](${sourceUrl})\n\n`);
+      } else if (component.context) {
+        hoverContent.appendMarkdown(`**Source:** ${component.context.gitlabInstance}/${component.context.path}\n\n`);
       } else if (component.source) {
-        // Try to create a clickable link from the source string
-        let sourceUrl = component.source;
-        if (!sourceUrl.startsWith('http')) {
-          sourceUrl = `https://${component.source}`;
-        }
-        hoverContent.appendMarkdown(`**Source:** [${component.source}](${sourceUrl})\n\n`);
+        hoverContent.appendMarkdown(`**Source:** ${component.source}\n\n`);
       }
 
       // Version

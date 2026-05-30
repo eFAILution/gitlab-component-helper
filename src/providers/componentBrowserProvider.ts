@@ -5,6 +5,7 @@ import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-c
 import { Component, ComponentParameter } from './componentDetector';
 import { containsGitLabVariables, expandGitLabVariables } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
+import { templateFileUrlForResolved } from '../utils/templateFileUrl';
 
 // Constants for timing delays
 const EDITOR_ACTIVATION_DELAY_MS = 50;
@@ -510,10 +511,14 @@ export class ComponentBrowserProvider {
               selectedVersion
             );
             if (updatedComponent) {
-              // Send the updated component details to the webview
+              // Send the updated component details to the webview, with the template-file URL precomputed
+              // server-side so the webview never has to do its own URL routing.
               detailsPanel.webview.postMessage({
                 command: 'componentDetailsUpdated',
-                component: updatedComponent
+                component: {
+                  ...updatedComponent,
+                  templateFileUrl: this.buildTemplateFileUrl(updatedComponent),
+                }
               });
             } else {
               detailsPanel.webview.postMessage({
@@ -1191,11 +1196,12 @@ export class ComponentBrowserProvider {
           function viewDetailsById(componentName, version, projectId) {
             const componentData = window.componentVersionData[componentName];
             if (componentData && componentData[version]) {
+              // Send the raw component data; the server computes the template-file URL when it
+              // renders the details panel.
               const component = {
                 ...componentData[version],
                 name: componentName,
                 version: version,
-                templateFileUrl: buildTemplateFileUrl(componentData[version], componentName, version)
               };
               vscode.postMessage({ command: 'viewComponentDetails', component });
             }
@@ -1213,14 +1219,6 @@ export class ComponentBrowserProvider {
               };
               vscode.postMessage({ command: 'insertComponent', component });
             }
-          }
-
-          function buildTemplateFileUrl(versionData, componentName, version) {
-            if (!versionData || !versionData.sourcePath || !versionData.gitlabInstance) {
-              return '';
-            }
-            const ref = version || 'main';
-            return 'https://' + versionData.gitlabInstance + '/' + versionData.sourcePath + '/-/blob/' + ref + '/templates/' + componentName + '.yml';
           }
 
           function filterComponents() {
@@ -1594,7 +1592,7 @@ export class ComponentBrowserProvider {
           ${component.documentationUrl ?
             `<div><strong>Project URL:</strong> <a href="${component.documentationUrl}" target="_blank" id="componentDocUrl">${component.documentationUrl}</a></div>` : ''}
           ${component.url ?
-            `<div><strong>Component URL:</strong> <a href="${component.url}" target="_blank" id="componentUrl">${component.url}</a></div>` : ''}
+            `<div><strong>Component URL:</strong> <code id="componentUrl">${component.url}</code></div>` : ''}
           ${templateFileUrl ?
             `<div><strong>Template File:</strong> <a href="${templateFileUrl}" target="_blank" id="templateFileUrl">${templateFileUrl}</a></div>` : ''}
         </div>
@@ -1745,14 +1743,6 @@ export class ComponentBrowserProvider {
             toggleButton.textContent = isHidden ? 'Hide' : 'Show';
           }
 
-          function buildTemplateFileUrlFromComponent(component) {
-            if (!component || !component.gitlabInstance || !component.sourcePath || !component.name) {
-              return '';
-            }
-            const ref = component.version || 'main';
-            return 'https://' + component.gitlabInstance + '/' + component.sourcePath + '/-/blob/' + ref + '/templates/' + component.name + '.yml';
-          }
-
           function updateComponentDetails(component) {
             console.log('Updating component details:', component);
 
@@ -1833,17 +1823,16 @@ export class ComponentBrowserProvider {
             // Update component URL
             const componentUrlElement = document.getElementById('componentUrl');
             if (component.url && componentUrlElement) {
-              componentUrlElement.href = component.url;
               componentUrlElement.textContent = component.url;
             }
 
-            // Update template file URL
+            // Update template file URL. The server precomputes templateFileUrl and includes it in the
+            // payload; if it's absent (no resolved templatePath), the row is hidden.
             const templateFileUrlElement = document.getElementById('templateFileUrl');
             if (templateFileUrlElement) {
-              const computedTemplateUrl = component.templateFileUrl || buildTemplateFileUrlFromComponent(component);
-              if (computedTemplateUrl) {
-                templateFileUrlElement.href = computedTemplateUrl;
-                templateFileUrlElement.textContent = computedTemplateUrl;
+              if (component.templateFileUrl) {
+                templateFileUrlElement.href = component.templateFileUrl;
+                templateFileUrlElement.textContent = component.templateFileUrl;
                 templateFileUrlElement.style.display = 'inline';
               } else {
                 templateFileUrlElement.style.display = 'none';
@@ -1976,11 +1965,15 @@ export class ComponentBrowserProvider {
   }
 
   private buildTemplateFileUrl(component: any): string | undefined {
-    if (!component || !component.gitlabInstance || !component.sourcePath || !component.name) {
+    if (!component || !component.gitlabInstance || !component.sourcePath || !component.templatePath) {
       return undefined;
     }
-    const ref = component.version || 'main';
-    return `https://${component.gitlabInstance}/${component.sourcePath}/-/blob/${ref}/templates/${component.name}.yml`;
+    return templateFileUrlForResolved({
+      gitlabInstance: component.gitlabInstance,
+      projectPath: component.sourcePath,
+      version: component.version,
+      templatePath: component.templatePath,
+    });
   }
 
   private getNoSourcesHtml(): string {
