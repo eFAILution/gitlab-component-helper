@@ -5,6 +5,7 @@ import { parseYaml } from '../utils/yamlParser';
 import { Component } from '../types/git-component';
 import { Logger } from '../utils/logger';
 import { expandComponentUrl, containsGitLabVariables } from '../utils/gitlabVariables';
+import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { spawn } from 'child_process';
 
 export class ValidationProvider implements vscode.CodeActionProvider {
@@ -25,16 +26,14 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         this.diagnosticCollection = vscode.languages.createDiagnosticCollection('gitlab-component-helper');
         context.subscriptions.push(this.diagnosticCollection);
 
-        // Register code action provider for GitLab CI files (supports yaml, gitlab-ci, and shellscript languages)
-        this.logger.debug('[ValidationProvider] Registering code action provider for yaml, gitlab-ci, and shellscript languages', 'ValidationProvider');
+        // Register code action provider for the languages the providers run against.
+        this.logger.debug('[ValidationProvider] Registering code action provider for yaml, gitlab-ci, and shellscript', 'ValidationProvider');
         context.subscriptions.push(
             vscode.languages.registerCodeActionsProvider(
                 [
                     { language: 'yaml' },
                     { language: 'gitlab-ci' },
                     { language: 'shellscript' },
-                    { pattern: '**/*.gitlab-ci.yml' },
-                    { pattern: '**/.gitlab-ci.yml' }
                 ],
                 this,
                 {
@@ -70,25 +69,22 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         );
 
         this.logger.debug('[ValidationProvider] Validating currently open documents', 'ValidationProvider');
+        this.revalidateOpenDocuments();
+
+        this.logger.debug('[ValidationProvider] Initialization complete', 'ValidationProvider');
+    }
+
+    public revalidateOpenDocuments(): void {
         vscode.workspace.textDocuments.forEach(doc => {
             this.logger.debug(`[ValidationProvider] Found open document: ${doc.fileName} (${doc.languageId})`, 'ValidationProvider');
             this.validate(doc);
         });
-
-        this.logger.debug('[ValidationProvider] Initialization complete', 'ValidationProvider');
     }
 
     private async validate(document: vscode.TextDocument) {
         this.logger.debug(`[ValidationProvider] validate() called for: ${document.fileName}, languageId: ${document.languageId}`, 'ValidationProvider');
 
-        // Support yaml, gitlab-ci, and shellscript languages, and files ending with gitlab-ci patterns
-        const isGitLabCIFile = document.languageId === 'gitlab-ci' ||
-                              document.languageId === 'yaml' ||
-                              document.languageId === 'shellscript' ||
-                              document.fileName.endsWith('.gitlab-ci.yml') ||
-                              document.fileName.endsWith('/.gitlab-ci.yml');
-
-        if (!isGitLabCIFile) {
+        if (!isGitLabCIFile(document)) {
             this.logger.debug(`[ValidationProvider] Skipping validation - not a supported file type`, 'ValidationProvider');
             return;
         }
@@ -421,14 +417,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         const document = e.document;
         const documentId = document.uri.toString();
 
-        // Check if this is a GitLab CI file
-        const isGitLabCIFile = document.languageId === 'gitlab-ci' ||
-                              document.languageId === 'yaml' ||
-                              document.languageId === 'shellscript' ||
-                              document.fileName.endsWith('.gitlab-ci.yml') ||
-                              document.fileName.endsWith('/.gitlab-ci.yml');
-
-        if (!isGitLabCIFile) {
+        if (!isGitLabCIFile(document)) {
             return;
         }
 

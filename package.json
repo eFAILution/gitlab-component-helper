@@ -17,8 +17,10 @@
   "activationEvents": [
     "onLanguage:yaml",
     "onLanguage:shellscript",
-    "workspaceContains:.gitlab-ci.yml",
-    "workspaceContains:.gitlab-ci.yaml"
+    "workspaceContains:**/.gitlab-ci.yml",
+    "workspaceContains:**/.gitlab-ci.yaml",
+    "workspaceContains:**/.gitlab/**/*.yml",
+    "workspaceContains:**/.gitlab/**/*.yaml"
   ],
   "contributes": {
     "languages": [
@@ -236,6 +238,14 @@
             "template.yaml"
           ],
           "description": "Filenames recognised inside per-component subfolders, e.g. 'templates/foo/template.yml'."
+        },
+        "gitlabComponentHelper.additionalFileGlobs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra GitLab CI file globs, merged with the built-in defaults. Patterns match at any directory depth (e.g. 'ci/*.yml' is treated as '**/ci/*.yml')."
         }
       }
     },
@@ -280,7 +290,7 @@
     "menus": {
       "editor/context": [
         {
-          "when": "resourceFilename =~ /gitlab-ci\\.yml$/",
+          "when": "gitlabComponentHelper.isCiFile",
           "command": "gitlab-component-helper.browseComponents",
           "group": "navigation"
         }
