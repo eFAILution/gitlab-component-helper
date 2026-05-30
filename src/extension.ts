@@ -10,6 +10,9 @@ import { ValidationProvider } from './providers/validationProvider';
 import { parseYaml } from './utils/yamlParser';
 import { DetachedComponentTemplate } from './templates';
 import { getPerformanceMonitor } from './utils/performanceMonitor';
+import { isGitLabCIFile, invalidateFileGlobsCache } from './utils/gitlabCiFileMatcher';
+
+const CI_FILE_CONTEXT_KEY = 'gitlabComponentHelper.isCiFile';
 
 // Constants for timing delays
 const PANEL_FOCUS_DELAY_MS = 100;
@@ -552,13 +555,26 @@ export function activate(context: vscode.ExtensionContext) {
     // Initialize the validation provider
     const validationProvider = new ValidationProvider(context);
 
+    // Keep the `gitlabComponentHelper.isCiFile` context key in sync with `isGitLabCIFile` so the editor context menu
+    // shows the Browse Components command on exactly the same files the providers activate on.
+    const updateCiFileContext = (editor: vscode.TextEditor | undefined): void => {
+      const isCi = editor ? isGitLabCIFile(editor.document) : false;
+      vscode.commands.executeCommand('setContext', CI_FILE_CONTEXT_KEY, isCi);
+    };
+    updateCiFileContext(vscode.window.activeTextEditor);
+    context.subscriptions.push(
+      vscode.window.onDidChangeActiveTextEditor(updateCiFileContext),
+    );
+
     // Re-validate open documents when the user changes additional file globs so newly-matched files light up (or stop
-    // being treated as GitLab CI) without reloading the window.
+    // being treated as GitLab CI) without reloading the window. Also refresh the context key so the menu follows suit.
     context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('gitlabComponentHelper.additionalFileGlobs')) {
           logger.info('[Extension] additionalFileGlobs setting changed, re-validating open documents', 'Extension');
+          invalidateFileGlobsCache();
           validationProvider.revalidateOpenDocuments();
+          updateCiFileContext(vscode.window.activeTextEditor);
         }
       })
     );

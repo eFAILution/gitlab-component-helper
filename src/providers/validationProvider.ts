@@ -5,7 +5,7 @@ import { parseYaml } from '../utils/yamlParser';
 import { Component } from '../types/git-component';
 import { Logger } from '../utils/logger';
 import { expandComponentUrl, containsGitLabVariables } from '../utils/gitlabVariables';
-import { isGitLabCIFile, getConfiguredFileGlobs } from '../utils/gitlabCiFileMatcher';
+import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { spawn } from 'child_process';
 
 export class ValidationProvider implements vscode.CodeActionProvider {
@@ -26,17 +26,15 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         this.diagnosticCollection = vscode.languages.createDiagnosticCollection('gitlab-component-helper');
         context.subscriptions.push(this.diagnosticCollection);
 
-        // Register code action provider for GitLab CI files (supports yaml, gitlab-ci, shellscript, and configured globs)
-        this.logger.debug('[ValidationProvider] Registering code action provider for yaml, gitlab-ci, and shellscript languages plus configured file globs', 'ValidationProvider');
-        const codeActionSelectors: vscode.DocumentSelector = [
-            { language: 'yaml' },
-            { language: 'gitlab-ci' },
-            { language: 'shellscript' },
-            ...getConfiguredFileGlobs().map(pattern => ({ pattern })),
-        ];
+        // Register code action provider for the languages the providers run against.
+        this.logger.debug('[ValidationProvider] Registering code action provider for yaml, gitlab-ci, and shellscript', 'ValidationProvider');
         context.subscriptions.push(
             vscode.languages.registerCodeActionsProvider(
-                codeActionSelectors,
+                [
+                    { language: 'yaml' },
+                    { language: 'gitlab-ci' },
+                    { language: 'shellscript' },
+                ],
                 this,
                 {
                     providedCodeActionKinds: [vscode.CodeActionKind.QuickFix]

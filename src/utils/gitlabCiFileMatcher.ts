@@ -1,20 +1,20 @@
-import * as vscode from "vscode";
+import * as vscode from 'vscode';
 
 /**
  * Built-in glob patterns that always identify a file as a GitLab CI file. Covers the canonical entrypoint and the
  * conventional `.gitlab/` directory used for nested/included pipeline config.
  */
 export const DEFAULT_GITLAB_CI_FILE_GLOBS = [
-  "**/.gitlab-ci.yml",
-  "**/.gitlab-ci.yaml",
-  "**/.gitlab/**/*.yml",
-  "**/.gitlab/**/*.yaml",
+  '**/.gitlab-ci.yml',
+  '**/.gitlab-ci.yaml',
+  '**/.gitlab/**/*.yml',
+  '**/.gitlab/**/*.yaml',
 ];
 
 /**
- * Languages the providers explicitly support regardless of filename.
+ * Languages whose documents are always in-scope for the providers regardless of filename.
  */
-const ALLOWED_LANGUAGE_IDS = new Set(["gitlab-ci", "shellscript"]);
+const ALLOWED_LANGUAGE_IDS = new Set(['gitlab-ci', 'shellscript']);
 
 /**
  * Normalise a user-supplied glob so it matches the same way users intuitively expect.
@@ -26,20 +26,34 @@ const ALLOWED_LANGUAGE_IDS = new Set(["gitlab-ci", "shellscript"]);
  * @returns Glob string that matches at any directory depth.
  */
 function normaliseGlob(pattern: string): string {
-  if (pattern.startsWith("**/") || pattern.startsWith("/")) return pattern;
+  if (pattern.startsWith('**/') || pattern.startsWith('/')) return pattern;
   return `**/${pattern}`;
 }
 
+let cachedGlobs: string[] | undefined;
+
 /**
- * Return the full set of globs that identify a GitLab CI file.
+ * Return the full set of globs that identify a GitLab CI file. Cached after the first call to avoid re-reading config.
  *
  * @returns Combined, normalised glob list ready to feed to `vscode.languages.match`.
  */
 export function getConfiguredFileGlobs(): string[] {
+  if (cachedGlobs) return cachedGlobs;
   const additional = vscode.workspace
-    .getConfiguration("gitlabComponentHelper")
-    .get<string[]>("additionalFileGlobs", []);
-  return [...DEFAULT_GITLAB_CI_FILE_GLOBS, ...additional.map(normaliseGlob)];
+    .getConfiguration('gitlabComponentHelper')
+    .get<string[]>('additionalFileGlobs', []);
+  cachedGlobs = [
+    ...DEFAULT_GITLAB_CI_FILE_GLOBS,
+    ...additional.map(normaliseGlob),
+  ];
+  return cachedGlobs;
+}
+
+/**
+ * Drop the cached glob list so the next call to {@link getConfiguredFileGlobs} re-reads from config.
+ */
+export function invalidateFileGlobsCache(): void {
+  cachedGlobs = undefined;
 }
 
 /**

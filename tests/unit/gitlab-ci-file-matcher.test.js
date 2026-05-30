@@ -1,13 +1,5 @@
 /**
- * GitLab CI File Matcher Behavior Contract
- *
- * Mirrors the matching contract enforced by src/utils/gitlabCiFileMatcher.ts.
- * The real helper delegates to vscode.languages.match against the union of
- * built-in defaults and gitlabComponentHelper.additionalFileGlobs. This test
- * reproduces that decision using minimatch on raw paths to lock the behaviour
- * we expect before the extension host even gets involved.
- *
- * End-to-end coverage of the helper lives in tests/extension-host.
+ * GitLab CI File Matcher behavior contract tests
  */
 /* eslint-env node */
 const assert = require('assert');

@@ -290,7 +290,7 @@
     "menus": {
       "editor/context": [
         {
-          "when": "resourceLangId == yaml || resourceLangId == gitlab-ci",
+          "when": "gitlabComponentHelper.isCiFile",
           "command": "gitlab-component-helper.browseComponents",
           "group": "navigation"
         }
