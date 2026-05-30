@@ -22,9 +22,14 @@ const DEFAULT_GLOBS = [
 
 const ALLOWED_LANGUAGE_IDS = new Set(['gitlab-ci', 'shellscript']);
 
+function normaliseGlob(pattern) {
+  if (pattern.startsWith('**/') || pattern.startsWith('/')) return pattern;
+  return `**/${pattern}`;
+}
+
 function isGitLabCIFile(filePath, languageId, additionalGlobs = []) {
   if (ALLOWED_LANGUAGE_IDS.has(languageId)) return true;
-  const globs = [...DEFAULT_GLOBS, ...additionalGlobs];
+  const globs = [...DEFAULT_GLOBS, ...additionalGlobs.map(normaliseGlob)];
   return globs.some(glob => minimatch(filePath, glob, { dot: true }));
 }
 
@@ -64,6 +69,16 @@ const customCases = [
   { path: 'repo/.gitlab-ci.yml', langId: 'yaml', expected: true, label: 'defaults still apply with additional globs' },
 ];
 
+// Normalisation: a user-supplied glob without a leading `**/` or `/` is anchored
+// at the start of the absolute path by vscode.languages.match — which never matches.
+// We prefix `**/` automatically so the intuitive form works.
+const unanchoredGlobs = ['.gitlab2/**/*.yml'];
+const normalisationCases = [
+  { path: 'repo/.gitlab2/foo/bar.yml', langId: 'yaml', expected: true, label: 'unanchored user glob matches at any depth' },
+  { path: '.gitlab2/foo/bar.yml', langId: 'yaml', expected: true, label: 'unanchored user glob still matches at root' },
+  { path: 'repo/other/bar.yml', langId: 'yaml', expected: false, label: 'unanchored user glob does not over-match' },
+];
+
 let failures = 0;
 console.log('=== gitlab-ci-file-matcher tests ===');
 
@@ -79,6 +94,16 @@ for (const c of cases) {
 
 for (const c of customCases) {
   const actual = isGitLabCIFile(c.path, c.langId, additionalGlobs);
+  if (actual !== c.expected) {
+    console.log(`  FAIL: ${c.label} — expected ${c.expected}, got ${actual} for ${c.path} (${c.langId})`);
+    failures += 1;
+  } else {
+    console.log(`  ok:   ${c.label}`);
+  }
+}
+
+for (const c of normalisationCases) {
+  const actual = isGitLabCIFile(c.path, c.langId, unanchoredGlobs);
   if (actual !== c.expected) {
     console.log(`  FAIL: ${c.label} — expected ${c.expected}, got ${actual} for ${c.path} (${c.langId})`);
     failures += 1;

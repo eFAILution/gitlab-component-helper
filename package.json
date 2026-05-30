@@ -245,7 +245,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "Extra glob patterns for files that should be treated as GitLab CI files, in addition to the built-in defaults (`**/.gitlab-ci.yml`, `**/.gitlab-ci.yaml`, `**/.gitlab/**/*.yml`, `**/.gitlab/**/*.yaml`). Use this for nested/included CI configs that live elsewhere, e.g. '**/ci/*.yml'. Patterns use VS Code GlobPattern syntax."
+          "description": "Extra GitLab CI file globs, merged with the built-in defaults. Patterns match at any directory depth (e.g. 'ci/*.yml' is treated as '**/ci/*.yml')."
         }
       }
     },
