@@ -2,11 +2,12 @@ import * as vscode from 'vscode';
 import { getComponentService } from '../services/component';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
 import { parseYaml } from '../utils/yamlParser';
-import { Component } from '../types/git-component';
+import { Component, ComponentParameter } from '../types/git-component';
 import { Logger } from '../utils/logger';
 import { expandComponentUrl, containsGitLabVariables } from '../utils/gitlabVariables';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { spawn } from 'child_process';
+import { resolveLocalComponent } from './localComponentResolver';
 
 export class ValidationProvider implements vscode.CodeActionProvider {
     private diagnosticCollection: vscode.DiagnosticCollection;
@@ -113,6 +114,10 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
         for (let includeIndex = 0; includeIndex < includes.length; includeIndex++) {
             const include = includes[includeIndex];
+            if (include.local && !include.component) {
+                await this.validateLocalInclude(document, include, diagnostics, diagnosticKeys);
+                continue;
+            }
             if (include.component) {
                 const componentUrl = include.component;
                 this.logger.debug(`[ValidationProvider] Processing component ${includeIndex + 1}/${includes.length}: ${componentUrl}`, 'ValidationProvider');
@@ -817,21 +822,129 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         return componentLine;
     }
 
+    /**
+     * Validate a single `include: - local:` entry. Resolves the target file relative to the workspace, parses its
+     * `spec.inputs` block, and reports diagnostics for unknown inputs, missing required inputs, and unresolvable
+     * file paths. Returns silently when the resolved file has no `spec.inputs` (it's a plain include, not a
+     * parameterised template).
+     *
+     * @param document        The document being validated — used to read line text for diagnostic ranges and to
+     *                        anchor workspace-relative path resolution.
+     * @param include         The parsed YAML include node, narrowed to the local-include shape: `local` is the
+     *                        workspace-relative path, `inputs` is the optional user-supplied input map.
+     * @param diagnostics     Accumulator array. New diagnostics are pushed onto it; the caller owns publishing
+     *                        the final list to the diagnostic collection.
+     * @param diagnosticKeys  Dedup set shared across the whole validation pass. Prevents duplicate
+     *                        `unknown-input` diagnostics for the same input on the same line.
+     * @returns               Resolves once all diagnostics for this include have been pushed. Never rejects —
+     *                        resolution or parse failures surface as warning diagnostics, not exceptions.
+     */
+    private async validateLocalInclude(
+        document: vscode.TextDocument,
+        include: { local: string; inputs?: Record<string, unknown> },
+        diagnostics: vscode.Diagnostic[],
+        diagnosticKeys: Set<string>
+    ): Promise<void> {
+        const localPath = include.local;
+        this.logger.debug(`[ValidationProvider] Processing local include: ${localPath}`, 'ValidationProvider');
+
+        const component = await resolveLocalComponent(localPath, document);
+        if (!component) {
+            const line = this.findLineForComponent(document, include);
+            const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
+            const diagnostic = new vscode.Diagnostic(
+                range,
+                `Unable to resolve local include '${localPath}'. File not found or unreadable.`,
+                vscode.DiagnosticSeverity.Warning
+            );
+            diagnostic.code = 'local-include-not-found';
+            diagnostic.source = 'gitlab-component-helper';
+            diagnostics.push(diagnostic);
+            return;
+        }
+
+        if (!component.parameters || component.parameters.length === 0) {
+            this.logger.debug(`[ValidationProvider] Local include has no spec.inputs, skipping input validation: ${localPath}`, 'ValidationProvider');
+            return;
+        }
+
+        const providedInputs: Record<string, unknown> = include.inputs || {};
+        const componentInputs: ComponentParameter[] = component.parameters;
+
+        for (const providedInput of Object.keys(providedInputs)) {
+            if (componentInputs.some(p => p.name === providedInput)) {
+                continue;
+            }
+            const line = this.findLineForInput(document, include, providedInput);
+            const diagnosticKey = `unknown-input-${line}-${providedInput}-${localPath}`;
+            if (diagnosticKeys.has(diagnosticKey)) continue;
+            diagnosticKeys.add(diagnosticKey);
+
+            const lineText = document.lineAt(line).text;
+            const inputIndex = lineText.indexOf(`${providedInput}:`);
+            const range = inputIndex !== -1
+                ? new vscode.Range(line, inputIndex, line, inputIndex + providedInput.length)
+                : new vscode.Range(line, 0, line, lineText.length);
+
+            const diagnostic = new vscode.Diagnostic(
+                range,
+                `Unknown input '${providedInput}' for local include '${component.name}'.`,
+                vscode.DiagnosticSeverity.Warning
+            );
+            diagnostic.code = 'unknown-input';
+            diagnostic.source = 'gitlab-component-helper';
+            (diagnostic as vscode.Diagnostic & { metadata?: unknown }).metadata = {
+                componentName: component.name,
+                componentUrl: localPath,
+                unknownInput: providedInput,
+                availableInputs: componentInputs.map(p => p.name),
+                componentInputs,
+                currentInputOnly: true,
+            };
+            diagnostics.push(diagnostic);
+        }
+
+        for (const componentInput of componentInputs) {
+            if (componentInput.required && !Object.prototype.hasOwnProperty.call(providedInputs, componentInput.name)) {
+                const line = this.findLineForComponent(document, include);
+                const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
+                const diagnostic = new vscode.Diagnostic(
+                    range,
+                    `Missing required input '${componentInput.name}' for local include '${component.name}'.`,
+                    vscode.DiagnosticSeverity.Error
+                );
+                diagnostic.code = 'missing-required-input';
+                diagnostic.source = 'gitlab-component-helper';
+                (diagnostic as vscode.Diagnostic & { metadata?: unknown }).metadata = {
+                    componentName: component.name,
+                    componentUrl: localPath,
+                    missingInput: componentInput.name,
+                    inputDescription: componentInput.description,
+                    inputType: componentInput.type,
+                    inputDefault: componentInput.default,
+                    providedInputs: Object.keys(providedInputs),
+                };
+                diagnostics.push(diagnostic);
+            }
+        }
+    }
+
     private findLineForComponent(document: vscode.TextDocument, include: any): number {
         const text = document.getText();
         const lines = text.split('\n');
-        const componentUrl = include.component;
+        const componentUrl = include.component ?? include.local;
+        const includeKey = include.component ? 'component:' : 'local:';
 
-        this.logger.debug(`[ValidationProvider] Looking for component URL: ${componentUrl}`, 'ValidationProvider');
+        this.logger.debug(`[ValidationProvider] Looking for include URL: ${componentUrl}`, 'ValidationProvider');
 
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
-            if (line.includes(componentUrl)) {
-                this.logger.debug(`[ValidationProvider] Found component URL at line ${i}: ${line.trim()}`, 'ValidationProvider');
+            if (line.includes(includeKey) && line.includes(componentUrl)) {
+                this.logger.debug(`[ValidationProvider] Found include at line ${i}: ${line.trim()}`, 'ValidationProvider');
                 return i;
             }
         }
-        this.logger.debug(`[ValidationProvider] Component URL not found, returning 0`, 'ValidationProvider');
+        this.logger.debug(`[ValidationProvider] Include URL not found, returning 0`, 'ValidationProvider');
         return 0;
     }
 

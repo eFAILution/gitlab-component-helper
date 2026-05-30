@@ -1,0 +1,17 @@
+spec:
+  inputs:
+    job_name:
+      description: The name of the CI job
+      type: string
+    job_type:
+      description: The type of the job to test
+      type: string
+      default: affected
+    git_depth:
+      description: The git fetch depth (0 for full clone)
+      type: number
+      default: 1
+---
+$[[ inputs.job_name ]]:
+  script:
+    - echo "running $[[ inputs.job_type ]]"

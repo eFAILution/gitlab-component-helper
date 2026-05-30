@@ -173,14 +173,15 @@ export class HoverProvider implements vscode.HoverProvider {
       let closestDistance = Infinity;
 
       for (const include of includes) {
-        if (!include.component) continue;
-
-        const componentUrl = include.component;
+        const isLocal = !!include.local && !include.component;
+        const componentUrl = include.component ?? include.local;
+        if (!componentUrl) continue;
+        const includeKey = isLocal ? 'local:' : 'component:';
 
         // Find this component's position in the file
         let componentLineIndex = -1;
         for (let i = 0; i < lines.length; i++) {
-          if (lines[i].includes('component:') && lines[i].includes(componentUrl)) {
+          if (lines[i].includes(includeKey) && lines[i].includes(componentUrl)) {
             componentLineIndex = i;
             break;
           }

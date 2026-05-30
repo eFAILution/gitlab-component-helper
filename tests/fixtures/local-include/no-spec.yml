@@ -1,0 +1,6 @@
+stages:
+  - build
+
+build:
+  script:
+    - echo "no spec block here"
