@@ -16,6 +16,7 @@
 - **Smart Completion**: Context-aware suggestions for components and versions as you type
 - **Hover Docs**: See full documentation and parameter hints instantly
 - **Input Validation**: Real-time validation of component inputs with intelligent Quick Fix suggestions
+- **Local Includes**: Same hover, completion, and validation for `include: - local:` entries that declare a `spec.inputs` block
 - **Version/Tag Picker**: Always use the right version—no more guessing
 - **Variable Expansion**: Full support for GitLab CI/CD variables in URLs and parameters
 - **Lightning Fast**: Caching, batch API calls, and performance optimizations for huge catalogs
@@ -61,6 +62,18 @@ include:
       workspace: "default"
       apply: true
 ```
+
+Local templates work too — point a `- local:` entry at any workspace YAML that declares a `spec.inputs` block and you get the same hover, completion, and validation as a catalog component:
+
+```yaml
+include:
+  - local: "gitlab/templates/nx-test.yml"
+    inputs:
+      job_name: test-nightly
+      job_type: nightly
+```
+
+The target file is resolved relative to the workspace root and re-read on demand, so edits to the template are picked up immediately.
 
 ### 🎬 Adding Component Inputs
 ![insertInputs](https://github.com/user-attachments/assets/098f4eaf-3c4a-45a8-9caf-9a1351730b93)
