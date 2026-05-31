@@ -105,4 +105,19 @@ suite('Local include support', () => {
       `expected a local-include-not-found diagnostic. Got: ${JSON.stringify(diags.map((d) => ({ code: d.code, msg: d.message })))}`
     );
   });
+
+  test('missing required input under a - local: produces a missing-required-input diagnostic', async () => {
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(FIXTURE));
+    await vscode.window.showTextDocument(doc);
+
+    const diags = await waitForDiagnostics(doc.uri);
+    const ourDiags = diags.filter((d) => d.source === 'gitlab-component-helper');
+    const missing = ourDiags.find(
+      (d) => d.code === 'missing-required-input' && /runner_tag/.test(d.message)
+    );
+    assert.ok(
+      missing,
+      `expected a missing-required-input diagnostic for runner_tag. Got: ${JSON.stringify(ourDiags.map((d) => ({ code: d.code, msg: d.message })))}`
+    );
+  });
 });

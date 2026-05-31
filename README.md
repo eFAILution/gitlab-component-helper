@@ -73,8 +73,6 @@ include:
       job_type: nightly
 ```
 
-The target file is resolved relative to the workspace root and re-read on demand, so edits to the template are picked up immediately.
-
 ### 🎬 Adding Component Inputs
 ![insertInputs](https://github.com/user-attachments/assets/098f4eaf-3c4a-45a8-9caf-9a1351730b93)
 

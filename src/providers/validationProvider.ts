@@ -7,7 +7,7 @@ import { Logger } from '../utils/logger';
 import { expandComponentUrl, containsGitLabVariables } from '../utils/gitlabVariables';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { spawn } from 'child_process';
-import { resolveLocalComponent } from './localComponentResolver';
+import { resolveLocalComponent, isUnsupportedLocalPath } from './localComponentResolver';
 
 export class ValidationProvider implements vscode.CodeActionProvider {
     private diagnosticCollection: vscode.DiagnosticCollection;
@@ -847,6 +847,11 @@ export class ValidationProvider implements vscode.CodeActionProvider {
     ): Promise<void> {
         const localPath = include.local;
         this.logger.debug(`[ValidationProvider] Processing local include: ${localPath}`, 'ValidationProvider');
+
+        if (isUnsupportedLocalPath(localPath)) {
+            // Globs and `../` paths are intentionally not handled; skip without diagnostics.
+            return;
+        }
 
         const component = await resolveLocalComponent(localPath, document);
         if (!component) {

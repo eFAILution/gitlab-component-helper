@@ -3,6 +3,9 @@ spec:
     job_name:
       description: The name of the CI job
       type: string
+    runner_tag:
+      description: The runner tag the job should target (no default — required)
+      type: string
     job_type:
       description: The type of the job to test
       type: string
