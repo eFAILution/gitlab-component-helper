@@ -77,6 +77,7 @@ export interface CachedComponent {
   version: string;
   url: string;
   availableVersions?: string[];
+  templatePath?: string;
 }
 
 /**

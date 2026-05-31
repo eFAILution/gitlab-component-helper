@@ -2,6 +2,7 @@ import { registerAddProjectTokenCommand, getComponentService } from './services/
 import * as vscode from 'vscode';
 import { HoverProvider } from './providers/hoverProvider';
 import { CompletionProvider } from './providers/completionProvider';
+import { ComponentDocumentLinkProvider } from './providers/documentLinkProvider';
 import { ComponentBrowserProvider } from './providers/componentBrowserProvider';
 import { detectIncludeComponent } from './providers/componentDetector';
 import { getComponentCacheManager, ComponentCacheManager } from './services/cache/componentCacheManager';
@@ -91,6 +92,19 @@ export function activate(context: vscode.ExtensionContext) {
         ],
         new CompletionProvider(),
         ':', ' ', '@'  // Add @ as a trigger character for version completions
+      )
+    );
+
+    // Register document link provider so `component:` URLs (including those using GitLab variables like
+    // $CI_SERVER_FQDN) become clickable and point at the GitLab project tree at the requested ref.
+    logger.debug('[Extension] Registering document link provider...', 'Extension');
+    context.subscriptions.push(
+      vscode.languages.registerDocumentLinkProvider(
+        [
+          { language: 'yaml' },
+          { language: 'gitlab-ci' }
+        ],
+        new ComponentDocumentLinkProvider()
       )
     );
 

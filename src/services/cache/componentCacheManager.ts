@@ -13,6 +13,10 @@ import {
   DEFAULT_COMPONENT_TYPE_PROJECT,
 } from '../../constants/cache';
 
+// Bump when the on-disk CachedComponent shape changes. Mismatched caches are discarded on load so the new fields can be
+// populated by re-fetching.
+const CURRENT_CACHE_VERSION = '1.1.0';
+
 /**
  * ComponentCacheManager - Main orchestrator for component caching
  *
@@ -124,6 +128,7 @@ export class ComponentCacheManager {
     gitlabInstance: string;
     version: string;
     url: string;
+    templatePath?: string;
   }): void {
     try {
       // Check if component already exists (avoid duplicates)
@@ -525,6 +530,19 @@ export class ComponentCacheManager {
 
       const cacheData = this.context.globalState.get<PersistentCacheData>('componentCache');
 
+      if (cacheData && cacheData.version !== CURRENT_CACHE_VERSION) {
+        const fromVersion = cacheData.version || 'unversioned';
+        this.logger.info(
+          `[ComponentCache] Cache schema upgrade (${fromVersion} -> ${CURRENT_CACHE_VERSION}); ` +
+            `discarding existing cache so it can be repopulated with the new schema`,
+          'ComponentCache'
+        );
+        this.components = [];
+        this.lastRefreshTime = 0;
+        this.versionCache.clearCache();
+        return;
+      }
+
       if (cacheData && cacheData.components && Array.isArray(cacheData.components)) {
         this.components = cacheData.components;
         this.lastRefreshTime = cacheData.lastRefreshTime || 0;
@@ -585,7 +603,7 @@ export class ComponentCacheManager {
         components: this.components,
         lastRefreshTime: this.lastRefreshTime,
         projectVersionsCache: this.versionCache.serializeCache(),
-        version: '1.0.0', // For future cache format migrations
+        version: CURRENT_CACHE_VERSION,
       };
 
       await this.context.globalState.update('componentCache', cacheData);

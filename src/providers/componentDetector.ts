@@ -24,6 +24,7 @@ export interface Component {
   url?: string; // Component URL
   gitlabInstance?: string; // GitLab instance
   sourcePath?: string; // Source path
+  templatePath?: string; // Repo-relative path to the template file, resolved at fetch time
   originalUrl?: string; // Original URL with variables (if any)
   // Add this context property that's needed by the hover provider
   context?: {
@@ -255,6 +256,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
           originalUrl: originalUrl,
           gitlabInstance: exactMatch.gitlabInstance,
           sourcePath: exactMatch.sourcePath,
+          templatePath: (exactMatch as any).templatePath,
           readme: (exactMatch as any).readme || '', // Include README from cache
           context: {
             gitlabInstance: exactMatch.gitlabInstance,
@@ -295,6 +297,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
           originalUrl: originalUrl,
           gitlabInstance: cachedComponent.gitlabInstance,
           sourcePath: cachedComponent.sourcePath,
+          templatePath: (cachedComponent as any).templatePath,
           readme: (cachedComponent as any).readme || '', // Include README from cache
           context: {
             gitlabInstance: cachedComponent.gitlabInstance,
@@ -324,7 +327,8 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
             url: componentUrl,
             gitlabInstance: requestedGitlabInstance,
             sourcePath: requestedProjectPath,
-            source: `${requestedGitlabInstance}/${requestedProjectPath}`
+            source: `${requestedGitlabInstance}/${requestedProjectPath}`,
+            templatePath: specificVersionComponent.templatePath
           });
 
           return specificVersionComponent;
@@ -426,7 +430,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
 
     return {
       name: componentName,
-      description: `**Component not in cache**\n\nURL: ${componentUrl}\n\n❌ **Auto-fetch failed**: Could not retrieve component details automatically.\n\nThis could be due to:\n- Network connectivity issues\n- Private repository access restrictions\n- Component not found at the specified location\n\nTry refreshing the component cache using the "GitLab Component Helper: Refresh Components" command to get full details.`,
+      description: `**Component not in cache**\n\n❌ **Auto-fetch failed**: Could not retrieve component details automatically.\n\nThis could be due to:\n- Network connectivity issues\n- Private repository access restrictions\n- Component not found at the specified location\n\nTry refreshing the component cache using the "GitLab Component Helper: Refresh Components" command to get full details.`,
       parameters: [],
       version: version,
       source: `${gitlabInstance}/${projectPath}`,
@@ -444,7 +448,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
 
     return {
       name: componentUrl,
-      description: `**Component not in cache**\n\nURL: ${componentUrl}\n\n❌ **Auto-fetch failed**: Error parsing component URL.\n\nThe component URL format appears to be invalid. Please check the URL format and try refreshing the component cache using the "GitLab Component Helper: Refresh Components" command.`,
+      description: `**Component not in cache**\n\n❌ **Auto-fetch failed**: Error parsing component URL.\n\nThe component URL format appears to be invalid. Please check the URL format and try refreshing the component cache using the "GitLab Component Helper: Refresh Components" command.`,
       parameters: [],
       url: componentUrl,
       originalUrl: originalUrl,
@@ -575,6 +579,7 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
     // Use the componentService to get proper description and README data
     let componentDescription = foundComponent.description;
     let readmeContent = '';
+    let resolvedTemplatePath: string | undefined;
 
     // Always fetch full component metadata for README content, even if we have a description
     try {
@@ -589,6 +594,7 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
           componentDescription = fullComponent.description;
         }
         readmeContent = fullComponent.readme || '';
+        resolvedTemplatePath = fullComponent.templatePath;
       } else {
         logger.debug(`[ComponentDetector] Full component fetch returned null`, 'ComponentDetector');
       }
@@ -621,6 +627,7 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
       originalUrl: originalUrl || componentUrl,
       gitlabInstance: gitlabInstance,
       sourcePath: projectPath,
+      templatePath: resolvedTemplatePath,
       documentationUrl: foundComponent.documentation_url,
       readme: readmeContent, // Include README content from full fetch
       context: {
@@ -650,7 +657,8 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
         sourcePath: projectPath,
         gitlabInstance: gitlabInstance,
         version: version,
-        url: componentUrl
+        url: componentUrl,
+        templatePath: resolvedTemplatePath
       };
 
       cacheManager.addDynamicComponent(cacheComponent);

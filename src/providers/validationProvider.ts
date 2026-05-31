@@ -898,7 +898,8 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                 sourcePath: component.context.path,
                 gitlabInstance: component.context.gitlabInstance,
                 version: component.version || 'main',
-                url: componentUrl
+                url: componentUrl,
+                templatePath: component.templatePath
             });
 
             this.logger.debug(`[ValidationProvider] Added component to cache: ${component.name}`, 'ValidationProvider');

@@ -5,6 +5,7 @@ export interface Component {
     version?: string;
     source?: string;
     documentationUrl?: string;
+    templatePath?: string;
     context?: {
         gitlabInstance: string;
         path: string;
