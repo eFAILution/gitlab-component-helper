@@ -1196,8 +1196,7 @@ export class ComponentBrowserProvider {
           function viewDetailsById(componentName, version, projectId) {
             const componentData = window.componentVersionData[componentName];
             if (componentData && componentData[version]) {
-              // Send the raw component data; the server computes the template-file URL when it
-              // renders the details panel.
+              // Send the raw component data; the server computes the template-file URL when it renders the details panel.
               const component = {
                 ...componentData[version],
                 name: componentName,

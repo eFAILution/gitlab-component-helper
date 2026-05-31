@@ -90,7 +90,10 @@ export class ComponentDocumentLinkProvider implements vscode.DocumentLinkProvide
       links.push(link);
     }
 
-    this.logger.debug(`[ComponentDocumentLinkProvider] Produced ${links.length} links for ${document.fileName}`, 'ComponentDocumentLinkProvider');
+    this.logger.debug(
+      `[ComponentDocumentLinkProvider] Produced ${links.length} links for ${document.fileName}`,
+      "ComponentDocumentLinkProvider",
+    );
     return links;
   }
 
