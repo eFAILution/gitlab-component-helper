@@ -2,9 +2,9 @@ import * as vscode from 'vscode';
 import { Component, ComponentParameter, detectIncludeComponent } from './componentDetector';
 import { Logger } from '../utils/logger';
 import { getVariableInfo } from '../utils/gitlabVariables';
-import { parseYaml } from '../utils/yamlParser';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
+import { findInputContextAtLine } from './hoverInputContext';
 
 export class HoverProvider implements vscode.HoverProvider {
   private logger = Logger.getInstance();
@@ -147,98 +147,30 @@ export class HoverProvider implements vscode.HoverProvider {
   private async getComponentInputHover(document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Hover | null> {
     try {
       const text = document.getText();
-      const parsedYaml = parseYaml(text);
-
-      if (!parsedYaml || !parsedYaml.include) {
-        return null;
-      }
-
-      const includes = Array.isArray(parsedYaml.include) ? parsedYaml.include : [parsedYaml.include];
-      const currentLineIndex = position.line;
       const lines = text.split('\n');
+      const currentLineIndex = position.line;
       const currentLine = lines[currentLineIndex];
 
-      this.logger.debug(`[HoverProvider] Checking for input parameter hover at line ${currentLineIndex + 1}: "${currentLine.trim()}"`, 'HoverProvider');
-
-      // Check if current line looks like an input parameter (indented with parameter_name:)
-      const inputMatch = currentLine.match(/^(\s+)([a-zA-Z_][a-zA-Z0-9_-]*)\s*:\s*(.*)$/);
-      if (!inputMatch) {
+      const ctx = findInputContextAtLine(text, currentLineIndex);
+      if (!ctx) {
+        this.logger.debug(`[HoverProvider] Line ${currentLineIndex + 1} is not a component input`, 'HoverProvider');
         return null;
       }
+      const { inputName, componentUrl } = ctx;
 
-      const inputIndent = inputMatch[1].length;
-      const inputName = inputMatch[2];
+      this.logger.debug(`[HoverProvider] Confirmed input "${inputName}" under component ${componentUrl}`, 'HoverProvider');
 
-      this.logger.debug(`[HoverProvider] Found potential input parameter: "${inputName}" with indent ${inputIndent}`, 'HoverProvider');
-
-      // Find which component this input belongs to
-      let closestComponent = null;
-      let closestDistance = Infinity;
-
-      for (const include of includes) {
-        const isLocal = !!include.local && !include.component;
-        const componentUrl = include.component ?? include.local;
-        if (!componentUrl) continue;
-        const includeKey = isLocal ? 'local:' : 'component:';
-
-        // Find this component's position in the file
-        let componentLineIndex = -1;
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].includes(includeKey) && lines[i].includes(componentUrl)) {
-            componentLineIndex = i;
-            break;
-          }
-        }
-
-        if (componentLineIndex === -1) continue;
-
-        // Check if this component is above the cursor and closer than any previous component
-        if (componentLineIndex < currentLineIndex) {
-          const distance = currentLineIndex - componentLineIndex;
-          if (distance < closestDistance) {
-            closestDistance = distance;
-            closestComponent = { include, componentLineIndex, componentUrl };
-          }
-        }
-      }
-
-      if (!closestComponent) {
-        this.logger.debug(`[HoverProvider] No component found above input parameter`, 'HoverProvider');
-        return null;
-      }
-
-      this.logger.debug(`[HoverProvider] Found closest component: ${closestComponent.componentUrl}`, 'HoverProvider');
-
-      // Verify we're in the inputs section of this component
-      const componentLineIndex = closestComponent.componentLineIndex;
-
-      // Look for inputs: section between component and current line
-      let inputsSectionStart = -1;
-      for (let i = componentLineIndex + 1; i < currentLineIndex; i++) {
-        const line = lines[i];
-        if (line.trim() === 'inputs:') {
-          inputsSectionStart = i;
+      // Re-find the include line so we can hand a position to detectIncludeComponent. `findInputContextAtLine`
+      // tells us whether to look for `component:` or `local:`.
+      const lineKey = `${ctx.includeKind}:`;
+      let componentLineIndex = -1;
+      for (let i = 0; i < currentLineIndex; i++) {
+        if (lines[i].includes(lineKey) && lines[i].includes(componentUrl)) {
+          componentLineIndex = i;
           break;
         }
       }
-
-      if (inputsSectionStart === -1) {
-        this.logger.debug(`[HoverProvider] No inputs section found between component and cursor`, 'HoverProvider');
-        return null;
-      }
-
-      // Check if we're properly indented within the inputs section
-      const inputsLine = lines[inputsSectionStart];
-      const inputsIndentMatch = inputsLine.match(/^(\s*)/);
-      const inputsIndent = inputsIndentMatch ? inputsIndentMatch[1].length : 0;
-
-      // Input parameters should be indented more than the inputs: line
-      if (inputIndent <= inputsIndent) {
-        this.logger.debug(`[HoverProvider] Input parameter not properly indented within inputs section`, 'HoverProvider');
-        return null;
-      }
-
-      this.logger.debug(`[HoverProvider] Confirmed input parameter "${inputName}" is within inputs section of component`, 'HoverProvider');
+      if (componentLineIndex === -1) return null;
 
       // Get the component details to find parameter information
       const component = await detectIncludeComponent(document, new vscode.Position(componentLineIndex, 0));
