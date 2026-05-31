@@ -6,6 +6,7 @@ import { getComponentCacheManager } from '../services/cache/componentCacheManage
 import { getVariableCompletions, GITLAB_PREDEFINED_VARIABLES, containsGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
+import { resolveLocalComponent } from './localComponentResolver';
 
 export class CompletionProvider implements vscode.CompletionItemProvider {
   private logger = Logger.getInstance();
@@ -394,15 +395,15 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
 
       // Find which component's inputs section we're in
       for (const include of includes) {
-        if (!include.component) continue;
-
-        // Find the component in the document text
-        const componentUrl = include.component;
+        const isLocal = !!include.local && !include.component;
+        const componentUrl = include.component ?? include.local;
+        if (!componentUrl) continue;
+        const includeKey = isLocal ? 'local:' : 'component:';
 
         // Look for this component's position in the file
         let componentLineIndex = -1;
         for (let i = 0; i < lines.length; i++) {
-          if (lines[i].includes('component:') && lines[i].includes(componentUrl)) {
+          if (lines[i].includes(includeKey) && lines[i].includes(componentUrl)) {
             componentLineIndex = i;
             break;
           }
@@ -415,7 +416,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
           const distance = currentLineIndex - componentLineIndex;
           if (distance < closestDistance) {
             closestDistance = distance;
-            closestComponent = { include, componentLineIndex, componentUrl };
+            closestComponent = { include, componentLineIndex, componentUrl, isLocal };
           }
         }
       }
@@ -485,9 +486,11 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
           return null;
         }
 
-        // Get the component details from cache - need exact match for the specific template
-        this.logger.debug(`[CompletionProvider] Looking up component in cache: ${componentUrl}`, 'CompletionProvider');
-        const component = await this.findComponentInCache(componentUrl, document.uri);
+        // Get the component details - local includes resolve from the workspace file, others from cache.
+        this.logger.debug(`[CompletionProvider] Looking up component: ${componentUrl} (local=${closestComponent.isLocal})`, 'CompletionProvider');
+        const component = closestComponent.isLocal
+          ? await resolveLocalComponent(componentUrl, document)
+          : await this.findComponentInCache(componentUrl, document.uri);
         if (!component || !component.parameters) {
           this.logger.debug(`[CompletionProvider] Component not found in cache or has no parameters: ${componentUrl}`, 'CompletionProvider');
           return null;

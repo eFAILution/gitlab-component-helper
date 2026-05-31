@@ -16,6 +16,7 @@
 - **Smart Completion**: Context-aware suggestions for components and versions as you type
 - **Hover Docs**: See full documentation and parameter hints instantly
 - **Input Validation**: Real-time validation of component inputs with intelligent Quick Fix suggestions
+- **Local Includes**: Same hover, completion, and validation for `include: - local:` entries that declare a `spec.inputs` block
 - **Version/Tag Picker**: Always use the right version—no more guessing
 - **Variable Expansion**: Full support for GitLab CI/CD variables in URLs and parameters
 - **Lightning Fast**: Caching, batch API calls, and performance optimizations for huge catalogs
@@ -60,6 +61,16 @@ include:
       terraform_version: "1.5.0"
       workspace: "default"
       apply: true
+```
+
+Local templates work too — point a `- local:` entry at any workspace YAML that declares a `spec.inputs` block and you get the same hover, completion, and validation as a catalog component:
+
+```yaml
+include:
+  - local: "gitlab/templates/nx-test.yml"
+    inputs:
+      job_name: test-nightly
+      job_type: nightly
 ```
 
 ### 🎬 Adding Component Inputs

@@ -5,6 +5,7 @@ import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-c
 import { expandGitLabVariables, containsGitLabVariables, detectGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 import { spawn } from 'child_process';
+import { detectLocalIncludeComponent } from './localComponentResolver';
 
 const logger = Logger.getInstance();
 
@@ -81,6 +82,11 @@ export async function getComponentUnderCursor(document: vscode.TextDocument, pos
 export async function detectIncludeComponent(document: vscode.TextDocument, position: vscode.Position): Promise<Component | null> {
   const line = document.lineAt(position.line).text;
   logger.debug(`[ComponentDetector] Checking line for include component: ${line}`, 'ComponentDetector');
+
+  const localComponent = await detectLocalIncludeComponent(document, position);
+  if (localComponent) {
+    return localComponent;
+  }
 
   // Extract component URL from the line - handle both absolute URLs and those with GitLab variables
   let componentUrl = line.match(/component:\s*([^\s]+)/)?.[1];

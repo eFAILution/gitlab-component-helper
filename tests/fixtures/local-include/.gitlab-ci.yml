@@ -1,0 +1,10 @@
+include:
+  - local: "local-include/templates/nx-test.yml"
+    inputs:
+      job_name: test-nightly
+      job_type: nightly
+      bogus_input: oops
+
+  - local: "local-include/no-spec.yml"
+
+  - local: "local-include/missing-template.yml"
