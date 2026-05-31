@@ -24,5 +24,5 @@ module.exports = {
   'reporter-option': inCi && !override ? ['output=junit.xml'] : undefined,
   require: ['tsx/cjs'],
   extensions: ['ts', 'js'],
-  spec: ['tests/unit/url-parsing.test.ts'],
+  spec: ['tests/unit/*.test.ts'],
 };
