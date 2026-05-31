@@ -8,8 +8,6 @@ import { detectIncludeComponent } from './providers/componentDetector';
 import { getComponentCacheManager, ComponentCacheManager } from './services/cache/componentCacheManager';
 import { Logger } from './utils/logger';
 import { ValidationProvider } from './providers/validationProvider';
-import { parseYaml } from './utils/yamlParser';
-import { DetachedComponentTemplate } from './templates';
 import { getPerformanceMonitor } from './utils/performanceMonitor';
 import { isGitLabCIFile, invalidateFileGlobsCache } from './utils/gitlabCiFileMatcher';
 
@@ -261,10 +259,12 @@ export function activate(context: vscode.ExtensionContext) {
         const componentsBySource = new Map<string, any[]>();
         components.forEach((comp: any) => {
           const key = comp.source;
-          if (!componentsBySource.has(key)) {
-            componentsBySource.set(key, []);
+          let bucket = componentsBySource.get(key);
+          if (!bucket) {
+            bucket = [];
+            componentsBySource.set(key, bucket);
           }
-          componentsBySource.get(key)!.push(comp);
+          bucket.push(comp);
         });
 
         logger.info(`[Extension] Components grouped by source:`, 'Extension');
@@ -639,101 +639,5 @@ export function activate(context: vscode.ExtensionContext) {
   }
 }
 
-/**
- * Helper function to generate HTML for detached component details.
- * Detects existing inputs and delegates to the template for rendering.
- */
-async function getDetachedComponentHtml(component: any): Promise<string> {
-  const existingInputs = await detectExistingInputs(component);
-  return DetachedComponentTemplate.render(component, existingInputs);
-}
-
-/**
- * Detects existing input parameters for a component in the active editor.
- * Returns an array of input parameter names already present in the file.
- */
-async function detectExistingInputs(component: any): Promise<string[]> {
-  const parameters = component.parameters || [];
-  const existingInputs: string[] = [];
-  const editor = vscode.window.activeTextEditor;
-
-  if (!editor || parameters.length === 0) {
-    return existingInputs;
-  }
-
-  if (editor && parameters.length > 0) {
-    try {
-      const document = editor.document;
-      const text = document.getText();
-
-      // Parse the YAML to find component includes and their inputs
-      const parsedYaml = parseYaml(text);
-      if (parsedYaml && parsedYaml.include) {
-        const includes = Array.isArray(parsedYaml.include) ? parsedYaml.include : [parsedYaml.include];
-
-        for (const include of includes) {
-          if (include.component && include.inputs) {
-            // Check if this include is for the current component
-            const componentUrl = include.component;
-            if (componentUrl.includes(component.name)) {
-              // Extract input parameter names from this component's inputs
-              for (const inputName in include.inputs) {
-                if (parameters.some((p: any) => p.name === inputName)) {
-                  existingInputs.push(inputName);
-                }
-              }
-            }
-          }
-        }
-      }
-    } catch (error) {
-      // Silently ignore parsing errors and fall back to regex-based detection
-      try {
-        const document = editor.document;
-        const text = document.getText();
-
-        // Simple regex-based detection of component inputs as fallback
-        const componentUrlPattern = component.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const componentRegex = new RegExp(`component:\\s*[^\\n]*${componentUrlPattern}[^\\n]*`, 'g');
-        const match = componentRegex.exec(text);
-
-        if (match) {
-          // Find the inputs section for this component
-          const startIndex = match.index + match[0].length;
-          const remainingText = text.substring(startIndex);
-
-          // Look for inputs: section
-          const inputsMatch = remainingText.match(/^\s*inputs:\s*$/m);
-          if (inputsMatch) {
-            const inputsStartIndex = startIndex + inputsMatch.index! + inputsMatch[0].length;
-            const afterInputsText = text.substring(inputsStartIndex);
-
-            // Extract input parameter names
-            const inputLines = afterInputsText.split('\n');
-            for (const line of inputLines) {
-              // Stop at next job or section
-              if (line.match(/^\S/) && !line.trim().startsWith('#')) {
-                break;
-              }
-
-              // Match input parameter lines (indented with parameter name)
-              const paramMatch = line.match(/^\s{2,}([a-zA-Z][a-zA-Z0-9_-]*)\s*:/);
-              if (paramMatch) {
-                const paramName = paramMatch[1];
-                if (parameters.some((p: any) => p.name === paramName)) {
-                  existingInputs.push(paramName);
-                }
-              }
-            }
-          }
-        }
-      } catch (fallbackError) {
-        // Silently ignore errors
-      }
-    }
-  }
-
-  return existingInputs;
-}
 
 export function deactivate() {}

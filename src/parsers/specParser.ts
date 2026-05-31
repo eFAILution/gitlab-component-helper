@@ -1,9 +1,8 @@
 import { SPEC_INPUTS_SECTION_REGEX } from '../constants/regex';
 import { Logger } from '../utils/logger';
-import { ParseError, ErrorCode, getErrorHandler } from '../errors';
+import { ParseError } from '../errors';
 
 const logger = Logger.getInstance();
-const errorHandler = getErrorHandler();
 
 export interface ComponentVariable {
   name: string;

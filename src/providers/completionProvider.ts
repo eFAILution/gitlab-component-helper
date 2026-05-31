@@ -1,9 +1,7 @@
 import * as vscode from 'vscode';
 import { getComponentUnderCursor, getGitRepositoryContext } from './componentDetector';
-import { getComponentService } from '../services/component';
-import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
-import { getVariableCompletions, GITLAB_PREDEFINED_VARIABLES, containsGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
+import { getVariableCompletions, containsGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { resolveLocalComponent } from './localComponentResolver';
@@ -215,21 +213,6 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       }
 
       item.documentation = new vscode.MarkdownString(documentation);
-
-      // Check user preferences for default version
-      const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-      const defaultVersions = config.get<Record<string, string>>('defaultVersions', {});
-      const alwaysLatest = config.get<string[]>('alwaysUseLatest', []);
-
-      let versionToUse = bestVersion;
-
-      if (alwaysLatest.includes(component.name)) {
-        // User wants to always use latest for this component
-        versionToUse = bestVersion; // bestVersion is already the latest
-      } else if (defaultVersions[component.name]) {
-        // User has set a specific default version for this component
-        versionToUse = defaultVersions[component.name];
-      }
 
       // For now, suggest the URL with the best version - user can change the version later
       if (componentUrl.includes('@')) {
@@ -506,7 +489,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
 
         // Filter out already provided inputs
         const missingInputs = component.parameters.filter((param: any) =>
-          !existingInputs.hasOwnProperty(param.name)
+          !Object.prototype.hasOwnProperty.call(existingInputs, param.name)
         );
 
         this.logger.debug(`[CompletionProvider] Found ${missingInputs.length} missing inputs for completion: ${missingInputs.map((p: any) => p.name).join(', ')}`, 'CompletionProvider');
@@ -526,7 +509,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
           item.documentation = new vscode.MarkdownString(documentation);
 
           // Smart insert text based on parameter type and default value
-          let insertValue = '';
+          let insertValue: string;
           if (param.default !== undefined) {
             if (typeof param.default === 'string') {
               insertValue = `"${param.default}"`;

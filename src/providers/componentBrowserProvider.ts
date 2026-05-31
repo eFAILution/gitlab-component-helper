@@ -2,8 +2,8 @@ import * as vscode from 'vscode';
 import { getComponentService } from '../services/component';
 import { ComponentCacheManager } from '../services/cache/componentCacheManager';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
-import { Component, ComponentParameter } from './componentDetector';
-import { containsGitLabVariables, expandGitLabVariables } from '../utils/gitlabVariables';
+import { ComponentParameter } from './componentDetector';
+import { containsGitLabVariables } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
 
@@ -96,10 +96,10 @@ export class ComponentBrowserProvider {
             await this.fetchAndCacheVersion(message.componentName, message.sourcePath, message.gitlabInstance, message.version);
             return;
           case 'setDefaultVersion':
-            await this.setDefaultVersion(message.componentName, message.version, message.projectId);
+            await this.setDefaultVersion(message.componentName, message.version);
             return;
           case 'setAlwaysUseLatest':
-            await this.setAlwaysUseLatest(message.componentName, message.projectId);
+            await this.setAlwaysUseLatest(message.componentName);
             return;
           case 'expandComponent':
             await this.handleComponentExpand(message.componentName, message.projectId);
@@ -2250,37 +2250,38 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
       }
 
       // Initialize main source if not exists
-      if (!hierarchy.has(mainSource)) {
-        hierarchy.set(mainSource, {
+      let sourceGroup = hierarchy.get(mainSource);
+      if (!sourceGroup) {
+        sourceGroup = {
           source: mainSource,
           type: 'source',
           isExpanded: true, // Sources start expanded
           projects: new Map<string, any>(),
           totalComponents: 0,
           totalVersions: 0
-        });
+        };
+        hierarchy.set(mainSource, sourceGroup);
       }
-
-      const sourceGroup = hierarchy.get(mainSource)!;
 
       // Initialize project if not exists
       const projectKey = `${projectPath}@${comp.gitlabInstance}`;
-      if (!sourceGroup.projects.has(projectKey)) {
-        sourceGroup.projects.set(projectKey, {
+      let projectGroup = sourceGroup.projects.get(projectKey);
+      if (!projectGroup) {
+        projectGroup = {
           name: projectName,
           path: projectPath,
           gitlabInstance: comp.gitlabInstance,
           type: 'project',
           isExpanded: false, // Projects start collapsed
           components: new Map<string, any>() // Map by component name to group versions
-        });
+        };
+        sourceGroup.projects.set(projectKey, projectGroup);
       }
 
-      const projectGroup = sourceGroup.projects.get(projectKey)!;
-
       // Group components by name to handle multiple versions
-      if (!projectGroup.components.has(comp.name)) {
-        projectGroup.components.set(comp.name, {
+      let componentGroup = projectGroup.components.get(comp.name);
+      if (!componentGroup) {
+        componentGroup = {
           name: comp.name,
           description: comp.description || 'No description available',
           summary: comp.summary,
@@ -2295,16 +2296,14 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
           versions: new Map<string, any>(),
           defaultVersion: comp.version || 'latest',
           availableVersions: comp.availableVersions || []
-        });
+        };
+        projectGroup.components.set(comp.name, componentGroup);
         sourceGroup.totalComponents++;
       } else if (comp.availableVersions) {
         // Merge availableVersions from subsequent cache entries
-        const existing = projectGroup.components.get(comp.name)!;
-        const merged = new Set([...existing.availableVersions, ...comp.availableVersions]);
-        existing.availableVersions = Array.from(merged);
+        const merged = new Set([...componentGroup.availableVersions, ...comp.availableVersions]);
+        componentGroup.availableVersions = Array.from(merged);
       }
-
-      const componentGroup = projectGroup.components.get(comp.name)!;
 
       // Add this version to the component
       componentGroup.versions.set(comp.version || 'latest', {
@@ -2535,7 +2534,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     }
   }
 
-  private async setDefaultVersion(componentName: string, version: string, projectId: string) {
+  private async setDefaultVersion(componentName: string, version: string) {
     try {
       // Store user preference for this component's default version
       const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
@@ -2552,7 +2551,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     }
   }
 
-  private async setAlwaysUseLatest(componentName: string, projectId: string) {
+  private async setAlwaysUseLatest(componentName: string) {
     try {
       // Store user preference to always use latest for this component
       const config = vscode.workspace.getConfiguration('gitlabComponentHelper');

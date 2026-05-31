@@ -169,13 +169,13 @@ export class ErrorHandler {
         error.userMessage,
         ...actions
       );
-      await this.handleAction(selection, error);
+      await this.handleAction(selection);
     } else {
       const selection = await vscode.window.showErrorMessage(
         error.userMessage,
         ...actions
       );
-      await this.handleAction(selection, error);
+      await this.handleAction(selection);
     }
   }
 
@@ -217,10 +217,7 @@ export class ErrorHandler {
   /**
    * Handle user action selection
    */
-  private async handleAction(
-    action: string | undefined,
-    error: GitLabComponentError
-  ): Promise<void> {
+  private async handleAction(action: string | undefined): Promise<void> {
     if (!action) {
       return;
     }

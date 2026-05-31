@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { getComponentService } from '../services/component';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
-import { expandGitLabVariables, containsGitLabVariables, detectGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
+import { containsGitLabVariables, detectGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 import { spawn } from 'child_process';
 import { detectLocalIncludeComponent } from './localComponentResolver';
@@ -104,7 +104,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
     // Try to get Git repository context first, scoped to the active file so
     // multi-repo workspaces resolve to the correct GitLab host.
     const gitContext = await getGitRepositoryContext(document.uri);
-    let expandedUrl = componentUrl;
+    let expandedUrl: string;
 
     if (gitContext.gitlabInstance && gitContext.projectPath) {
       logger.debug(`[ComponentDetector] Using Git repository context: ${gitContext.gitlabInstance}/${gitContext.projectPath}`, 'ComponentDetector');

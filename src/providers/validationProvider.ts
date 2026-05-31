@@ -370,7 +370,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     }
 
                     for (const componentInput of componentInputs) {
-                        if (componentInput.required && !providedInputs.hasOwnProperty(componentInput.name)) {
+                        if (componentInput.required && !Object.prototype.hasOwnProperty.call(providedInputs, componentInput.name)) {
                             const line = this.findLineForComponent(document, include);
                             const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
                             const diagnostic = new vscode.Diagnostic(
@@ -613,7 +613,6 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             }
             else if (diagnostic.code === 'unresolved-variables' && (diagnostic as any).metadata) {
                 const metadata = (diagnostic as any).metadata;
-                const componentUrl = metadata.componentUrl as string;
                 const isNonGitlabRepo = metadata.isNonGitlabRepo as boolean;
 
                 // Different suggestions based on repository type
@@ -715,7 +714,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     const componentLine = diagnostic.range.start.line;
                     const insertInfo = this.findInputsInsertPosition(document, componentLine);
 
-                    let insertText = '';
+                    let insertText: string;
                     if (insertInfo.needsInputsSection) {
                         // Add inputs section
                         insertText = `${insertInfo.indentation}inputs:\n${insertInfo.indentation}  ${missingInput}: `;
@@ -1201,7 +1200,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
         quickPick.onDidAccept(async () => {
             const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(args.documentUri));
-            const editor = await vscode.window.showTextDocument(document);
+            await vscode.window.showTextDocument(document);
 
             if (args.type === 'replace' && quickPick.selectedItems.length === 1) {
                 // Replace the unknown input with the selected one
@@ -1513,7 +1512,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
     /**
      * Fallback method to get git info using git commands
      */
-    private async getGitInfoFromCommand(workspacePath: string): Promise<{
+    private async getGitInfoFromCommand(_workspacePath: string): Promise<{
         gitlabInstance?: string;
         projectPath?: string;
         commitSha?: string;

@@ -1,4 +1,3 @@
-import * as vscode from 'vscode';
 import { getComponentService } from '../component';
 import { Logger } from '../../utils/logger';
 import { CachedComponent } from '../../types/cache';

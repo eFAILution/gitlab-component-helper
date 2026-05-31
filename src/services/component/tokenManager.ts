@@ -15,14 +15,10 @@ export class TokenManager {
   }
 
   /**
-   * Get token for a specific GitLab project
+   * Get token for a specific GitLab instance
    * @param gitlabInstance The GitLab instance hostname (e.g., 'gitlab.com')
-   * @param projectPath The project path (not currently used, but kept for API compatibility)
    */
-  public async getTokenForProject(
-    gitlabInstance: string,
-    projectPath: string
-  ): Promise<string | undefined> {
+  public async getTokenForProject(gitlabInstance: string): Promise<string | undefined> {
     if (!this.secretStorage) {
       this.logger.debug(`No secretStorage available for ${gitlabInstance}`);
       return undefined;
@@ -35,16 +31,11 @@ export class TokenManager {
   }
 
   /**
-   * Store token for a specific GitLab project
+   * Store token for a specific GitLab instance
    * @param gitlabInstance The GitLab instance hostname
-   * @param projectPath The project path (not currently used, but kept for API compatibility)
    * @param token The personal access token to store
    */
-  public async setTokenForProject(
-    gitlabInstance: string,
-    projectPath: string,
-    token: string
-  ): Promise<void> {
+  public async setTokenForProject(gitlabInstance: string, token: string): Promise<void> {
     if (!this.secretStorage) {
       throw new Error('SecretStorage not available');
     }

@@ -27,7 +27,7 @@ export function registerAddProjectTokenCommand(
         // Remove leading/trailing slashes and join path
         projectPath = parsed.pathname.replace(/^\/+|\/+$/g, '');
         if (!gitlabInstance || !projectPath) throw new Error('Invalid URL');
-      } catch (e) {
+      } catch {
         vscode.window.showErrorMessage('Invalid GitLab URL. Please enter a valid project or group URL.');
         return;
       }
@@ -106,7 +106,7 @@ export function registerAddProjectTokenCommand(
           if (!service['tokenManager']) {
             service.setSecretStorage(context.secrets);
           }
-          await service.setTokenForProject(gitlabInstance, projectPath, token.trim());
+          await service.setTokenForProject(gitlabInstance, token.trim());
           vscode.window.showInformationMessage(
             `Component source "${displayName}" added successfully with token for ${gitlabInstance}!`
           );

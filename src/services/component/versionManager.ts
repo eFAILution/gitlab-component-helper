@@ -7,10 +7,6 @@ interface GitLabTag {
   commit: any;
 }
 
-interface GitLabBranch {
-  name: string;
-}
-
 /**
  * Manages fetching and sorting versions (tags and branches) for GitLab projects
  */
@@ -43,7 +39,7 @@ export class VersionManager {
       this.logger.info(`Fetching versions for ${gitlabInstance}/${projectPath}`);
 
       // Try to get a token for this project/instance
-      const token = await this.tokenManager.getTokenForProject(gitlabInstance, projectPath);
+      const token = await this.tokenManager.getTokenForProject(gitlabInstance);
       const fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
 
       this.logger.debug(`Using token for versions fetch: ${token ? 'YES' : 'NO'}`);
@@ -144,7 +140,7 @@ export class VersionManager {
         projectPath
       )}/repository/tags?per_page=100&order_by=updated&sort=desc`;
 
-      const token = await this.tokenManager.getTokenForProject(gitlabInstance, projectPath);
+      const token = await this.tokenManager.getTokenForProject(gitlabInstance);
       const options = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
       const tags = await this.httpClient.fetchJson(apiUrl, options);
 

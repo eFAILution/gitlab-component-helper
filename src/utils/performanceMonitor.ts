@@ -116,11 +116,12 @@ export class PerformanceMonitor {
     duration: number,
     metadata?: Record<string, any>
   ): void {
-    if (!this.metrics.has(name)) {
-      this.metrics.set(name, []);
+    let metrics = this.metrics.get(name);
+    if (!metrics) {
+      metrics = [];
+      this.metrics.set(name, metrics);
     }
 
-    const metrics = this.metrics.get(name)!;
     metrics.push({
       name,
       duration,

@@ -42,7 +42,7 @@ function cleanParseCache(currentTime: number): void {
   }
 }
 
-export function getYamlNodeAtPosition(document: vscode.TextDocument, position: vscode.Position): any {
+export function getYamlNodeAtPosition(document: vscode.TextDocument, _position: vscode.Position): any {
   const text = document.getText();
   const parsed = parseYaml(text);
 
