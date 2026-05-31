@@ -1,3 +1,5 @@
+import type { ParameterDefault } from './git-component';
+
 export interface GitLabCatalogComponent {
   name: string;
   description?: string;
@@ -15,7 +17,7 @@ export interface GitLabCatalogVariable {
   description?: string;
   required?: boolean;
   type?: string;
-  default?: any;
+  default?: ParameterDefault;
 }
 
 /**
