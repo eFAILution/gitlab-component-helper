@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { getComponentUnderCursor, Component, ComponentParameter, detectIncludeComponent } from './componentDetector';
+import { Component, ComponentParameter, detectIncludeComponent } from './componentDetector';
 import { Logger } from '../utils/logger';
 import { getVariableInfo } from '../utils/gitlabVariables';
 import { parseYaml } from '../utils/yamlParser';
@@ -19,7 +19,6 @@ export class HoverProvider implements vscode.HoverProvider {
     this.logger.debug(`[HoverProvider] Hover requested at line ${position.line + 1}, character ${position.character}`, 'HoverProvider');
     this.logger.debug(`[HoverProvider] File: ${document.fileName} (language: ${document.languageId})`, 'HoverProvider');
 
-    const line = document.lineAt(position.line).text;
     const wordRange = document.getWordRangeAtPosition(position);
 
     // Check if we're hovering over a component input parameter first
@@ -206,7 +205,6 @@ export class HoverProvider implements vscode.HoverProvider {
       this.logger.debug(`[HoverProvider] Found closest component: ${closestComponent.componentUrl}`, 'HoverProvider');
 
       // Verify we're in the inputs section of this component
-      const include = closestComponent.include;
       const componentLineIndex = closestComponent.componentLineIndex;
 
       // Look for inputs: section between component and current line

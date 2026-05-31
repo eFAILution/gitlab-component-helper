@@ -25,8 +25,7 @@ interface GitLabTreeItem {
 async function promptForTokenIfNeeded(
   context: vscode.ExtensionContext | undefined,
   tokenManager: TokenManager,
-  gitlabInstance: string,
-  projectPath: string
+  gitlabInstance: string
 ): Promise<string | undefined> {
   const tokenPrompt = `This project/group requires a GitLab personal access token for ${gitlabInstance}. Please enter one to continue.`;
   const token = await vscode.window.showInputBox({
@@ -35,7 +34,7 @@ async function promptForTokenIfNeeded(
     ignoreFocusOut: true
   });
   if (token && token.trim()) {
-    await tokenManager.setTokenForProject(gitlabInstance, projectPath, token.trim());
+    await tokenManager.setTokenForProject(gitlabInstance, token.trim());
     vscode.window.showInformationMessage(`Token saved for ${gitlabInstance}`);
     return token.trim();
   } else if (token === '') {
@@ -128,7 +127,7 @@ export class ComponentFetcher {
           namespaceProject
         )}`;
 
-        const token = await this.tokenManager.getTokenForProject(gitlabInstance, projectPath);
+        const token = await this.tokenManager.getTokenForProject(gitlabInstance);
         const catalogFetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
 
         this.logger.debug(`Trying to fetch from GitLab Catalog API: ${catalogApiUrl}`);
@@ -215,7 +214,7 @@ export class ComponentFetcher {
 
       this.logger.debug(`Fetching project info from: ${projectApiUrl}`);
 
-      let token = await this.tokenManager.getTokenForProject(gitlabInstance, projectPath);
+      let token = await this.tokenManager.getTokenForProject(gitlabInstance);
       let fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
 
       this.logger.debug(`Using token for ${gitlabInstance}: ${token ? 'YES' : 'NO'}`);
@@ -231,7 +230,7 @@ export class ComponentFetcher {
       } catch (err: any) {
         if (err && (err.status === 401 || err.status === 403)) {
           // Prompt for token and retry
-          token = await promptForTokenIfNeeded(context, this.tokenManager, gitlabInstance, projectPath);
+          token = await promptForTokenIfNeeded(context, this.tokenManager, gitlabInstance);
           if (token) {
             fetchOptions = { headers: { 'PRIVATE-TOKEN': token } };
             [projectInfo, templateResult] = await Promise.allSettled([
@@ -402,11 +401,11 @@ export class ComponentFetcher {
     try {
       const apiBaseUrl = `https://${cleanGitlabInstance}/api/v4`;
       let ref = version || 'main';
-      let token = await this.tokenManager.getTokenForProject(cleanGitlabInstance, projectPath);
+      let token = await this.tokenManager.getTokenForProject(cleanGitlabInstance);
       let fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
 
       // **PARALLEL OPTIMIZATION with GRACEFUL DEGRADATION** - Fetch project info and templates in parallel
-      const [projectInfoResult, templatesResult] = await Promise.allSettled([
+      const [projectInfoResult] = await Promise.allSettled([
         this.httpClient.fetchJson(
           `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`,
           fetchOptions
@@ -420,17 +419,16 @@ export class ComponentFetcher {
       ]);
 
       let projectInfo: any;
-      let templates: any;
 
       // Handle authentication errors and retry if needed
       if (projectInfoResult.status === 'rejected') {
         const err = projectInfoResult.reason;
         if (err && (err.status === 401 || err.status === 403)) {
           // Prompt for token and retry
-          token = await promptForTokenIfNeeded(context, this.tokenManager, cleanGitlabInstance, projectPath);
+          token = await promptForTokenIfNeeded(context, this.tokenManager, cleanGitlabInstance);
           if (token) {
             fetchOptions = { headers: { 'PRIVATE-TOKEN': token } };
-            const [retryProjectInfo, retryTemplates] = await Promise.allSettled([
+            const [retryProjectInfo] = await Promise.allSettled([
               this.httpClient.fetchJson(
                 `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`,
                 fetchOptions
@@ -448,7 +446,6 @@ export class ComponentFetcher {
             }
 
             projectInfo = retryProjectInfo.value;
-            templates = retryTemplates.status === 'fulfilled' ? retryTemplates.value : [] as GitLabTreeItem[];
           } else {
             throw err;
           }
@@ -457,7 +454,6 @@ export class ComponentFetcher {
         }
       } else {
         projectInfo = projectInfoResult.value;
-        templates = templatesResult.status === 'fulfilled' ? templatesResult.value : [] as GitLabTreeItem[];
       }
 
       // Use the project's default branch if available
@@ -498,8 +494,8 @@ export class ComponentFetcher {
             fetchOptions
           );
 
-          let description = '';
-          let variables: ComponentVariable[] = [];
+          let description: string;
+          let variables: ComponentVariable[];
 
           // Process template content - skip files that don't have a spec section
           if (templateResult) {
@@ -627,7 +623,7 @@ export class ComponentFetcher {
     projectPath: string
   ): Promise<any> {
     const apiBaseUrl = `https://${gitlabInstance}/api/v4`;
-    const token = await this.tokenManager.getTokenForProject(gitlabInstance, projectPath);
+    const token = await this.tokenManager.getTokenForProject(gitlabInstance);
     const fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
 
     return this.httpClient.fetchJson(

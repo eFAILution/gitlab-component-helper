@@ -21,7 +21,6 @@ interface CacheEntry {
 }
 
 const sourceCache = new Map<string, CacheEntry>();
-const backgroundUpdateInProgress = false;
 
 /**
  * Main component service that orchestrates fetching and managing GitLab components
@@ -55,19 +54,12 @@ export class ComponentService implements ComponentSource {
     this.tokenManager.setSecretStorage(secretStorage);
   }
 
-  public async getTokenForProject(
-    gitlabInstance: string,
-    projectPath: string
-  ): Promise<string | undefined> {
-    return this.tokenManager.getTokenForProject(gitlabInstance, projectPath);
+  public async getTokenForProject(gitlabInstance: string): Promise<string | undefined> {
+    return this.tokenManager.getTokenForProject(gitlabInstance);
   }
 
-  public async setTokenForProject(
-    gitlabInstance: string,
-    projectPath: string,
-    token: string
-  ): Promise<void> {
-    return this.tokenManager.setTokenForProject(gitlabInstance, projectPath, token);
+  public async setTokenForProject(gitlabInstance: string, token: string): Promise<void> {
+    return this.tokenManager.setTokenForProject(gitlabInstance, token);
   }
 
   public async getTokenForInstance(gitlabInstance: string): Promise<string | undefined> {
