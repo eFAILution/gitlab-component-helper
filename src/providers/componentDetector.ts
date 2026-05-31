@@ -579,6 +579,7 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
     // Use the componentService to get proper description and README data
     let componentDescription = foundComponent.description;
     let readmeContent = '';
+    let resolvedTemplatePath: string | undefined;
 
     // Always fetch full component metadata for README content, even if we have a description
     try {
@@ -593,6 +594,7 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
           componentDescription = fullComponent.description;
         }
         readmeContent = fullComponent.readme || '';
+        resolvedTemplatePath = fullComponent.templatePath;
       } else {
         logger.debug(`[ComponentDetector] Full component fetch returned null`, 'ComponentDetector');
       }
@@ -625,6 +627,7 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
       originalUrl: originalUrl || componentUrl,
       gitlabInstance: gitlabInstance,
       sourcePath: projectPath,
+      templatePath: resolvedTemplatePath,
       documentationUrl: foundComponent.documentation_url,
       readme: readmeContent, // Include README content from full fetch
       context: {
@@ -654,7 +657,8 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
         sourcePath: projectPath,
         gitlabInstance: gitlabInstance,
         version: version,
-        url: componentUrl
+        url: componentUrl,
+        templatePath: resolvedTemplatePath
       };
 
       cacheManager.addDynamicComponent(cacheComponent);

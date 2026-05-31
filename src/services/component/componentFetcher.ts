@@ -172,18 +172,17 @@ export class ComponentFetcher {
                 default: v.default
               })) || [];
 
-            // Some catalog entries omit variable details. Try parsing the template directly.
-            if (extractedParameters.length === 0) {
-              const templateResult = await this.fetchTemplate(
-                apiBaseUrl,
-                encodedProjectPath,
-                componentName,
-                version,
-                catalogFetchOptions
-              );
-              if (templateResult?.parameters?.length) {
-                extractedParameters = templateResult.parameters;
-              }
+            // Always probe the template so we know the on-repo path (needed for the template-file link). When the
+            // catalog omits variable details we also harvest the parsed parameters as a backup.
+            const templateResult = await this.fetchTemplate(
+              apiBaseUrl,
+              encodedProjectPath,
+              componentName,
+              version,
+              catalogFetchOptions
+            );
+            if (extractedParameters.length === 0 && templateResult?.parameters?.length) {
+              extractedParameters = templateResult.parameters;
             }
 
             const component = {
@@ -199,7 +198,8 @@ export class ComponentFetcher {
               parameters: extractedParameters,
               version,
               source: `${gitlabInstance}/${projectPath}`,
-              documentationUrl: catalogComponent.documentation_url
+              documentationUrl: catalogComponent.documentation_url,
+              templatePath: templateResult?.templatePath
             };
 
             this.logger.logPerformance('fetchComponentMetadata (catalog)', Date.now() - startTime);

@@ -531,8 +531,10 @@ export class ComponentCacheManager {
       const cacheData = this.context.globalState.get<PersistentCacheData>('componentCache');
 
       if (cacheData && cacheData.version !== CURRENT_CACHE_VERSION) {
+        const fromVersion = cacheData.version || 'unversioned';
         this.logger.info(
-          `[ComponentCache] Cache schema upgrade (${cacheData.version || 'unversioned'} -> ${CURRENT_CACHE_VERSION}); discarding existing cache so it can be repopulated with the new schema`,
+          `[ComponentCache] Cache schema upgrade (${fromVersion} -> ${CURRENT_CACHE_VERSION}); ` +
+            `discarding existing cache so it can be repopulated with the new schema`,
           'ComponentCache'
         );
         this.components = [];
