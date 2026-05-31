@@ -6,6 +6,12 @@ import { ComponentParameter } from './componentDetector';
 import { containsGitLabVariables } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
+import { generateComponentText } from './componentBrowserGenerate';
+import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
+import {
+  extractProjectUrl,
+  transformCachedComponentsToGroups,
+} from './componentBrowserTransform';
 
 // Constants for timing delays
 const EDITOR_ACTIVATION_DELAY_MS = 50;
@@ -144,7 +150,9 @@ export class ComponentBrowserProvider {
       this.logger.debug('[ComponentBrowser] Components loaded, versions will be fetched on demand', 'ComponentBrowser');
 
       // Transform cached components to component groups format
-      const allComponents = this.transformCachedComponentsToGroups(cachedComponents);
+      const allComponents = transformCachedComponentsToGroups(cachedComponents, (comp, reason) =>
+        this.logger.warn(`[ComponentBrowser] Skipping component (${reason}): ${JSON.stringify(comp)}`, 'ComponentBrowser'),
+      );
       const cacheErrors = Object.fromEntries(sourceErrors);
 
       this.logger.debug(`[ComponentBrowser] Retrieved ${allComponents.length} component groups from cache`, 'ComponentBrowser');
@@ -2224,194 +2232,6 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     }
   }
 
-  private transformCachedComponentsToGroups(cachedComponents: any[]): any[] {
-    // Create a hierarchical structure: Source -> Project -> Components (with versions)
-    const hierarchy = new Map<string, any>();
-
-    for (const comp of cachedComponents) {
-      // Skip components with missing essential data
-      if (!comp.source || !comp.sourcePath || !comp.name) {
-        this.logger.warn(`[ComponentBrowser] Skipping component with missing data: ${JSON.stringify(comp)}`, 'ComponentBrowser');
-        continue;
-      }
-
-      // Extract source (main source name, like "GitLab Components Group")
-      const mainSource = comp.source.split('/')[0]; // Get the main source before any '/'
-
-      // Get project name (either the full source for simple sources, or the project part for groups)
-      let projectName = comp.source;
-      let projectPath = comp.sourcePath;
-
-      // For group sources, parse out the individual project
-      if (comp.source.includes('/')) {
-        const parts = comp.source.split('/');
-        projectName = parts[parts.length - 1]; // Get the project name
-        projectPath = comp.sourcePath;
-      }
-
-      // Initialize main source if not exists
-      let sourceGroup = hierarchy.get(mainSource);
-      if (!sourceGroup) {
-        sourceGroup = {
-          source: mainSource,
-          type: 'source',
-          isExpanded: true, // Sources start expanded
-          projects: new Map<string, any>(),
-          totalComponents: 0,
-          totalVersions: 0
-        };
-        hierarchy.set(mainSource, sourceGroup);
-      }
-
-      // Initialize project if not exists
-      const projectKey = `${projectPath}@${comp.gitlabInstance}`;
-      let projectGroup = sourceGroup.projects.get(projectKey);
-      if (!projectGroup) {
-        projectGroup = {
-          name: projectName,
-          path: projectPath,
-          gitlabInstance: comp.gitlabInstance,
-          type: 'project',
-          isExpanded: false, // Projects start collapsed
-          components: new Map<string, any>() // Map by component name to group versions
-        };
-        sourceGroup.projects.set(projectKey, projectGroup);
-      }
-
-      // Group components by name to handle multiple versions
-      let componentGroup = projectGroup.components.get(comp.name);
-      if (!componentGroup) {
-        componentGroup = {
-          name: comp.name,
-          description: comp.description || 'No description available',
-          summary: comp.summary,
-          usage: comp.usage,
-          notes: comp.notes,
-          rawYaml: comp.rawYaml,
-          parameters: comp.parameters || [],
-          source: comp.source,
-          sourcePath: comp.sourcePath,
-          gitlabInstance: comp.gitlabInstance || 'gitlab.com',
-          documentationUrl: comp.url ? this.extractProjectUrl(comp.url) : '',
-          versions: new Map<string, any>(),
-          defaultVersion: comp.version || 'latest',
-          availableVersions: comp.availableVersions || []
-        };
-        projectGroup.components.set(comp.name, componentGroup);
-        sourceGroup.totalComponents++;
-      } else if (comp.availableVersions) {
-        // Merge availableVersions from subsequent cache entries
-        const merged = new Set([...componentGroup.availableVersions, ...comp.availableVersions]);
-        componentGroup.availableVersions = Array.from(merged);
-      }
-
-      // Add this version to the component
-      componentGroup.versions.set(comp.version || 'latest', {
-        version: comp.version || 'latest',
-        description: comp.description || 'No description available',
-        summary: comp.summary,
-        usage: comp.usage,
-        notes: comp.notes,
-        rawYaml: comp.rawYaml,
-        parameters: comp.parameters || [],
-        documentationUrl: comp.url ? this.extractProjectUrl(comp.url) : '',
-        source: comp.source,
-        sourcePath: comp.sourcePath,
-        gitlabInstance: comp.gitlabInstance || 'gitlab.com'
-      });
-
-      sourceGroup.totalVersions++;
-    }
-
-    // Convert to array format with nested structure
-    return Array.from(hierarchy.values()).map(source => ({
-      ...source,
-      projectCount: source.projects.size,
-      componentCount: source.totalComponents,
-      projects: Array.from(source.projects.values()).map((project: any) => ({
-        ...project,
-        components: Array.from(project.components.values()).map((component: any) => {
-          // Use cached availableVersions, fall back to versions Map keys, then default
-          const availableVersions = component.availableVersions && component.availableVersions.length > 0
-            ? component.availableVersions
-            : component.versions.size > 0
-              ? Array.from(component.versions.keys())
-              : [component.defaultVersion || 'latest'];
-          const versions: any[] = availableVersions.filter(Boolean).map((version: string) => {
-            const versionData = component.versions.get(version) || {};
-            return {
-              version: version,
-              description: versionData.description || component.description || 'No description available',
-              summary: versionData.summary || component.summary,
-              usage: versionData.usage || component.usage,
-              notes: versionData.notes || component.notes,
-              rawYaml: versionData.rawYaml || component.rawYaml,
-              parameters: versionData.parameters || component.parameters || [],
-              documentationUrl: versionData.documentationUrl || component.documentationUrl || '',
-              source: versionData.source || component.source,
-              sourcePath: versionData.sourcePath || component.sourcePath,
-              gitlabInstance: versionData.gitlabInstance || component.gitlabInstance || 'gitlab.com'
-            };
-          });
-
-          let defaultVersion = component.version || 'latest';
-
-          // Find the best version to use as default
-          const versionPriority = (version: string | undefined) => {
-            if (!version) return 0; // Handle undefined/null versions
-            if (version === 'latest') return 1000; // Highest priority
-            if (version === 'main') return 900;
-            if (version === 'master') return 800;
-
-            // Semantic versions get priority based on version number
-            const semanticMatch = version.match(/^v?(\d+)\.(\d+)\.(\d+)/);
-            if (semanticMatch) {
-              const major = parseInt(semanticMatch[1]);
-              const minor = parseInt(semanticMatch[2]);
-              const patch = parseInt(semanticMatch[3]);
-              return major * 1000000 + minor * 1000 + patch;
-            }
-
-            return 0; // Lowest priority for other versions
-          };
-
-          if (availableVersions.length > 0) {
-            const validVersions = availableVersions.filter(Boolean); // Filter out null/undefined versions
-            if (validVersions.length > 0) {
-              const bestVersionString = validVersions.reduce((best: string, current: string) => {
-                return versionPriority(current) > versionPriority(best) ? current : best;
-              }, validVersions[0]);
-
-              defaultVersion = bestVersionString;
-
-              // Resolve 'latest' to the actual latest tag version
-              if (defaultVersion === 'latest') {
-                // Filter out 'latest' and find the best actual version
-                const nonLatestVersions = validVersions.filter((v: string) => v !== 'latest');
-                if (nonLatestVersions.length > 0) {
-                  const resolvedLatestVersion = nonLatestVersions.reduce((latest: string, current: string) => {
-                    return versionPriority(current) > versionPriority(latest) ? current : latest;
-                  }, nonLatestVersions[0]);
-                  defaultVersion = resolvedLatestVersion;
-                }
-              }
-            }
-          }
-
-          return {
-            ...component,
-            versions: versions,
-            versionCount: availableVersions.filter(Boolean).length,
-            defaultVersion: defaultVersion,
-            availableVersions: availableVersions.filter(Boolean),
-            description: component.description || 'No description available',
-            parameters: component.parameters || [],
-            gitlabInstance: component.gitlabInstance || 'gitlab.com'
-          };
-        })
-      }))
-    }));
-  }
 
   private getErrorHtml(error: any): string {
     return `
@@ -2475,36 +2295,6 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     `;
   }
 
-  /**
-   * Extract project URL from component URL
-   * Converts: https://gitlab.example.com/group/project/component@version
-   * To: https://gitlab.example.com/group/project
-   */
-  private extractProjectUrl(componentUrl: string | undefined): string {
-    try {
-      if (!componentUrl) {
-        return '';
-      }
-
-      // Remove version suffix if present
-      const urlWithoutVersion = componentUrl.includes('@') ?
-        componentUrl.split('@')[0] : componentUrl;
-
-      const url = new URL(urlWithoutVersion);
-      const pathParts = url.pathname.substring(1).split('/');
-
-      // Remove the component name (last part)
-      if (pathParts.length > 0) {
-        pathParts.pop();
-      }
-
-      // Construct project URL
-      return `${url.protocol}//${url.host}/${pathParts.join('/')}`;
-    } catch (error) {
-      this.logger.warn(`[ComponentBrowser] Error extracting project URL from ${componentUrl}: ${error}`, 'ComponentBrowser');
-      return componentUrl || '';
-    }
-  }
 
   private async fetchAndCacheVersion(componentName: string, sourcePath: string, gitlabInstance: string, version: string) {
     try {
@@ -2744,7 +2534,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     const existingComponent = await this.parseExistingComponent(document, componentRange);
 
     // Generate the new component text with updated inputs
-    const newComponentText = this.generateComponentText(
+    const newComponentText = generateComponentText(
       component,
       includeInputs,
       selectedInputs,
@@ -2770,282 +2560,22 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     position: vscode.Position,
     componentName: string
   ): Promise<vscode.Range | null> {
-    const text = document.getText();
-    const lines = text.split('\n');
-
-    // Find the line with the component declaration
-    let componentLineIndex = -1;
-    for (let i = position.line; i >= Math.max(0, position.line - 10); i--) {
-      if (lines[i] && lines[i].includes('component:') && lines[i].includes(componentName)) {
-        componentLineIndex = i;
-        break;
-      }
-    }
-
-    // Also search forward a few lines
-    if (componentLineIndex === -1) {
-      for (let i = position.line; i < Math.min(lines.length, position.line + 10); i++) {
-        if (lines[i] && lines[i].includes('component:') && lines[i].includes(componentName)) {
-          componentLineIndex = i;
-          break;
-        }
-      }
-    }
-
-    if (componentLineIndex === -1) {
+    const range = findComponentLineRange(document.getText(), position.line, componentName);
+    if (!range) {
       this.logger.warn(`[ComponentBrowser] Could not find component line for ${componentName}`, 'ComponentBrowser');
       return null;
     }
-
-    // Find the start of the component block (look for the '- component:' line)
-    let startLine = componentLineIndex;
-    const componentLine = lines[componentLineIndex];
-    const indentMatch = componentLine.match(/^(\s*)/);
-    const componentIndent = indentMatch ? indentMatch[1].length : 0;
-
-    // Look backwards to find the start of this list item
-    for (let i = componentLineIndex; i >= 0; i--) {
-      const line = lines[i];
-      const lineIndentMatch = line.match(/^(\s*)/);
-      const lineIndent = lineIndentMatch ? lineIndentMatch[1].length : 0;
-
-      // If we find a line that starts with '- ' at the same or lesser indent, that's our start
-      if (line.trim().startsWith('- ') && lineIndent <= componentIndent) {
-        startLine = i;
-        break;
-      }
-    }
-
-    // Find the end of the component block
-    let endLine = componentLineIndex;
-    for (let i = componentLineIndex + 1; i < lines.length; i++) {
-      const line = lines[i];
-      const lineIndentMatch = line.match(/^(\s*)/);
-      const lineIndent = lineIndentMatch ? lineIndentMatch[1].length : 0;
-
-      // If we find a line at the same or lesser indent that's not just whitespace, that's where we stop
-      if (line.trim() && lineIndent <= componentIndent && line.trim().startsWith('-')) {
-        endLine = i - 1;
-        break;
-      }
-
-      // If we find any content at lesser indent, stop there
-      if (line.trim() && lineIndent < componentIndent) {
-        endLine = i - 1;
-        break;
-      }
-
-      endLine = i;
-    }
-
-    // Make sure we don't include trailing empty lines
-    while (endLine > componentLineIndex && !lines[endLine].trim()) {
-      endLine--;
-    }
-
-    const startPos = new vscode.Position(startLine, 0);
-    const endPos = new vscode.Position(endLine, lines[endLine].length);
-
-    this.logger.debug(`[ComponentBrowser] Found component range: ${startLine}:0 to ${endLine}:${lines[endLine].length}`, 'ComponentBrowser');
-
-    return new vscode.Range(startPos, endPos);
+    this.logger.debug(
+      `[ComponentBrowser] Found component range: ${range.startLine}:0 to ${range.endLine}:${range.endColumn}`,
+      'ComponentBrowser',
+    );
+    return new vscode.Range(
+      new vscode.Position(range.startLine, 0),
+      new vscode.Position(range.endLine, range.endColumn),
+    );
   }
 
-  // Helper method to parse an existing component to extract its current inputs
   private async parseExistingComponent(document: vscode.TextDocument, range: vscode.Range): Promise<any> {
-    const componentText = document.getText(range);
-
-    try {
-      // Use the YAML parser to parse just this component block
-      const { parseYaml } = await import('../utils/yamlParser');
-
-      // Wrap the component in a temporary YAML structure for parsing
-      const wrappedYaml = `include:\n${componentText}`;
-      const parsed = parseYaml(wrappedYaml);
-
-      if (parsed && parsed.include && Array.isArray(parsed.include) && parsed.include[0]) {
-        return parsed.include[0];
-      } else if (parsed && parsed.include) {
-        return parsed.include;
-      }
-    } catch (error) {
-      this.logger.warn(`[ComponentBrowser] Could not parse existing component: ${error}`, 'ComponentBrowser');
-    }
-
-    return null;
+    return parseExistingComponentText(document.getText(range));
   }
-
-  // Helper method to generate the component text with updated inputs
-  private generateComponentText(
-    component: any,
-    includeInputs: boolean,
-    selectedInputs: string[] = [],
-    existingComponent: any = null
-  ): string {
-    const gitlabInstance = component.gitlabInstance || 'gitlab.com';
-
-    // Create the component reference
-    let componentUrl: string;
-
-    // If the component has a preserved URL with variables, use that
-    if (component.originalUrl && containsGitLabVariables(component.originalUrl)) {
-      componentUrl = component.originalUrl;
-      // Update version if different
-      if (component.version && !component.originalUrl.includes('@')) {
-        componentUrl += `@${component.version}`;
-      } else if (component.version && component.originalUrl.includes('@')) {
-        componentUrl = component.originalUrl.replace(/@[^@]*$/, `@${component.version}`);
-      }
-    } else {
-      // Create standard URL
-      componentUrl = `https://${gitlabInstance}/${component.sourcePath}/${component.name}@${component.version}`;
-    }
-
-    let insertion = `  - component: ${componentUrl}`;
-
-    // Handle inputs
-    if (includeInputs || (selectedInputs && selectedInputs.length > 0)) {
-      insertion += '\n    inputs:';
-
-      // Start with existing inputs if we're editing
-      const finalInputs = new Map<string, any>();
-
-      // Add existing inputs first
-      if (existingComponent && existingComponent.inputs) {
-        for (const [key, value] of Object.entries(existingComponent.inputs)) {
-          finalInputs.set(key, value);
-        }
-      }
-
-      // If selectedInputs is specified, only include those (removing unselected ones)
-      if (selectedInputs && selectedInputs.length > 0) {
-        // Keep only the selected inputs from existing ones
-        const filteredInputs = new Map<string, any>();
-        for (const inputName of selectedInputs) {
-          if (finalInputs.has(inputName)) {
-            filteredInputs.set(inputName, finalInputs.get(inputName));
-          }
-        }
-        finalInputs.clear();
-        for (const [key, value] of filteredInputs) {
-          finalInputs.set(key, value);
-        }
-
-        // Add new selected inputs with default values
-        if (component.parameters) {
-          for (const param of component.parameters) {
-            if (selectedInputs.includes(param.name) && !finalInputs.has(param.name)) {
-              let defaultValue = param.default;
-
-              // Format default value based on type
-              if (defaultValue !== undefined) {
-                if (typeof defaultValue === 'string') {
-                  // Check if it contains GitLab variables and preserve them
-                  if (containsGitLabVariables(defaultValue)) {
-                    defaultValue = `"${defaultValue}"`; // Keep variables as-is in quotes
-                  } else {
-                    defaultValue = `"${defaultValue}"`;
-                  }
-                } else if (typeof defaultValue === 'boolean') {
-                  defaultValue = defaultValue.toString();
-                } else if (typeof defaultValue === 'number') {
-                  defaultValue = defaultValue.toString();
-                } else {
-                  defaultValue = JSON.stringify(defaultValue);
-                }
-              } else {
-                // Provide placeholder based on type and required status
-                if (param.required) {
-                  switch (param.type) {
-                    case 'boolean':
-                      defaultValue = 'true';
-                      break;
-                    case 'number':
-                      defaultValue = '0';
-                      break;
-                    default:
-                      defaultValue = '"TODO: set value"';
-                  }
-                } else {
-                  switch (param.type) {
-                    case 'boolean':
-                      defaultValue = 'false';
-                      break;
-                    case 'number':
-                      defaultValue = '0';
-                      break;
-                    default:
-                      defaultValue = '""';
-                  }
-                }
-              }
-
-              finalInputs.set(param.name, defaultValue);
-            }
-          }
-        }
-      } else if (includeInputs && component.parameters) {
-        // Add all parameters if includeInputs is true and no specific selection
-        for (const param of component.parameters) {
-          if (!finalInputs.has(param.name)) {
-            let defaultValue = param.default;
-
-            // Format default value (same logic as above)
-            if (defaultValue !== undefined) {
-              if (typeof defaultValue === 'string') {
-                if (containsGitLabVariables(defaultValue)) {
-                  defaultValue = `"${defaultValue}"`;
-                } else {
-                  defaultValue = `"${defaultValue}"`;
-                }
-              } else if (typeof defaultValue === 'boolean') {
-                defaultValue = defaultValue.toString();
-              } else if (typeof defaultValue === 'number') {
-                defaultValue = defaultValue.toString();
-              } else {
-                defaultValue = JSON.stringify(defaultValue);
-              }
-            } else {
-              if (param.required) {
-                switch (param.type) {
-                  case 'boolean':
-                    defaultValue = 'true';
-                    break;
-                  case 'number':
-                    defaultValue = '0';
-                    break;
-                  default:
-                    defaultValue = '"TODO: set value"';
-                }
-              } else {
-                switch (param.type) {
-                  case 'boolean':
-                    defaultValue = 'false';
-                    break;
-                  case 'number':
-                    defaultValue = '0';
-                    break;
-                  default:
-                    defaultValue = '""';
-                }
-              }
-            }
-
-            finalInputs.set(param.name, defaultValue);
-          }
-        }
-      }
-
-      // Generate the inputs section
-      for (const [inputName, inputValue] of finalInputs) {
-        const param = component.parameters?.find((p: any) => p.name === inputName);
-        const comment = param?.required ? ' # required' : ' # optional';
-        insertion += `\n      ${inputName}: ${inputValue}${comment}`;
-      }
-    }
-
-    return insertion;
-  }
-
-  // ...existing code...
 }
