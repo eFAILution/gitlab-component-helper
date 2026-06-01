@@ -36,9 +36,31 @@ export enum ErrorCode {
   OPERATION_CANCELLED = 'OPERATION_CANCELLED'
 }
 
+/**
+ * Structured detail payload attached to GitLab Component errors. Known fields
+ * are typed for the common subclasses; extra fields are permitted so callers
+ * can attach context without widening the whole type back to `any`.
+ */
+export type ErrorDetails = {
+  /** HTTP status code returned by the GitLab API (set by `NetworkError`). */
+  statusCode?: number;
+  /** Raw YAML source associated with a parse failure (set by `ParseError`). */
+  yaml?: string;
+  /** Which side of the cache the operation was on (set by `CacheError`). */
+  operation?: 'read' | 'write';
+  /** Cache key involved in the failed operation (set by `CacheError`). */
+  key?: string;
+  /** GitLab component path (e.g. `gitlab.com/group/project/component`) (set by `ComponentError`). */
+  componentPath?: string;
+  /** Component version (tag or branch) being resolved when the error occurred (set by `ComponentError`). */
+  version?: string;
+  /** Configuration key whose value triggered the error (set by `ConfigurationError`). */
+  setting?: string;
+} & Record<string, unknown>;
+
 export class GitLabComponentError extends Error {
   public readonly code: ErrorCode;
-  public readonly details?: any;
+  public readonly details?: ErrorDetails;
   public readonly recoverable: boolean;
   public readonly userMessage: string;
 
@@ -46,7 +68,7 @@ export class GitLabComponentError extends Error {
     code: ErrorCode,
     message: string,
     options: {
-      details?: any;
+      details?: ErrorDetails;
       recoverable?: boolean;
       userMessage?: string;
       cause?: Error;

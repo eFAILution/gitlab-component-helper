@@ -2,6 +2,8 @@
  * Cache-related type definitions for the GitLab Component Helper extension
  */
 
+import type { ParameterDefault } from './git-component';
+
 /**
  * Generic cache entry with timestamp for expiration tracking
  */
@@ -22,7 +24,7 @@ export interface CatalogCacheEntry {
       description?: string;
       required?: boolean;
       type?: string;
-      default?: any;
+      default?: ParameterDefault;
     }>;
     latest_version?: string;
   }>;
@@ -39,7 +41,7 @@ export interface ComponentCacheEntry {
     description: string;
     required: boolean;
     type: string;
-    default?: any;
+    default?: ParameterDefault;
   }>;
   version?: string;
   source?: string;
@@ -69,7 +71,7 @@ export interface CachedComponent {
     description: string;
     required: boolean;
     type: string;
-    default?: any;
+    default?: ParameterDefault;
   }>;
   source: string;
   sourcePath: string;

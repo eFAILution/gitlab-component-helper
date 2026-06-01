@@ -13,6 +13,56 @@ interface RequestOptions {
   retryDelay?: number;
 }
 
+/**
+ * Extract an HTTP status code from an unknown thrown value.
+ *
+ * Prefers the typed `NetworkError.details.statusCode`, then falls back to a `statusCode` property on
+ * the value itself (some Node networking errors expose one ad hoc). Anything else returns `undefined`
+ * so callers can treat the failure as a non-HTTP error and route through the retry/backoff path.
+ *
+ * @param error  The value caught in a `try`/`catch` block. Accepted as `unknown` so callers don't
+ *               need to narrow before passing it in.
+ * @returns      The HTTP status code if one can be safely extracted, otherwise `undefined`.
+ */
+function extractStatusCode(error: unknown): number | undefined {
+  if (error instanceof NetworkError && error.details?.statusCode) {
+    return error.details.statusCode;
+  }
+  if (typeof error === 'object' && error !== null && 'statusCode' in error) {
+    const candidate = (error as { statusCode: unknown }).statusCode;
+    return typeof candidate === 'number' ? candidate : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Extract a log-friendly message from an unknown thrown value.
+ *
+ * @param error  The value caught in a `try`/`catch` block.
+ * @returns      `Error.message` when `error` is an `Error`, otherwise `String(error)`.
+ */
+function extractMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+/**
+ * Coerce an unknown thrown value to a real `Error`, preserving the original (and its stack) when
+ * possible. Use this at API boundaries that require an `Error` (e.g. `NetworkError`'s `cause` option)
+ * instead of an `as Error` assertion, which would lie about non-Error throws like strings or numbers.
+ *
+ * @param error  The value caught in a `try`/`catch` block.
+ * @returns      The original `Error` if `error` already is one, otherwise a new `Error` wrapping `String(error)`.
+ */
+function toError(error: unknown): Error {
+  if (error instanceof Error) {
+    return error;
+  }
+  return new Error(String(error));
+}
+
 export class HttpClient {
   private logger = Logger.getInstance();
   private performanceMonitor = getPerformanceMonitor();
@@ -81,16 +131,14 @@ export class HttpClient {
             // JSON parse error - don't retry
             throw new NetworkError(
               `Invalid JSON response from ${url}`,
-              { statusCode: 0, cause: parseError as Error }
+              { statusCode: 0, cause: toError(parseError) }
             );
           }
-        } catch (error: any) {
+        } catch (error: unknown) {
           const isLastAttempt = attempt === retryAttempts;
 
-          // Check if error is NetworkError with statusCode
-          const statusCode = error instanceof NetworkError && error.details?.statusCode
-            ? error.details.statusCode
-            : error.statusCode;
+          const statusCode = extractStatusCode(error);
+          const message = extractMessage(error);
 
           if (statusCode && !this.shouldRetry(statusCode)) {
             this.logger.warn(`HTTP Request failed with client error ${statusCode}: ${url}`);
@@ -98,7 +146,7 @@ export class HttpClient {
           }
 
           if (isLastAttempt) {
-            this.logger.error(`HTTP Request failed after ${retryAttempts + 1} attempts: ${url} - ${error.message}`);
+            this.logger.error(`HTTP Request failed after ${retryAttempts + 1} attempts: ${url} - ${message}`);
             throw error;
           }
 
@@ -106,7 +154,7 @@ export class HttpClient {
           const baseDelay = options.retryDelay || 1000;
           const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
 
-          this.logger.warn(`HTTP Request failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${url} - ${error.message}`);
+          this.logger.warn(`HTTP Request failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${url} - ${message}`);
           await this.delay(delay);
         }
       }
@@ -145,13 +193,11 @@ export class HttpClient {
 
           this.logger.debug(`HTTP Text Request successful: ${url} (${data.length} chars)`);
           return data;
-        } catch (error: any) {
+        } catch (error: unknown) {
           const isLastAttempt = attempt === retryAttempts;
 
-          // Check if error is NetworkError with statusCode
-          const statusCode = error instanceof NetworkError && error.details?.statusCode
-            ? error.details.statusCode
-            : error.statusCode;
+          const statusCode = extractStatusCode(error);
+          const message = extractMessage(error);
 
           if (statusCode && !this.shouldRetry(statusCode)) {
             this.logger.warn(`HTTP Text Request failed with client error ${statusCode}: ${url}`);
@@ -159,7 +205,7 @@ export class HttpClient {
           }
 
           if (isLastAttempt) {
-            this.logger.error(`HTTP Text Request failed after ${retryAttempts + 1} attempts: ${url} - ${error.message}`);
+            this.logger.error(`HTTP Text Request failed after ${retryAttempts + 1} attempts: ${url} - ${message}`);
             throw error;
           }
 
@@ -167,7 +213,7 @@ export class HttpClient {
           const baseDelay = options.retryDelay || 1000;
           const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
 
-          this.logger.warn(`HTTP Text Request failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${url} - ${error.message}`);
+          this.logger.warn(`HTTP Text Request failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${url} - ${message}`);
           await this.delay(delay);
         }
       }
@@ -221,10 +267,7 @@ export class HttpClient {
 
         req.end();
       } catch (error) {
-        reject(new NetworkError(
-          error instanceof Error ? error.message : String(error),
-          { cause: error as Error }
-        ));
+        reject(new NetworkError(extractMessage(error), { cause: toError(error) }));
       }
     });
   }
@@ -246,7 +289,7 @@ export class HttpClient {
         const result = parser(data, url);
         return { result, url };
       } catch (error) {
-        return { error: error as Error, url };
+        return { error: toError(error), url };
       }
     });
 
