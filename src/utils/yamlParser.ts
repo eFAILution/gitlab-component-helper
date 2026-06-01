@@ -1,5 +1,5 @@
 import * as yaml from 'js-yaml';
-import * as vscode from 'vscode';
+import type * as vscode from 'vscode';
 
 // Cache for parsed YAML documents to avoid re-parsing
 const parseCache = new Map<string, { content: string; parsed: any; timestamp: number }>();

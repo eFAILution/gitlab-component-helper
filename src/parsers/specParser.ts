@@ -1,6 +1,8 @@
 import { SPEC_INPUTS_SECTION_REGEX } from '../constants/regex';
 import { Logger } from '../utils/logger';
-import { ParseError } from '../errors';
+// Import direct from errors/types (not the barrel) so this module can load from plain Node — the barrel re-exports
+// from errors/handler.ts which imports `vscode` at module load. Required for the Mocha unit suite.
+import { ParseError } from '../errors/types';
 
 const logger = Logger.getInstance();
 
