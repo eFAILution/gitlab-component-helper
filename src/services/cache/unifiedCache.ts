@@ -29,7 +29,7 @@ import { Logger } from '../../utils/logger';
  * Unified cache manager for all extension caching needs
  */
 export class UnifiedCache {
-  private cache = new Map<string, UnifiedCacheEntry<any>>();
+  private cache = new Map<string, UnifiedCacheEntry<unknown>>();
   private context: vscode.ExtensionContext | null = null;
   private logger = Logger.getInstance();
   private persistenceEnabled = false;
@@ -66,7 +66,7 @@ export class UnifiedCache {
   /**
    * Check if a cache entry is expired based on its TTL
    */
-  private isExpired(entry: UnifiedCacheEntry<any>): boolean {
+  private isExpired(entry: UnifiedCacheEntry<unknown>): boolean {
     const now = Date.now();
     const age = now - entry.timestamp;
     return age > entry.ttl;

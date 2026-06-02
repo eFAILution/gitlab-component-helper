@@ -1,11 +1,7 @@
 import { Logger } from '../../utils/logger';
 import { HttpClient } from '../../utils/httpClient';
 import { TokenManager } from './tokenManager';
-
-interface GitLabTag {
-  name: string;
-  commit: any;
-}
+import type { GitLabProjectInfo, GitLabTag, GitLabBranch } from '../../types/api';
 
 /**
  * Manages fetching and sorting versions (tags and branches) for GitLab projects
@@ -45,7 +41,7 @@ export class VersionManager {
       this.logger.debug(`Using token for versions fetch: ${token ? 'YES' : 'NO'}`);
 
       // First, get project info to get the project ID
-      const projectInfo = await this.httpClient.fetchJson(
+      const projectInfo = await this.httpClient.fetchJson<GitLabProjectInfo>(
         `${apiBaseUrl}/projects/${encodedPath}`,
         fetchOptions
       );
@@ -57,11 +53,11 @@ export class VersionManager {
 
       // Fetch tags and branches in parallel
       const [tagsResult, branchesResult] = await Promise.allSettled([
-        this.httpClient.fetchJson(
+        this.httpClient.fetchJson<GitLabTag[]>(
           `${apiBaseUrl}/projects/${projectInfo.id}/repository/tags?per_page=100&sort=desc`,
           fetchOptions
         ),
-        this.httpClient.fetchJson(
+        this.httpClient.fetchJson<GitLabBranch[]>(
           `${apiBaseUrl}/projects/${projectInfo.id}/repository/branches?per_page=20`,
           fetchOptions
         )
@@ -72,8 +68,8 @@ export class VersionManager {
       // Process tags
       if (tagsResult.status === 'fulfilled' && Array.isArray(tagsResult.value)) {
         const tagVersions = tagsResult.value
-          .map((tag: any) => tag.name)
-          .filter((name: string) => name);
+          .map(tag => tag.name)
+          .filter(name => name);
         versions.push(...tagVersions);
         this.logger.debug(`Found ${tagVersions.length} tags`);
       } else {
@@ -87,8 +83,8 @@ export class VersionManager {
       // Process branches
       if (branchesResult.status === 'fulfilled' && Array.isArray(branchesResult.value)) {
         const importantBranches = branchesResult.value
-          .map((branch: any) => branch.name)
-          .filter((name: string) => ['main', 'master', 'develop', 'dev'].includes(name));
+          .map(branch => branch.name)
+          .filter(name => ['main', 'master', 'develop', 'dev'].includes(name));
         versions.push(...importantBranches);
         this.logger.debug(`Found ${importantBranches.length} important branches`);
       } else {
@@ -142,7 +138,7 @@ export class VersionManager {
 
       const token = await this.tokenManager.getTokenForProject(gitlabInstance);
       const options = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
-      const tags = await this.httpClient.fetchJson(apiUrl, options);
+      const tags = await this.httpClient.fetchJson<GitLabTag[]>(apiUrl, options);
 
       this.logger.info(`Found ${tags.length} tags for ${projectPath}`);
       this.logger.logPerformance('fetchProjectTags', Date.now() - startTime, {

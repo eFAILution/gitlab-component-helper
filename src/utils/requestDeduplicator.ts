@@ -18,7 +18,7 @@ interface PendingRequest<T> {
 }
 
 export class RequestDeduplicator {
-  private pendingRequests: Map<string, PendingRequest<any>> = new Map();
+  private pendingRequests: Map<string, PendingRequest<unknown>> = new Map();
 
   /**
    * Fetch data with deduplication.
@@ -33,7 +33,7 @@ export class RequestDeduplicator {
     const existing = this.pendingRequests.get(key);
 
     if (existing) {
-      return existing.promise;
+      return existing.promise as Promise<T>;
     }
 
     const promise = fetcher()

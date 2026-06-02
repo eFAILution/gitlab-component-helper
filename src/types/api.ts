@@ -95,6 +95,17 @@ export interface GitLabBranch {
 }
 
 /**
+ * GitLab group project listing item returned from /api/v4/groups/:id/projects
+ *
+ * Narrower than {@link GitLabProjectInfo} — the group listing endpoint returns the same shape,
+ * but consumers only read these two fields.
+ */
+export interface GitLabGroupProject {
+  name: string;
+  path_with_namespace: string;
+}
+
+/**
  * GitLab file content response from /api/v4/projects/:id/repository/files/:file_path/raw
  */
 export interface GitLabFileContent {

@@ -124,7 +124,7 @@ export class ComponentService implements ComponentSource {
     forceRefresh: boolean = false,
     version?: string,
     context?: vscode.ExtensionContext
-  ): Promise<any> {
+  ): Promise<Awaited<ReturnType<ComponentFetcher['fetchCatalogData']>>> {
     return this.componentFetcher.fetchCatalogData(
       gitlabInstance,
       projectPath,
@@ -135,8 +135,8 @@ export class ComponentService implements ComponentSource {
   }
 
   // HTTP client delegation
-  public async fetchJson(url: string, options?: any): Promise<any> {
-    return this.httpClient.fetchJson(url, options);
+  public async fetchJson<T = unknown>(url: string, options?: { headers?: Record<string, string> }): Promise<T> {
+    return this.httpClient.fetchJson<T>(url, options);
   }
 
   private async fetchText(url: string): Promise<string> {
@@ -237,12 +237,12 @@ export class ComponentService implements ComponentSource {
     )}/repository/files/${encodeURIComponent(filePath)}/raw`;
 
     try {
-      const components = await this.httpClient.fetchJson(apiUrl, {
+      const raw = await this.httpClient.fetchJson<unknown>(apiUrl, {
         headers: {
           'PRIVATE-TOKEN': token
         }
       });
-
+      const components = this.coerceToComponents(raw, apiUrl);
       this.logger.info(`Successfully fetched ${components.length} components from GitLab`);
       return components;
     } catch (error) {
@@ -260,13 +260,40 @@ export class ComponentService implements ComponentSource {
     }
 
     try {
-      const components = await this.httpClient.fetchJson(url);
+      const raw = await this.httpClient.fetchJson<unknown>(url);
+      const components = this.coerceToComponents(raw, url);
       this.logger.info(`Successfully fetched ${components.length} components from URL`);
       return components;
     } catch (error) {
       this.logger.error(`URL fetch failed: ${error}`);
       throw error;
     }
+  }
+
+  /**
+   * Narrow an unknown JSON payload (from a user-configured URL) to `Component[]`.
+   *
+   * The remote shape is user-controlled — could be a malformed file, a wrong endpoint, or a stale
+   * schema — so we filter to objects with the minimum required `name`/`parameters` fields rather
+   * than trusting the cast. Anything that doesn't pass is dropped with a warning.
+   *
+   * @param raw     The parsed JSON returned by `fetchJson<unknown>`. Expected to be an array of
+   *                `Component`-shaped objects, but typed as `unknown` because the remote endpoint
+   *                is user-configured.
+   * @param source  URL or identifier of the source, used only in the warning message when the
+   *                payload is not an array.
+   * @returns       The subset of `raw` that has the minimum `name` and `parameters` fields.
+   *                Entries that don't pass the shape check are silently dropped; a non-array
+   *                input returns `[]` (and logs a warning).
+   */
+  private coerceToComponents(raw: unknown, source: string): Component[] {
+    if (!Array.isArray(raw)) {
+      this.logger.warn(`Expected array of components from ${source}, got ${typeof raw}`);
+      return [];
+    }
+    return raw.filter((c): c is Component =>
+      typeof c === 'object' && c !== null && 'name' in c && 'parameters' in c
+    );
   }
 
   // Cache management

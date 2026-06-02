@@ -95,17 +95,17 @@ export class HttpClient {
     return `${url}|${authToken}`;
   }
 
-  async fetchJson(url: string, options: RequestOptions = {}): Promise<any> {
+  async fetchJson<T = unknown>(url: string, options: RequestOptions = {}): Promise<T> {
     return this.performanceMonitor.track(
       'httpClient.fetchJson',
       async () => {
-        return this.fetchJsonInternal(url, options);
+        return this.fetchJsonInternal<T>(url, options);
       },
       { url: new URL(url).hostname + new URL(url).pathname }
     );
   }
 
-  private async fetchJsonInternal(url: string, options: RequestOptions = {}): Promise<any> {
+  private async fetchJsonInternal<T = unknown>(url: string, options: RequestOptions = {}): Promise<T> {
     const config = this.getConfig();
     const timeout = options.timeout || config.timeout;
     const retryAttempts = options.retryAttempts || config.retryAttempts;
@@ -116,7 +116,7 @@ export class HttpClient {
 
     const cacheKey = this.buildCacheKey(url, headers);
 
-    return this.deduplicator.fetch(cacheKey, async () => {
+    return this.deduplicator.fetch<T>(cacheKey, async () => {
       for (let attempt = 0; attempt <= retryAttempts; attempt++) {
         try {
           this.logger.debug(`HTTP Request attempt ${attempt + 1}/${retryAttempts + 1}: ${url}`);
@@ -124,7 +124,7 @@ export class HttpClient {
           const data = await this.makeRequest(url, { timeout, headers });
 
           try {
-            const jsonData = JSON.parse(data);
+            const jsonData = JSON.parse(data) as T;
             this.logger.debug(`HTTP Request successful: ${url} (${data.length} chars)`);
             return jsonData;
           } catch (parseError) {
