@@ -41,6 +41,26 @@ suite('buildComponentHoverMarkdown — title + detach link', () => {
     assert.strictEqual(payload.name, 'deploy');
     assert.deepStrictEqual(payload._hoverContext, HOVER_CONTEXT);
   });
+
+  test('escapes `)` in the JSON payload so an unbalanced bracket in the description does not break the link', () => {
+    // Markdown link syntax terminates at the first literal `)` in the URL portion. The payload must therefore
+    // percent-escape `)` (and the other characters that `vscode.Uri.parse(...).toString()` escapes for `command:`
+    // URIs) so any unbalanced bracket in the component fields stays inside the URL.
+    const md = buildComponentHoverMarkdown(
+      baseComponent({ description: 'Status: :) (see note 1) and more text after' }),
+      HOVER_CONTEXT,
+    );
+    const detachLineMatch = md.match(/\[🔗 Open in Detailed View\]\((command:[^\)]+)\)/);
+    assert.ok(detachLineMatch, 'detach link markdown missing');
+    const url = detachLineMatch[1];
+    // The URL must contain no literal `(` or `)` — those would terminate the markdown link prematurely.
+    assert.ok(!url.includes('('), `detach URL leaks literal '(': ${url}`);
+    assert.ok(!url.includes(')'), `detach URL leaks literal ')': ${url}`);
+    // And the payload must still round-trip — the description survives the percent-escape.
+    const payloadJson = decodeURIComponent(url.split('?')[1]);
+    const payload = JSON.parse(payloadJson);
+    assert.strictEqual(payload.description, 'Status: :) (see note 1) and more text after');
+  });
 });
 
 suite('buildComponentHoverMarkdown — description', () => {

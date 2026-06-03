@@ -39,9 +39,13 @@ export function buildComponentHoverMarkdown(component: Component, context: Hover
   md += `## ${component.name}\n\n`;
 
   const componentWithContext = { ...component, _hoverContext: context };
+  // Matches `vscode.Uri.parse(...).toString()`'s extra escaping of `!'()*`. The `)` escape is load-bearing:
+  // markdown link syntax terminates at the first literal `)`, so an unbalanced `)` anywhere in the JSON payload
+  // (e.g. a description containing "(see note 1)" or ":)") would otherwise cut the link short and break "Open in
+  // Detailed View".
   const detachCommandUrl = `command:gitlab-component-helper.detachHover?${encodeURIComponent(
     JSON.stringify(componentWithContext),
-  )}`;
+  ).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())}`;
   md += `[🔗 Open in Detailed View](${detachCommandUrl})\n\n`;
 
   const description = component.description || '';
