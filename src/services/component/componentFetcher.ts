@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { Component } from '../../providers/componentDetector';
+import type { ComponentParameter } from '../../types/git-component';
 import {
   GitLabCatalogComponent,
   GitLabCatalogVariable,
@@ -150,13 +151,13 @@ export class ComponentFetcher {
           if (catalogComponent) {
             this.logger.info(`Found component in catalog: ${componentName}`);
 
-            let extractedParameters: ComponentVariable[] =
+            let extractedParameters: ComponentParameter[] =
               catalogComponent.variables?.map((v: GitLabCatalogVariable) => ({
                 name: v.name,
                 description: v.description || `Parameter: ${v.name}`,
                 required: v.required || false,
                 type: v.type || 'string',
-                default: v.default === undefined ? undefined : String(v.default)
+                default: v.default
               })) || [];
 
             // Always probe the template so we know the on-repo path (needed for the template-file link). When the
