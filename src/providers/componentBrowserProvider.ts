@@ -8,10 +8,7 @@ import { Logger } from '../utils/logger';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
 import { generateComponentText } from './componentBrowserGenerate';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
-import {
-  extractProjectUrl,
-  transformCachedComponentsToGroups,
-} from './componentBrowserTransform';
+import { transformCachedComponentsToGroups } from './componentBrowserTransform';
 
 // Constants for timing delays
 const EDITOR_ACTIVATION_DELAY_MS = 50;

@@ -13,6 +13,11 @@ import { Logger } from '../../utils/logger';
 import { GitLabSpecParser, ComponentVariable } from '../../parsers/specParser';
 import { TokenManager } from './tokenManager';
 import { UrlParser } from './urlParser';
+import {
+  deriveComponentName,
+  filterSubdirectories,
+  filterYamlBlobs,
+} from './componentFetcherTemplates';
 
 /**
  * Helper function to prompt user for token if needed
@@ -479,10 +484,12 @@ export class ComponentFetcher {
       const componentResults = await this.httpClient.processBatch(
         yamlFiles,
         async (file: GitLabTreeItem) => {
-          const relativePath = file.path.replace(/^templates\//, '');
-          const name = relativePath.includes('/')
-            ? relativePath.split('/')[0]
-            : relativePath.replace(/\.ya?ml$/, '');
+          const name = deriveComponentName(file.path);
+          if (name === null) {
+            this.logger.debug(`[ComponentFetcher] Skipping ${file.path}: not a recognised component layout`);
+            return null;
+          }
+          const relativePath = file.path.slice('templates/'.length);
           this.logger.debug(`Processing component: ${name} (${relativePath})`);
 
           // Fetch template content
@@ -563,18 +570,13 @@ export class ComponentFetcher {
     const treeUrl = `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`;
     const topLevel = await this.httpClient.fetchJson<GitLabTreeItem[]>(treeUrl, fetchOptions).catch(() => [] as GitLabTreeItem[]);
 
-    const yamlFiles = topLevel.filter(item =>
-      item.type === 'blob' && (item.name.endsWith('.yml') || item.name.endsWith('.yaml'))
-    );
+    const yamlFiles: GitLabTreeItem[] = filterYamlBlobs(topLevel);
 
-    const subdirs = topLevel.filter(item => item.type === 'tree');
+    const subdirs = filterSubdirectories(topLevel);
     for (const subdir of subdirs) {
       const subdirUrl = `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=${encodeURIComponent('templates/' + subdir.name)}&ref=${ref}`;
       const subdirContents = await this.httpClient.fetchJson<GitLabTreeItem[]>(subdirUrl, fetchOptions).catch(() => [] as GitLabTreeItem[]);
-      const subdirYaml = subdirContents.filter(item =>
-        item.type === 'blob' && (item.name.endsWith('.yml') || item.name.endsWith('.yaml'))
-      );
-      yamlFiles.push(...subdirYaml);
+      yamlFiles.push(...filterYamlBlobs(subdirContents));
     }
 
     return yamlFiles;
