@@ -12,7 +12,9 @@ updates:
     assignees:
       - "eFAILution"
     commit-message:
-      prefix: "chore(deps)"
+      # prefix has no scope: `include: scope` appends (deps)/(deps-dev). A scoped
+      # prefix here would double-scope (e.g. chore(deps)(deps-dev)).
+      prefix: "chore"
       include: "scope"
     labels:
       - "dependencies"
@@ -47,7 +49,6 @@ updates:
       - "eFAILution"
     commit-message:
       prefix: "chore(ci)"
-      include: "scope"
     labels:
       - "dependencies"
       - "github-actions"
@@ -65,7 +66,6 @@ updates:
       - "eFAILution"
     commit-message:
       prefix: "chore(pre-commit)"
-      include: "scope"
     labels:
       - "dependencies"
       - "pre-commit"
