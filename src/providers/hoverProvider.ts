@@ -3,8 +3,8 @@ import { Component, ComponentParameter, detectIncludeComponent } from './compone
 import { Logger } from '../utils/logger';
 import { getVariableInfo } from '../utils/gitlabVariables';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
-import { templateFileUrlForResolved } from '../utils/templateFileUrl';
 import { findInputContextAtLine } from './hoverInputContext';
+import { buildComponentHoverMarkdown } from './hoverContentBuilder';
 
 export class HoverProvider implements vscode.HoverProvider {
   private logger = Logger.getInstance();
@@ -75,62 +75,12 @@ export class HoverProvider implements vscode.HoverProvider {
       this.logger.debug(`[HoverProvider] Component source: ${component.context?.gitlabInstance || component.source || 'unknown'}`, 'HoverProvider');
       this.logger.debug(`[HoverProvider] Component has ${component.parameters?.length || 0} parameters`, 'HoverProvider');
 
-      // Create markdown content for hover with enhanced features
-      const hoverContent = new vscode.MarkdownString();
-
-      // Header with title and detach link
-      hoverContent.appendMarkdown(`## ${component.name}\n\n`);
-
-      // Add a command link to detach the hover window with position context
-      const componentWithContext = {
-        ...component,
-        _hoverContext: {
+      const hoverContent = new vscode.MarkdownString(
+        buildComponentHoverMarkdown(component, {
           documentUri: document.uri.toString(),
-          position: { line: position.line, character: position.character }
-        }
-      };
-      const detachCommand = vscode.Uri.parse(`command:gitlab-component-helper.detachHover?${encodeURIComponent(JSON.stringify(componentWithContext))}`);
-      hoverContent.appendMarkdown(`[🔗 Open in Detailed View](${detachCommand.toString()})\n\n`);
-
-      // Description with fallback handling
-      const description = component.description || '';
-
-      hoverContent.appendMarkdown(`${description}\n\n`);
-
-      // Source link. When we have a resolved templatePath we link directly to the template (matching the inline editor
-      // link and the Component Browser's "Template File" link). Without templatePath we fall back to plain text
-      if (component.context && component.templatePath) {
-        const sourceUrl = templateFileUrlForResolved({
-          gitlabInstance: component.context.gitlabInstance,
-          projectPath: component.context.path,
-          version: component.version,
-          templatePath: component.templatePath,
-        });
-        hoverContent.appendMarkdown(`**Source:** [${sourceUrl}](${sourceUrl})\n\n`);
-      } else if (component.context) {
-        hoverContent.appendMarkdown(`**Source:** ${component.context.gitlabInstance}/${component.context.path}\n\n`);
-      } else if (component.source) {
-        hoverContent.appendMarkdown(`**Source:** ${component.source}\n\n`);
-      }
-
-      // Version
-      if (component.version) {
-        hoverContent.appendMarkdown(`**Version:** ${component.version}\n\n`);
-      }
-
-      // Parameters table
-      if (component.parameters && component.parameters.length > 0) {
-        hoverContent.appendMarkdown(`### Parameters\n\n`);
-        hoverContent.appendMarkdown(`| Name | Description | Required | Default |\n`);
-        hoverContent.appendMarkdown(`| ---- | ----------- | -------- | ------- |\n`);
-
-        for (const param of component.parameters) {
-          hoverContent.appendMarkdown(`| ${param.name} | ${param.description} | ${param.required ? 'Yes' : 'No'} | ${param.default !== undefined ? `\`${param.default}\`` : '-'} |\n`);
-        }
-        hoverContent.appendMarkdown(`\n`);
-      }
-
-      // Enable command URIs
+          position: { line: position.line, character: position.character },
+        }),
+      );
       hoverContent.isTrusted = true;
       hoverContent.supportThemeIcons = true;
 
