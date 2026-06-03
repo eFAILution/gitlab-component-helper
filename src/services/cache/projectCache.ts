@@ -42,7 +42,7 @@ export class ProjectCache {
           'ProjectCache'
         );
 
-        const sourceComponents: CachedComponent[] = catalogData.components.map((c: any) => {
+        const sourceComponents: CachedComponent[] = catalogData.components.map(c => {
           const componentUrl = `https://${gitlabInstance}/${projectPath}/${c.name}@${
             c.latest_version || 'main'
           }`;
@@ -50,7 +50,7 @@ export class ProjectCache {
           return {
             name: c.name,
             description: c.description || `Component from ${sourceName}`,
-            parameters: (c.variables || []).map((v: any) => ({
+            parameters: (c.variables || []).map(v => ({
               name: v.name,
               description: v.description || `Parameter: ${v.name}`,
               required: v.required || false,
@@ -140,7 +140,7 @@ export class ProjectCache {
       }
 
       // Find the matching component in the catalog
-      const catalogComponent = catalogData.components.find((c: any) => c.name === componentName);
+      const catalogComponent = catalogData.components.find(c => c.name === componentName);
       if (!catalogComponent) {
         this.logger.warn(
           `[ProjectCache] Component ${componentName} not found in version ${version}`,
@@ -153,7 +153,7 @@ export class ProjectCache {
       const cachedComponent: CachedComponent = {
         name: catalogComponent.name,
         description: catalogComponent.description || `Component from ${sourcePath}`,
-        parameters: (catalogComponent.variables || []).map((v: any) => ({
+        parameters: (catalogComponent.variables || []).map(v => ({
           name: v.name,
           description: v.description || `Parameter: ${v.name}`,
           required: v.required || false,

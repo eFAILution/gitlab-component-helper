@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ComponentService } from './componentService';
+import type { ComponentSource } from '../../types/api';
 
 /**
  * Register the command to add a GitLab project token
@@ -42,7 +43,7 @@ export function registerAddProjectTokenCommand(
 
       // Add to component sources as a proper object
       const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-      const componentSources: any[] = config.get('componentSources', []);
+      const componentSources: ComponentSource[] = config.get('componentSources', []);
 
       // Check if this source already exists
       const existingSource = componentSources.find(

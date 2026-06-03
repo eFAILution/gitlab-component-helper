@@ -113,23 +113,7 @@ export class ComponentCacheManager {
   /**
    * Add a dynamically fetched component to the cache
    */
-  public addDynamicComponent(component: {
-    name: string;
-    description: string;
-    parameters: Array<{
-      name: string;
-      description: string;
-      required: boolean;
-      type: string;
-      default?: any;
-    }>;
-    source: string;
-    sourcePath: string;
-    gitlabInstance: string;
-    version: string;
-    url: string;
-    templatePath?: string;
-  }): void {
+  public addDynamicComponent(component: CachedComponent): void {
     try {
       // Check if component already exists (avoid duplicates)
       const existingIndex = this.components.findIndex(

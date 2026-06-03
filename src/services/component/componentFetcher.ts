@@ -1,23 +1,18 @@
 import * as vscode from 'vscode';
 import { Component } from '../../providers/componentDetector';
+import type { ComponentParameter } from '../../types/git-component';
 import {
   GitLabCatalogComponent,
   GitLabCatalogVariable,
-  GitLabCatalogData
+  GitLabCatalogData,
+  ParsedCatalogData
 } from '../../types/gitlab-catalog';
+import type { GitLabProjectInfo, GitLabTreeItem } from '../../types/api';
 import { HttpClient } from '../../utils/httpClient';
 import { Logger } from '../../utils/logger';
 import { GitLabSpecParser, ComponentVariable } from '../../parsers/specParser';
 import { TokenManager } from './tokenManager';
 import { UrlParser } from './urlParser';
-
-interface GitLabTreeItem {
-  id: string;
-  name: string;
-  type: string;
-  path: string;
-  mode: string;
-}
 
 /**
  * Helper function to prompt user for token if needed
@@ -52,7 +47,7 @@ export class ComponentFetcher {
   private httpClient: HttpClient;
   private tokenManager: TokenManager;
   private urlParser: UrlParser;
-  private catalogCache = new Map<string, any>();
+  private catalogCache = new Map<string, ParsedCatalogData>();
 
   constructor(httpClient: HttpClient, tokenManager: TokenManager, urlParser: UrlParser) {
     this.httpClient = httpClient;
@@ -112,13 +107,7 @@ export class ComponentFetcher {
       const apiBaseUrl = `https://${gitlabInstance}/api/v4`;
 
       let templateContent = '';
-      let parameters: Array<{
-        name: string;
-        description: string;
-        required: boolean;
-        type: string;
-        default?: string;
-      }> = [];
+      let parameters: ComponentVariable[] = [];
 
       // Try GitLab CI/CD Catalog first
       try {
@@ -132,10 +121,10 @@ export class ComponentFetcher {
 
         this.logger.debug(`Trying to fetch from GitLab Catalog API: ${catalogApiUrl}`);
         this.logger.debug(`Using token for catalog API: ${token ? 'YES' : 'NO'}`);
-        const catalogData = (await this.httpClient.fetchJson(
+        const catalogData = await this.httpClient.fetchJson<GitLabCatalogData>(
           catalogApiUrl,
           catalogFetchOptions
-        )) as GitLabCatalogData;
+        );
 
         if (catalogData && catalogData.components) {
           let catalogComponent = catalogData.components.find(
@@ -162,7 +151,7 @@ export class ComponentFetcher {
           if (catalogComponent) {
             this.logger.info(`Found component in catalog: ${componentName}`);
 
-            let extractedParameters =
+            let extractedParameters: ComponentParameter[] =
               catalogComponent.variables?.map((v: GitLabCatalogVariable) => ({
                 name: v.name,
                 description: v.description || `Parameter: ${v.name}`,
@@ -220,21 +209,24 @@ export class ComponentFetcher {
       this.logger.debug(`Using token for ${gitlabInstance}: ${token ? 'YES' : 'NO'}`);
 
       // Fetch project info and template in parallel
-      let projectInfo: any;
-      let templateResult: any;
+      let projectInfo: PromiseSettledResult<GitLabProjectInfo>;
+      let templateResult: PromiseSettledResult<Awaited<ReturnType<typeof this.fetchTemplate>>>;
       try {
         [projectInfo, templateResult] = await Promise.allSettled([
-          this.httpClient.fetchJson(projectApiUrl, fetchOptions),
+          this.httpClient.fetchJson<GitLabProjectInfo>(projectApiUrl, fetchOptions),
           this.fetchTemplate(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions)
         ]);
-      } catch (err: any) {
-        if (err && (err.status === 401 || err.status === 403)) {
+      } catch (err: unknown) {
+        const status = (err && typeof err === 'object' && 'status' in err)
+          ? (err as { status?: number }).status
+          : undefined;
+        if (status === 401 || status === 403) {
           // Prompt for token and retry
           token = await promptForTokenIfNeeded(context, this.tokenManager, gitlabInstance);
           if (token) {
             fetchOptions = { headers: { 'PRIVATE-TOKEN': token } };
             [projectInfo, templateResult] = await Promise.allSettled([
-              this.httpClient.fetchJson(projectApiUrl, fetchOptions),
+              this.httpClient.fetchJson<GitLabProjectInfo>(projectApiUrl, fetchOptions),
               this.fetchTemplate(
                 apiBaseUrl,
                 encodedProjectPath,
@@ -316,8 +308,12 @@ export class ComponentFetcher {
     projectId: string,
     componentName: string,
     version: string,
-    fetchOptions?: any
-  ): Promise<{ content: string; parameters: any[]; templatePath: string } | null> {
+    fetchOptions?: { headers?: Record<string, string> }
+  ): Promise<{
+    content: string;
+    parameters: ComponentVariable[];
+    templatePath: string;
+  } | null> {
     try {
       const templatePathCandidates = [
         `templates/${componentName}.yml`,
@@ -381,7 +377,7 @@ export class ComponentFetcher {
     forceRefresh: boolean = false,
     version?: string,
     context?: vscode.ExtensionContext
-  ): Promise<any> {
+  ): Promise<ParsedCatalogData> {
     const startTime = Date.now();
     const versionSuffix = version ? `@${version}` : '';
     const cacheKey = `catalog:${gitlabInstance}:${projectPath}${versionSuffix}`;
@@ -393,10 +389,11 @@ export class ComponentFetcher {
     const cleanGitlabInstance = this.urlParser.cleanGitLabInstance(gitlabInstance);
 
     // Check cache first
-    if (!forceRefresh && this.catalogCache.has(cacheKey)) {
+    const cached = forceRefresh ? undefined : this.catalogCache.get(cacheKey);
+    if (cached) {
       this.logger.info(`Returning cached catalog data for ${cacheKey}`);
       this.logger.logPerformance('fetchCatalogData (cached)', Date.now() - startTime);
-      return this.catalogCache.get(cacheKey);
+      return cached;
     }
 
     this.logger.info(`Fetching fresh catalog data from ${cleanGitlabInstance}`);
@@ -409,11 +406,11 @@ export class ComponentFetcher {
 
       // **PARALLEL OPTIMIZATION with GRACEFUL DEGRADATION** - Fetch project info and templates in parallel
       const [projectInfoResult] = await Promise.allSettled([
-        this.httpClient.fetchJson(
+        this.httpClient.fetchJson<GitLabProjectInfo>(
           `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`,
           fetchOptions
         ),
-        this.httpClient.fetchJson(
+        this.httpClient.fetchJson<GitLabTreeItem[]>(
           `${apiBaseUrl}/projects/${encodeURIComponent(
             projectPath
           )}/repository/tree?path=templates&ref=${ref}`,
@@ -421,7 +418,7 @@ export class ComponentFetcher {
         )
       ]);
 
-      let projectInfo: any;
+      let projectInfo: GitLabProjectInfo;
 
       // Handle authentication errors and retry if needed
       if (projectInfoResult.status === 'rejected') {
@@ -432,11 +429,11 @@ export class ComponentFetcher {
           if (token) {
             fetchOptions = { headers: { 'PRIVATE-TOKEN': token } };
             const [retryProjectInfo] = await Promise.allSettled([
-              this.httpClient.fetchJson(
+              this.httpClient.fetchJson<GitLabProjectInfo>(
                 `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`,
                 fetchOptions
               ),
-              this.httpClient.fetchJson(
+              this.httpClient.fetchJson<GitLabTreeItem[]>(
                 `${apiBaseUrl}/projects/${encodeURIComponent(
                   projectPath
                 )}/repository/tree?path=templates&ref=${ref}`,
@@ -532,7 +529,7 @@ export class ComponentFetcher {
       );
 
       // Filter out null results (non-component templates)
-      const components = componentResults.filter((c: any) => c !== null);
+      const components = componentResults.filter((c): c is NonNullable<typeof c> => c !== null);
       this.logger.debug(
         `[ComponentFetcher] ${components.length} of ${yamlFiles.length} templates are valid components`
       );
@@ -561,20 +558,20 @@ export class ComponentFetcher {
     apiBaseUrl: string,
     projectPath: string,
     ref: string,
-    fetchOptions?: any
+    fetchOptions?: { headers?: Record<string, string> }
   ): Promise<GitLabTreeItem[]> {
     const treeUrl = `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`;
-    const topLevel: GitLabTreeItem[] = await this.httpClient.fetchJson(treeUrl, fetchOptions).catch(() => [] as GitLabTreeItem[]);
+    const topLevel = await this.httpClient.fetchJson<GitLabTreeItem[]>(treeUrl, fetchOptions).catch(() => [] as GitLabTreeItem[]);
 
-    const yamlFiles: GitLabTreeItem[] = topLevel.filter((item: GitLabTreeItem) =>
+    const yamlFiles = topLevel.filter(item =>
       item.type === 'blob' && (item.name.endsWith('.yml') || item.name.endsWith('.yaml'))
     );
 
-    const subdirs = topLevel.filter((item: GitLabTreeItem) => item.type === 'tree');
+    const subdirs = topLevel.filter(item => item.type === 'tree');
     for (const subdir of subdirs) {
       const subdirUrl = `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=${encodeURIComponent('templates/' + subdir.name)}&ref=${ref}`;
-      const subdirContents: GitLabTreeItem[] = await this.httpClient.fetchJson(subdirUrl, fetchOptions).catch(() => [] as GitLabTreeItem[]);
-      const subdirYaml = subdirContents.filter((item: GitLabTreeItem) =>
+      const subdirContents = await this.httpClient.fetchJson<GitLabTreeItem[]>(subdirUrl, fetchOptions).catch(() => [] as GitLabTreeItem[]);
+      const subdirYaml = subdirContents.filter(item =>
         item.type === 'blob' && (item.name.endsWith('.yml') || item.name.endsWith('.yaml'))
       );
       yamlFiles.push(...subdirYaml);
@@ -588,10 +585,10 @@ export class ComponentFetcher {
    */
   private async fetchTemplateContent(
     apiBaseUrl: string,
-    projectId: string,
+    projectId: string | number,
     relativePath: string,
     ref: string,
-    fetchOptions?: any
+    fetchOptions?: { headers?: Record<string, string> }
   ): Promise<{
     content: string;
     extractedVariables: ComponentVariable[];
@@ -625,12 +622,12 @@ export class ComponentFetcher {
   public async fetchProjectInfo(
     gitlabInstance: string,
     projectPath: string
-  ): Promise<any> {
+  ): Promise<GitLabProjectInfo> {
     const apiBaseUrl = `https://${gitlabInstance}/api/v4`;
     const token = await this.tokenManager.getTokenForProject(gitlabInstance);
     const fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
 
-    return this.httpClient.fetchJson(
+    return this.httpClient.fetchJson<GitLabProjectInfo>(
       `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`,
       fetchOptions
     );

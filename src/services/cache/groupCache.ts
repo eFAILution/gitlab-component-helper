@@ -1,6 +1,7 @@
 import { getComponentService } from '../component';
 import { Logger } from '../../utils/logger';
 import { CachedComponent } from '../../types/cache';
+import type { GitLabGroupProject } from '../../types/api';
 import { ProjectCache } from './projectCache';
 
 /**
@@ -71,7 +72,7 @@ export class GroupCache {
           'GroupCache'
         );
 
-        const batchPromises = batch.map(async (project: any) => {
+        const batchPromises = batch.map(async project => {
           try {
             this.logger.debug(
               `[GroupCache] Checking ${project.path_with_namespace}...`,
@@ -151,7 +152,7 @@ export class GroupCache {
    * @param groupPath Group path
    * @returns Array of project objects from GitLab API
    */
-  async fetchGroupProjects(gitlabInstance: string, groupPath: string): Promise<any[]> {
+  async fetchGroupProjects(gitlabInstance: string, groupPath: string): Promise<GitLabGroupProject[]> {
     const componentService = getComponentService();
 
     try {
@@ -172,7 +173,7 @@ export class GroupCache {
       );
 
       // Use the fetchJson method with authentication options
-      const projects = await componentService.fetchJson(groupApiUrl, fetchOptions);
+      const projects = await componentService.fetchJson<GitLabGroupProject[]>(groupApiUrl, fetchOptions);
 
       this.logger.info(
         `[GroupCache] Found ${projects.length} total projects in group ${groupPath}`,
