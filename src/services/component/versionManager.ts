@@ -2,6 +2,7 @@ import { Logger } from '../../utils/logger';
 import { HttpClient } from '../../utils/httpClient';
 import { TokenManager } from './tokenManager';
 import type { GitLabProjectInfo, GitLabTag, GitLabBranch } from '../../types/api';
+import { NetworkError } from '../../errors';
 
 /**
  * Manages fetching and sorting versions (tags and branches) for GitLab projects
@@ -51,7 +52,8 @@ export class VersionManager {
         return ['main'];
       }
 
-      // Fetch tags and branches in parallel
+      // Fetch tags and branches in parallel. Both are fully paginated so neither is silently truncated on projects
+      // with many tags/branches.
       const [tagsResult, branchesResult] = await Promise.allSettled([
         this.httpClient.fetchAllPages<GitLabTag>(
           `${apiBaseUrl}/projects/${projectInfo.id}/repository/tags?sort=desc`,
@@ -150,6 +152,94 @@ export class VersionManager {
     } catch (error) {
       this.logger.warn(`Error fetching tags: ${error}`);
       return [];
+    }
+  }
+
+  /**
+   * Resolve the HEAD commit SHA of a branch in a single cheap API call.
+   *
+   * Used to revalidate cached components that are pinned to a (mutable) branch: if the branch HEAD still matches the
+   * SHA stored alongside the cache entry, the cached data is still current and a full re-fetch can be skipped.
+   *
+   * @param gitlabInstance The GitLab instance hostname (e.g. `gitlab.com`).
+   * @param projectPath The project path (e.g. `my-group/shared-ci`); URL-encoded internally.
+   * @param branch The branch name to resolve; URL-encoded internally (supports `/`-containing names).
+   * @returns The commit SHA, or null if the branch can't be resolved (network error, missing branch, no access) —
+   *          callers should treat null as "unknown, keep serving cache" rather than "unchanged" or "changed".
+   */
+  public async resolveBranchSha(
+    gitlabInstance: string,
+    projectPath: string,
+    branch: string
+  ): Promise<string | null> {
+    try {
+      const apiBaseUrl = `https://${gitlabInstance}/api/v4`;
+      const encodedPath = encodeURIComponent(projectPath);
+      const encodedBranch = encodeURIComponent(branch);
+      const url = `${apiBaseUrl}/projects/${encodedPath}/repository/branches/${encodedBranch}`;
+
+      const token = await this.tokenManager.getTokenForProject(gitlabInstance);
+      const options = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+
+      const branchInfo = await this.httpClient.fetchJson<GitLabBranch>(url, options);
+      const sha = branchInfo?.commit?.id;
+
+      if (!sha) {
+        this.logger.debug(
+          `[VersionManager] No commit SHA returned for ${projectPath}@${branch}`
+        );
+        return null;
+      }
+
+      this.logger.debug(
+        `[VersionManager] Resolved ${projectPath}@${branch} to ${sha.slice(0, 8)}`
+      );
+      return sha;
+    } catch (error) {
+      this.logger.debug(
+        `[VersionManager] Could not resolve branch SHA for ${projectPath}@${branch}: ${error}`
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Determine whether a ref is a tag
+   *
+   * @param gitlabInstance The GitLab instance hostname (e.g. `gitlab.com`).
+   * @param projectPath The project path (e.g. `my-group/shared-ci`);
+   * @param ref The ref name to classify;
+   * @returns `true` if the ref is a tag, `false` if it is definitively not a tag, or`null` when the answer can't be
+   *          determined.
+   */
+  public async isRefATag(
+    gitlabInstance: string,
+    projectPath: string,
+    ref: string
+  ): Promise<boolean | null> {
+    const apiBaseUrl = `https://${gitlabInstance}/api/v4`;
+    const encodedPath = encodeURIComponent(projectPath);
+    const encodedRef = encodeURIComponent(ref);
+    const url = `${apiBaseUrl}/projects/${encodedPath}/repository/tags/${encodedRef}`;
+
+    try {
+      const token = await this.tokenManager.getTokenForProject(gitlabInstance);
+      const options = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+
+      await this.httpClient.fetchJson<GitLabTag>(url, options);
+      this.logger.debug(`[VersionManager] ${projectPath}@${ref} is a tag`);
+      return true;
+    } catch (error) {
+      if (error instanceof NetworkError && error.details?.statusCode === 404) {
+        // Definitive: no tag by this name exists, so the ref is a branch (or doesn't exist).
+        this.logger.debug(`[VersionManager] ${projectPath}@${ref} is not a tag (404)`);
+        return false;
+      }
+      // Anything else (offline, 401/403, 5xx) — we genuinely don't know.
+      this.logger.debug(
+        `[VersionManager] Could not determine tag status for ${projectPath}@${ref}: ${error}`
+      );
+      return null;
     }
   }
 

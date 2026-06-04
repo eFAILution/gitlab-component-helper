@@ -15,7 +15,7 @@ import {
 
 // Bump when the on-disk CachedComponent shape changes. Mismatched caches are discarded on load so the new fields can be
 // populated by re-fetching.
-const CURRENT_CACHE_VERSION = '1.1.0';
+const CURRENT_CACHE_VERSION = '1.2.0';
 
 /**
  * ComponentCacheManager - Main orchestrator for component caching

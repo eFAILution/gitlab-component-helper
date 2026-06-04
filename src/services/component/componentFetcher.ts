@@ -460,8 +460,8 @@ export class ComponentFetcher {
         projectInfo = projectInfoResult.value;
       }
 
-      // Use the project's default branch if available
-      if (projectInfo && projectInfo.default_branch) {
+      // Fall back to the project's default branch only when no explicit ref was requested.
+      if (!version && projectInfo && projectInfo.default_branch) {
         ref = projectInfo.default_branch;
       }
       this.logger.debug(`Found project: ${projectInfo.name} (ID: ${projectInfo.id}), using ref: ${ref}`);

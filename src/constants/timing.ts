@@ -14,6 +14,8 @@ export const RETRY_JITTER_MS = 1000 as const;
 // Cache Times (in seconds - converted to ms in usage)
 export const DEFAULT_CACHE_TIME_SECONDS = 3600 as const; // 1 hour
 export const DEFAULT_VERSION_CACHE_TIME_SECONDS = 86400 as const; // 24 hours
+/** 1 minute — mutable branch refs revalidate often */
+export const DEFAULT_BRANCH_CACHE_TIME_SECONDS = 60 as const;
 export const VERSION_REFRESH_MULTIPLIER = 4 as const; // 4x component cache time
 
 // Retry Configuration
