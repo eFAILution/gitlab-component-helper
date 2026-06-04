@@ -53,12 +53,12 @@ export class VersionManager {
 
       // Fetch tags and branches in parallel
       const [tagsResult, branchesResult] = await Promise.allSettled([
-        this.httpClient.fetchJson<GitLabTag[]>(
-          `${apiBaseUrl}/projects/${projectInfo.id}/repository/tags?per_page=100&sort=desc`,
+        this.httpClient.fetchAllPages<GitLabTag>(
+          `${apiBaseUrl}/projects/${projectInfo.id}/repository/tags?sort=desc`,
           fetchOptions
         ),
-        this.httpClient.fetchJson<GitLabBranch[]>(
-          `${apiBaseUrl}/projects/${projectInfo.id}/repository/branches?per_page=20`,
+        this.httpClient.fetchAllPages<GitLabBranch>(
+          `${apiBaseUrl}/projects/${projectInfo.id}/repository/branches`,
           fetchOptions
         )
       ]);
@@ -134,11 +134,11 @@ export class VersionManager {
     try {
       const apiUrl = `https://${gitlabInstance}/api/v4/projects/${encodeURIComponent(
         projectPath
-      )}/repository/tags?per_page=100&order_by=updated&sort=desc`;
+      )}/repository/tags?order_by=updated&sort=desc`;
 
       const token = await this.tokenManager.getTokenForProject(gitlabInstance);
       const options = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
-      const tags = await this.httpClient.fetchJson<GitLabTag[]>(apiUrl, options);
+      const tags = await this.httpClient.fetchAllPages<GitLabTag>(apiUrl, options);
 
       this.logger.info(`Found ${tags.length} tags for ${projectPath}`);
       this.logger.logPerformance('fetchProjectTags', Date.now() - startTime, {
