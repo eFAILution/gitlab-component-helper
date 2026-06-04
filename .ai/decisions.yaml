@@ -390,7 +390,7 @@ decisions:
       negative:
       - Less modern than Jest/Vitest
     references:
-    - tests/run-tests.js
+    - .mocharc.cjs
     - package.json (test scripts)
     title: Mocha Over Jest
 future_decisions:
