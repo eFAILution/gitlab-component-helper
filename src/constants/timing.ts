@@ -21,6 +21,8 @@ export const DEFAULT_RETRY_ATTEMPTS = 3 as const;
 
 // API Pagination
 export const API_PER_PAGE_LIMIT = 100 as const;
+/** Runaway-loop backstop for paginated fetches: 50 pages × 100/page = up to 5,000 items. */
+export const MAX_PAGINATION_PAGES = 50 as const;
 
 // Batch Processing
 export const DEFAULT_BATCH_SIZE = 5 as const;

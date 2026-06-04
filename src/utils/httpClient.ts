@@ -5,6 +5,7 @@ import { Logger } from './logger';
 import { getRequestDeduplicator, RequestDeduplicator } from './requestDeduplicator';
 import { getPerformanceMonitor } from './performanceMonitor';
 import { NetworkError, getErrorHandler } from '../errors';
+import { API_PER_PAGE_LIMIT, MAX_PAGINATION_PAGES } from '../constants/timing';
 
 interface RequestOptions {
   timeout?: number;
@@ -222,7 +223,37 @@ export class HttpClient {
     });
   }
 
-  private makeRequest(url: string, options: { timeout: number; headers: Record<string, string> }): Promise<string> {
+  /**
+   * Perform a GET request and resolve with the response body only.
+   *
+   * A thin wrapper over {@link makeRequestWithHeaders} for the common case where callers don't need response headers.
+   *
+   * @param url The fully-qualified request URL.
+   * @param options Request timeout (ms) and headers to send.
+   * @returns The response body as a string.
+   */
+  private async makeRequest(
+    url: string,
+    options: { timeout: number; headers: Record<string, string> }
+  ): Promise<string> {
+    const { body } = await this.makeRequestWithHeaders(url, options);
+    return body;
+  }
+
+  /**
+   * Perform a GET request and resolve with both the response body and headers.
+   *
+   * `makeRequest` discards headers; this sibling preserves them so callers that need pagination metadata (GitLab's
+   * `x-next-page` / `x-total-pages`) can read it. Header names are lower-cased by Node's HTTP layer.
+   *
+   * @param url The fully-qualified request URL.
+   * @param options Request timeout (ms) and headers to send.
+   * @returns The response body string and a lower-cased header map.
+   */
+  private makeRequestWithHeaders(
+    url: string,
+    options: { timeout: number; headers: Record<string, string> }
+  ): Promise<{ body: string; headers: Record<string, string> }> {
     return new Promise((resolve, reject) => {
       try {
         const urlObj = new URL(url);
@@ -247,7 +278,15 @@ export class HttpClient {
 
           res.on('end', () => {
             if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-              resolve(data);
+              const headers: Record<string, string> = {};
+              for (const [key, value] of Object.entries(res.headers)) {
+                if (typeof value === 'string') {
+                  headers[key] = value;
+                } else if (Array.isArray(value)) {
+                  headers[key] = value.join(', ');
+                }
+              }
+              resolve({ body: data, headers });
             } else {
               const message = `HTTP ${res.statusCode}: ${data.substring(0, 200)}`;
               reject(new NetworkError(message, { statusCode: res.statusCode }));
@@ -270,6 +309,72 @@ export class HttpClient {
         reject(new NetworkError(extractMessage(error), { cause: toError(error) }));
       }
     });
+  }
+
+  /**
+   * Fetch every page of a paginated GitLab collection endpoint, following the `x-next-page` response header until it
+   * is empty. Each request appends `per_page`/`page` query parameters (preserving any already present on `url`).
+   *
+   * Use this for list endpoints that can exceed one page (tags, branches, project listings).
+   *
+   * A safety cap prevents an unbounded loop if a server misreports
+   * pagination headers; hitting it is logged.
+   *
+   * @param url The collection endpoint URL (without `page`; `per_page` is appended).
+   * @param options Standard request options (headers, timeout, retry).
+   * @param perPage Items per page (defaults to {@link API_PER_PAGE_LIMIT}; GitLab caps at 100).
+   * @param maxPages Hard cap on pages fetched, as a runaway-loop backstop (defaults to {@link MAX_PAGINATION_PAGES}).
+   * @returns A flat array of all items across every page.
+   */
+  async fetchAllPages<T = unknown>(
+    url: string,
+    options: RequestOptions = {},
+    perPage: number = API_PER_PAGE_LIMIT,
+    maxPages: number = MAX_PAGINATION_PAGES
+  ): Promise<T[]> {
+    const headers = {
+      'User-Agent': 'VSCode-GitLabComponentHelper',
+      ...options.headers
+    };
+    const timeout = options.timeout || this.getConfig().timeout;
+
+    const all: T[] = [];
+    let page = 1;
+
+    while (page <= maxPages) {
+      const pageUrl = new URL(url);
+      pageUrl.searchParams.set('per_page', String(perPage));
+      pageUrl.searchParams.set('page', String(page));
+
+      const { body, headers: responseHeaders } = await this.makeRequestWithHeaders(pageUrl.toString(), {
+        timeout,
+        headers
+      });
+
+      let items: T[];
+      try {
+        const parsed = JSON.parse(body);
+        items = Array.isArray(parsed) ? parsed : [];
+      } catch (parseError) {
+        throw new NetworkError(
+          `Invalid JSON response from ${pageUrl.toString()}`,
+          { statusCode: 0, cause: toError(parseError) }
+        );
+      }
+
+      all.push(...items);
+
+      const nextPage = responseHeaders['x-next-page'];
+      if (!nextPage || nextPage.trim() === '') {
+        return all;
+      }
+      page += 1;
+    }
+
+    this.logger.warn(
+      `fetchAllPages hit the ${maxPages}-page safety cap for ${url}; results may be truncated (${all.length} items)`
+    );
+    return all;
   }
 
   // Parallel request utility
