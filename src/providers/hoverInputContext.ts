@@ -4,7 +4,7 @@
  * parameter it names.
  */
 
-import { parseYaml } from '../utils/yamlParser';
+import { parseYaml, isYamlNode } from '../utils/yamlParser';
 
 /**
  * The component-input slot a YAML cursor position resolves to.
@@ -46,13 +46,13 @@ export function findInputContextAtLine(text: string, lineIndex: number): InputCo
 
   // Need a parsed `include:` array to know which includes are in scope; if YAML doesn't parse, bail.
   const parsed = parseYaml(text);
-  if (!parsed || !parsed.include) return null;
+  if (!isYamlNode(parsed) || !parsed.include) return null;
   const includes = Array.isArray(parsed.include) ? parsed.include : [parsed.include];
 
   // Each include is either a remote `component:` URL or a `local:` path — both behave the same here.
   const candidates: IncludeCandidate[] = [];
   for (const include of includes) {
-    if (!include) continue;
+    if (!isYamlNode(include)) continue;
     if (typeof include.component === 'string') {
       candidates.push({ value: include.component, key: 'component' });
     } else if (typeof include.local === 'string') {
