@@ -5,6 +5,9 @@ import { getVariableCompletions, containsGitLabVariables, expandComponentUrl } f
 import { Logger } from '../utils/logger';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { resolveLocalComponent } from './localComponentResolver';
+import { parseYaml, isYamlNode } from '../utils/yamlParser';
+import type { ComponentParameter } from '../types/git-component';
+import type { CachedComponent } from '../types/cache';
 
 export class CompletionProvider implements vscode.CompletionItemProvider {
   private logger = Logger.getInstance();
@@ -293,7 +296,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
     return availableVersions[0];
   }
 
-  private provideParameterCompletions(parameters: any[]): vscode.CompletionItem[] {
+  private provideParameterCompletions(parameters: ComponentParameter[]): vscode.CompletionItem[] {
     return parameters.map(param => {
       const item = new vscode.CompletionItem(param.name, vscode.CompletionItemKind.Property);
       item.documentation = new vscode.MarkdownString(param.description);
@@ -359,10 +362,9 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
   ): Promise<vscode.CompletionItem[] | null> {
     try {
       const text = document.getText();
-      const { parseYaml } = await import('../utils/yamlParser');
       const parsedYaml = parseYaml(text);
 
-      if (!parsedYaml || !parsedYaml.include) {
+      if (!isYamlNode(parsedYaml) || !parsedYaml.include) {
         return null;
       }
 
@@ -488,14 +490,14 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
         this.logger.debug(`[CompletionProvider] Existing inputs: ${Object.keys(existingInputs).join(', ') || 'none'}`, 'CompletionProvider');
 
         // Filter out already provided inputs
-        const missingInputs = component.parameters.filter((param: any) =>
+        const missingInputs = component.parameters.filter((param: ComponentParameter) =>
           !Object.prototype.hasOwnProperty.call(existingInputs, param.name)
         );
 
-        this.logger.debug(`[CompletionProvider] Found ${missingInputs.length} missing inputs for completion: ${missingInputs.map((p: any) => p.name).join(', ')}`, 'CompletionProvider');
+        this.logger.debug(`[CompletionProvider] Found ${missingInputs.length} missing inputs for completion: ${missingInputs.map(p => p.name).join(', ')}`, 'CompletionProvider');
 
         // Create completion items for missing inputs
-        return missingInputs.map((param: any) => {
+        return missingInputs.map((param: ComponentParameter & { enum?: unknown[] }) => {
           const item = new vscode.CompletionItem(param.name, vscode.CompletionItemKind.Property);
 
           // Enhanced documentation
@@ -537,7 +539,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
               default:
                 // Check if there are enum values
                 if (param.enum && Array.isArray(param.enum)) {
-                  const enumValues = param.enum.map((val: any) => `"${val}"`).join(',');
+                  const enumValues = param.enum.map((val: unknown) => `"${String(val)}"`).join(',');
                   insertValue = `\${1|${enumValues}|}`;
                 } else {
                   insertValue = param.required ? '${1:"TODO: set value"}' : '${1:""}';
@@ -567,7 +569,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
   // Helper method to find component in cache (similar to validation provider).
   // `forUri` is the active document's URI — used so variable expansion picks
   // the GitLab host matching the file's containing repo, not workspace[0].
-  private async findComponentInCache(componentUrl: string, forUri?: vscode.Uri): Promise<any | null> {
+  private async findComponentInCache(componentUrl: string, forUri?: vscode.Uri): Promise<CachedComponent | null> {
     try {
       const cacheManager = getComponentCacheManager();
       const components = await cacheManager.getComponents();

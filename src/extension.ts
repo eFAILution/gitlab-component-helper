@@ -4,10 +4,33 @@ import { HoverProvider } from './providers/hoverProvider';
 import { CompletionProvider } from './providers/completionProvider';
 import { ComponentDocumentLinkProvider } from './providers/documentLinkProvider';
 import { ComponentBrowserProvider } from './providers/componentBrowserProvider';
-import { detectIncludeComponent } from './providers/componentDetector';
+import { detectIncludeComponent, Component } from './providers/componentDetector';
 import { getComponentCacheManager, ComponentCacheManager } from './services/cache/componentCacheManager';
 import { Logger } from './utils/logger';
 import { ValidationProvider } from './providers/validationProvider';
+import type { CachedComponent } from './types/cache';
+import type { GitLabYamlFragment } from './types/gitlab-catalog';
+import type { HoverContext } from './providers/hoverContentBuilder';
+
+/** Component payload passed to the `detachHover` command. Adds the hover-builder's location context. */
+type DetachableComponent = Component & { _hoverContext?: HoverContext };
+
+/**
+ * Type-guard narrowing a `Component`-shaped value to one that also satisfies `CachedComponent`.
+ *
+ * @param component  A `Component` (typically `activeComponent` in the detach-hover panel) that may
+ *                   or may not have been enriched with cache details.
+ * @returns          `true` if all `CachedComponent` required fields are present and string-typed,
+ *                   narrowing `component` to `Component & CachedComponent` in the truthy branch.
+ *                   `false` if any field is missing.
+ */
+function isCachedComponentShape(component: Component): component is Component & CachedComponent {
+  return typeof component.source === 'string'
+    && typeof component.sourcePath === 'string'
+    && typeof component.gitlabInstance === 'string'
+    && typeof component.version === 'string'
+    && typeof component.url === 'string';
+}
 import { getPerformanceMonitor } from './utils/performanceMonitor';
 import { isGitLabCIFile, invalidateFileGlobsCache } from './utils/gitlabCiFileMatcher';
 
@@ -256,8 +279,8 @@ export function activate(context: vscode.ExtensionContext) {
         logger.info(`[Extension] Total source errors: ${errors.size}`, 'Extension');
 
         // Group components by source
-        const componentsBySource = new Map<string, any[]>();
-        components.forEach((comp: any) => {
+        const componentsBySource = new Map<string, CachedComponent[]>();
+        components.forEach(comp => {
           const key = comp.source;
           let bucket = componentsBySource.get(key);
           if (!bucket) {
@@ -268,9 +291,9 @@ export function activate(context: vscode.ExtensionContext) {
         });
 
         logger.info(`[Extension] Components grouped by source:`, 'Extension');
-        componentsBySource.forEach((comps: any[], source: string) => {
+        componentsBySource.forEach((comps, source) => {
           logger.info(`[Extension]   ${source}: ${comps.length} components`, 'Extension');
-          comps.forEach((comp: any) => {
+          comps.forEach(comp => {
             logger.debug(`[Extension]     - ${comp.name} (${comp.gitlabInstance}/${comp.sourcePath})`, 'Extension');
           });
         });
@@ -287,7 +310,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Register command to detach hover window as a dedicated panel
     logger.debug('[Extension] Registering detachHover command...', 'Extension');
     context.subscriptions.push(
-      vscode.commands.registerCommand('gitlab-component-helper.detachHover', async (component: any) => {
+      vscode.commands.registerCommand('gitlab-component-helper.detachHover', async (component: DetachableComponent) => {
         logger.info(`[Extension] Detaching hover for component: ${component?.name}`, 'Extension');
 
         if (!component) {
@@ -354,7 +377,7 @@ export function activate(context: vscode.ExtensionContext) {
                   true,
                   targetVersion
                 );
-                const fragment = catalogData?.fragments?.find((frag: any) => frag.name === resolvedName);
+                const fragment = catalogData?.fragments?.find((frag: GitLabYamlFragment) => frag.name === resolvedName);
                 if (fragment) {
                   activeComponent = {
                     ...component,
@@ -422,6 +445,10 @@ export function activate(context: vscode.ExtensionContext) {
 
                 // Update component version if specified
                 if (version && version !== activeComponent.version) {
+                  if (!activeComponent.sourcePath || !activeComponent.gitlabInstance) {
+                    vscode.window.showErrorMessage(`Cannot fetch version: component is missing source path or GitLab instance.`);
+                    return;
+                  }
                   const updatedComponent = await cacheManager.fetchSpecificVersion(
                     activeComponent.name,
                     activeComponent.sourcePath,
@@ -474,6 +501,9 @@ export function activate(context: vscode.ExtensionContext) {
               break;
             case 'fetchVersions':
               try {
+                if (!isCachedComponentShape(activeComponent)) {
+                  throw new Error('Component is missing required fields (source, sourcePath, gitlabInstance, version) for version lookup.');
+                }
                 const versions = await cacheManager.fetchComponentVersions(activeComponent);
                 panel.webview.postMessage({
                   command: 'versionsLoaded',
@@ -490,6 +520,10 @@ export function activate(context: vscode.ExtensionContext) {
             case 'versionChanged':
               try {
                 const { selectedVersion } = message;
+                if (!activeComponent.sourcePath || !activeComponent.gitlabInstance) {
+                  vscode.window.showErrorMessage(`Cannot change version: component is missing source path or GitLab instance.`);
+                  return;
+                }
                 const updatedComponent = await cacheManager.fetchSpecificVersion(
                   activeComponent.name,
                   activeComponent.sourcePath,

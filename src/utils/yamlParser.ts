@@ -1,11 +1,19 @@
 import * as yaml from 'js-yaml';
 import type * as vscode from 'vscode';
 
+/** Loose object shape returned by `js-yaml`. Callers narrow via property checks before reading fields. */
+export type YamlNode = Record<string, unknown>;
+
+/** Type-guard: a parsed YAML value is a non-null object (i.e. a mapping). Use to narrow `unknown` results. */
+export function isYamlNode(value: unknown): value is YamlNode {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 // Cache for parsed YAML documents to avoid re-parsing
-const parseCache = new Map<string, { content: string; parsed: any; timestamp: number }>();
+const parseCache = new Map<string, { content: string; parsed: unknown; timestamp: number }>();
 const CACHE_TTL = 5000; // 5 seconds TTL for parse cache
 
-export function parseYaml(text: string): any {
+export function parseYaml(text: string): unknown {
   try {
     // Generate a simple hash of the content for caching
     const contentHash = text.length + text.substring(0, 100) + text.substring(text.length - 100);
@@ -42,7 +50,7 @@ function cleanParseCache(currentTime: number): void {
   }
 }
 
-export function getYamlNodeAtPosition(document: vscode.TextDocument, _position: vscode.Position): any {
+export function getYamlNodeAtPosition(document: vscode.TextDocument, _position: vscode.Position): unknown {
   const text = document.getText();
   const parsed = parseYaml(text);
 
@@ -51,7 +59,7 @@ export function getYamlNodeAtPosition(document: vscode.TextDocument, _position: 
   return parsed;
 }
 
-export function findInputNode(document: vscode.TextDocument, componentNode: any, inputName: string): any {
+export function findInputNode(document: vscode.TextDocument, componentNode: YamlNode | null | undefined, inputName: string): { line: number; column: number } | null {
     if (!componentNode || !componentNode.inputs) {
         return null;
     }
@@ -61,6 +69,9 @@ export function findInputNode(document: vscode.TextDocument, componentNode: any,
 
     // More precise component line finding
     const componentUrl = componentNode.component;
+    if (typeof componentUrl !== 'string') {
+        return null;
+    }
     let componentLine = -1;
 
     // Find the line that contains the component URL with proper YAML structure

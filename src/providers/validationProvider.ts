@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { getComponentService } from '../services/component';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
-import { parseYaml } from '../utils/yamlParser';
+import { parseYaml, isYamlNode } from '../utils/yamlParser';
 import { Component, ComponentParameter } from '../types/git-component';
 import { Logger } from '../utils/logger';
 import { expandComponentUrl, containsGitLabVariables } from '../utils/gitlabVariables';
@@ -104,7 +104,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         const diagnosticKeys = new Set<string>(); // Track unique diagnostics to prevent duplicates
         const parsedYaml = parseYaml(text);
 
-        if (!parsedYaml || !parsedYaml.include) {
+        if (!isYamlNode(parsedYaml) || !parsedYaml.include) {
             this.diagnosticCollection.set(document.uri, diagnostics);
             return;
         }

@@ -1,5 +1,7 @@
 import { HtmlBuilder } from './helpers/htmlBuilder';
 import { StyleBuilder } from './helpers/styleBuilder';
+import type { Component } from '../providers/componentDetector';
+import type { ComponentParameter } from '../types/git-component';
 
 /**
  * Template class for generating HTML for the detached component view.
@@ -12,7 +14,7 @@ export class DetachedComponentTemplate {
    * @param existingInputs - Array of input parameter names already present in the file
    * @returns Complete HTML string ready for webview display
    */
-  static render(component: any, existingInputs: string[] = []): string {
+  static render(component: Component, existingInputs: string[] = []): string {
     return `
       <!DOCTYPE html>
       <html lang="en">
@@ -31,7 +33,7 @@ export class DetachedComponentTemplate {
   /**
    * Builds the HTML head section with title and styles.
    */
-  private static buildHead(component: any): string {
+  private static buildHead(component: Component): string {
     return `
       <head>
         <meta charset="UTF-8">
@@ -47,7 +49,7 @@ export class DetachedComponentTemplate {
   /**
    * Builds the header section with component name and metadata.
    */
-  private static buildHeader(component: any): string {
+  private static buildHeader(component: Component): string {
     const metadataItems: string[] = [];
 
     // Add source metadata
@@ -87,7 +89,7 @@ export class DetachedComponentTemplate {
   /**
    * Builds the description section.
    */
-  private static buildDescription(component: any): string {
+  private static buildDescription(component: Component): string {
     if (component.description) {
       return `
         <div class="description">
@@ -107,7 +109,7 @@ export class DetachedComponentTemplate {
   /**
    * Builds the parameters section with individual parameter cards.
    */
-  private static buildParameters(component: any, existingInputs: string[]): string {
+  private static buildParameters(component: Component, existingInputs: string[]): string {
     const parameters = component.parameters || [];
     const hasParameters = parameters.length > 0;
 
@@ -126,7 +128,7 @@ export class DetachedComponentTemplate {
 
     const parametersContent = hasParameters
       ? `<div class="parameters">
-          ${parameters.map((param: any) => this.buildParameter(param, existingInputs)).join('')}
+          ${parameters.map((param: ComponentParameter) => this.buildParameter(param, existingInputs)).join('')}
         </div>`
       : '<div class="no-content">No parameters documented for this component.</div>';
 
@@ -147,7 +149,7 @@ export class DetachedComponentTemplate {
   /**
    * Builds a single parameter card.
    */
-  private static buildParameter(param: any, existingInputs: string[]): string {
+  private static buildParameter(param: ComponentParameter, existingInputs: string[]): string {
     const isExisting = existingInputs.includes(param.name);
     const checkboxClass = isExisting ? 'parameter-checkbox existing' : 'parameter-checkbox';
     const checkboxLabel = isExisting ? 'Already Present' : 'Insert';
@@ -186,7 +188,7 @@ export class DetachedComponentTemplate {
   /**
    * Builds the insert options section with action buttons.
    */
-  private static buildInsertOptions(component: any, existingInputs: string[]): string {
+  private static buildInsertOptions(component: Component, existingInputs: string[]): string {
     const isEditMode = existingInputs.length > 0;
     const heading = isEditMode ? 'Edit Component' : 'Insert Component';
     const buttonText = isEditMode ? 'Update Component' : 'Insert Component';
