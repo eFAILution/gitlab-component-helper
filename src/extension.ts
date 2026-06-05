@@ -59,12 +59,10 @@ export function activate(context: vscode.ExtensionContext) {
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
     const componentSources = config.get('componentSources', []);
     const cacheTime = config.get('cacheTime', 3600);
-    const componentSource = config.get('componentSource', 'local');
 
     logger.debug(`[Extension] User settings loaded:`, 'Extension');
     logger.debug(`[Extension]   - Component sources: ${JSON.stringify(componentSources, null, 2)}`, 'Extension');
     logger.debug(`[Extension]   - Cache time: ${cacheTime} seconds`, 'Extension');
-    logger.debug(`[Extension]   - Component source type: ${componentSource}`, 'Extension');
 
     // Initialize component cache manager (this will start loading components)
     logger.debug(`[Extension] About to import/initialize component cache manager...`, 'Extension');
