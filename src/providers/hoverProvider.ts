@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { Component, ComponentParameter, detectIncludeComponent } from './componentDetector';
+import { detectIncludeComponent } from './componentDetector';
 import { Logger } from '../utils/logger';
 import { getVariableInfo } from '../utils/gitlabVariables';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
@@ -187,46 +187,5 @@ export class HoverProvider implements vscode.HoverProvider {
       this.logger.error(`[HoverProvider] Error in getComponentInputHover: ${error}`, 'HoverProvider');
       return null;
     }
-  }
-
-  private createComponentHover(component: Component): vscode.Hover {
-    this.logger.debug(`Creating hover for component: ${component.name}`, 'HoverProvider');
-    const markdown = new vscode.MarkdownString();
-
-    markdown.appendMarkdown(`## ${component.name}\n\n`);
-
-    // Enhanced description with fallback handling
-    const description = component.description || 'Component/Project does not have a description';
-
-    markdown.appendMarkdown(`${description}\n\n`);
-
-    markdown.appendMarkdown('### Parameters\n\n');
-
-    for (const param of component.parameters) {
-      const requiredLabel = param.required ? '(required)' : '(optional)';
-      const defaultValue = param.default !== undefined ? `Default: \`${param.default}\`` : '';
-
-      markdown.appendMarkdown(`* **${param.name}** ${requiredLabel} - ${param.description}. Type: ${param.type}. ${defaultValue}\n`);
-    }
-
-    markdown.isTrusted = true;
-    markdown.supportThemeIcons = true;
-    return new vscode.Hover(markdown);
-  }
-
-  private createParameterHover(param: ComponentParameter): vscode.Hover {
-    this.logger.debug(`Creating hover for parameter: ${param.name}`, 'HoverProvider');
-    const markdown = new vscode.MarkdownString();
-
-    const requiredLabel = param.required ? '(required)' : '(optional)';
-    markdown.appendMarkdown(`## ${param.name} ${requiredLabel}\n\n`);
-    markdown.appendMarkdown(`${param.description}\n\n`);
-    markdown.appendMarkdown(`**Type:** ${param.type}\n`);
-
-    if (param.default !== undefined) {
-      markdown.appendMarkdown(`**Default:** \`${param.default}\``);
-    }
-
-    return new vscode.Hover(markdown);
   }
 }

@@ -108,11 +108,3 @@ export function getRequestDeduplicator(): RequestDeduplicator {
   }
   return instance;
 }
-
-/**
- * Reset the singleton instance.
- * Primarily used for testing purposes.
- */
-export function resetRequestDeduplicator(): void {
-  instance = null;
-}
