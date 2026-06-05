@@ -79,6 +79,14 @@ export interface ParsedCatalogComponent {
   templatePath: string;
   /** Optional external documentation URL declared in the template's `spec.documentation_url`. */
   documentation_url?: string;
+  /** Short one-line summary from the template's spec header (when present). */
+  summary?: string;
+  /** Usage instructions from the template's spec header (when present). */
+  usage?: string;
+  /** Additional notes from the template's spec header (when present). */
+  notes?: string[];
+  /** Raw YAML source of the template (when retained by the parser). */
+  rawYaml?: string;
 }
 
 /**

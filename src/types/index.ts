@@ -21,3 +21,6 @@ export * from './cache';
 
 // API types
 export * from './api';
+
+// VS Code Git extension API types
+export * from './vscode-git';

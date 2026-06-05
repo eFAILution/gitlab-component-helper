@@ -186,7 +186,7 @@ export class Logger {
   }
 
   // Structured logging for performance metrics
-  logPerformance(operation: string, duration: number, details?: Record<string, any>): void {
+  logPerformance(operation: string, duration: number, details?: Record<string, unknown>): void {
     if (this.shouldLog(LogLevel.INFO)) {
       const detailsStr = details ? ` | ${JSON.stringify(details)}` : '';
       this.info(`Performance: ${operation} completed in ${duration}ms${detailsStr}`, 'Performance');

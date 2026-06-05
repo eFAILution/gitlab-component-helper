@@ -3,6 +3,8 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { Component, ComponentParameter } from './componentDetector';
 import { Logger } from '../utils/logger';
+import { isYamlNode } from '../utils/yamlParser';
+import type { ParameterDefault } from '../types/git-component';
 
 // Pure parser helpers live in their own module so the unit suite can exercise them under plain Node. Re-exported
 // here so existing callers (e.g. validationProvider) keep their import path.
@@ -105,20 +107,35 @@ export function resolveLocalIncludeUri(localPath: string, document?: vscode.Text
  * @param specInputs  The raw `spec.inputs` object from a parsed YAML document; may be `undefined`, `null`, or any value.
  * @returns           A normalised array of input definitions, or `[]` when `specInputs` isn't an object.
  */
-function parseInputs(specInputs: any): ComponentParameter[] {
-  if (!specInputs || typeof specInputs !== 'object') {
+function parseInputs(specInputs: unknown): ComponentParameter[] {
+  if (!isYamlNode(specInputs)) {
     return [];
   }
   return Object.entries(specInputs).map(([name, raw]) => {
-    const definition = (raw && typeof raw === 'object' ? raw : {}) as Record<string, any>;
+    const definition: Record<string, unknown> = isYamlNode(raw) ? raw : {};
+    const rawDefault = definition.default;
     return {
       name,
       description: typeof definition.description === 'string' ? definition.description : '',
-      required: definition.default === undefined,
+      required: rawDefault === undefined,
       type: typeof definition.type === 'string' ? definition.type : 'string',
-      default: definition.default,
+      default: isParameterDefault(rawDefault) ? rawDefault : undefined,
     };
   });
+}
+
+/** Narrow an unknown value to {@link ParameterDefault} (the union accepted by `inputs.*.default`). */
+function isParameterDefault(value: unknown): value is ParameterDefault {
+  if (value === null) return true;
+  const t = typeof value;
+  if (t === 'string' || t === 'number' || t === 'boolean') return true;
+  if (Array.isArray(value)) {
+    return value.every(v => {
+      const vt = typeof v;
+      return vt === 'string' || vt === 'number' || vt === 'boolean';
+    });
+  }
+  return false;
 }
 
 /**

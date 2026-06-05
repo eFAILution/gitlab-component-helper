@@ -80,6 +80,16 @@ export interface CachedComponent {
   url: string;
   availableVersions?: string[];
   templatePath?: string;
+  /** Rendered README content, populated when the component fetch succeeded against the project's README. */
+  readme?: string;
+  /** Catalog `spec.summary` — short one-line component summary. */
+  summary?: string;
+  /** Catalog `spec.usage` — usage instructions. */
+  usage?: string;
+  /** Catalog `spec.notes` — additional notes from the component's template header. */
+  notes?: string[];
+  /** Raw YAML source of the template, populated when the fetch retrieved the template file. */
+  rawYaml?: string;
 }
 
 /**

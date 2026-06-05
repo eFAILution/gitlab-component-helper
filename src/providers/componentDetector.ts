@@ -6,6 +6,11 @@ import { containsGitLabVariables, detectGitLabVariables, expandComponentUrl } fr
 import { Logger } from '../utils/logger';
 import { spawn } from 'child_process';
 import { detectLocalIncludeComponent } from './localComponentResolver';
+import type { ComponentParameter } from '../types/git-component';
+import type { GitApi, GitRepository } from '../types/vscode-git';
+
+// Re-export so existing consumers (e.g. localComponentResolver, validationProvider) keep their import path.
+export type { ComponentParameter };
 
 const logger = Logger.getInstance();
 
@@ -34,13 +39,6 @@ export interface Component {
   };
 }
 
-export interface ComponentParameter {
-  name: string;
-  description: string;
-  required: boolean;
-  type: string;
-  default?: any;
-}
 
 /**
  * Detects if the current line includes a component
@@ -262,8 +260,8 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
           originalUrl: originalUrl,
           gitlabInstance: exactMatch.gitlabInstance,
           sourcePath: exactMatch.sourcePath,
-          templatePath: (exactMatch as any).templatePath,
-          readme: (exactMatch as any).readme || '', // Include README from cache
+          templatePath: exactMatch.templatePath,
+          readme: exactMatch.readme || '', // Include README from cache
           context: {
             gitlabInstance: exactMatch.gitlabInstance,
             path: exactMatch.sourcePath
@@ -287,8 +285,8 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
     if (cachedComponent) {
       logger.debug(`[ComponentDetector] Found matching component in cache: ${cachedComponent.name}`, 'ComponentDetector');
       logger.debug(`[ComponentDetector] Cached version: ${cachedComponent.version}, Requested version: ${requestedVersion || 'unspecified'}`, 'ComponentDetector');
-      logger.debug(`[ComponentDetector] Cached component has README: ${!!(cachedComponent as any).readme}`, 'ComponentDetector');
-      logger.debug(`[ComponentDetector] Cached README length: ${(cachedComponent as any).readme ? (cachedComponent as any).readme.length : 0}`, 'ComponentDetector');
+      logger.debug(`[ComponentDetector] Cached component has README: ${!!cachedComponent.readme}`, 'ComponentDetector');
+      logger.debug(`[ComponentDetector] Cached README length: ${cachedComponent.readme ? cachedComponent.readme.length : 0}`, 'ComponentDetector');
 
       // If the requested version matches the cached version, return cached data
       if (!requestedVersion || requestedVersion === cachedComponent.version) {
@@ -303,8 +301,8 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
           originalUrl: originalUrl,
           gitlabInstance: cachedComponent.gitlabInstance,
           sourcePath: cachedComponent.sourcePath,
-          templatePath: (cachedComponent as any).templatePath,
-          readme: (cachedComponent as any).readme || '', // Include README from cache
+          templatePath: cachedComponent.templatePath,
+          readme: cachedComponent.readme || '', // Include README from cache
           context: {
             gitlabInstance: cachedComponent.gitlabInstance,
             path: cachedComponent.sourcePath
@@ -521,7 +519,7 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
     const foundComponent = catalogData.components.find((comp: GitLabCatalogComponent) => comp.name === componentName);
     if (!foundComponent) {
       // Check fragments if this is a YAML fragment (no spec)
-      const foundFragment = catalogData.fragments?.find((fragment: any) => fragment.name === componentName);
+      const foundFragment = catalogData.fragments?.find(fragment => fragment.name === componentName);
       if (foundFragment) {
         logger.debug(`[ComponentDetector] Found fragment ${componentName} in catalog`, 'ComponentDetector');
 
@@ -561,7 +559,7 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
             gitlabInstance: gitlabInstance,
             version: version,
             url: componentUrl
-          } as any);
+          });
         } catch (cacheError) {
           logger.debug(`[ComponentDetector] Could not add fragment to cache: ${cacheError}`, 'ComponentDetector');
         }
@@ -616,10 +614,10 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
     const dynamicComponent: Component = {
       name: foundComponent.name,
       description: componentDescription,
-      summary: (foundComponent as any).summary,
-      usage: (foundComponent as any).usage,
-      notes: (foundComponent as any).notes,
-      rawYaml: (foundComponent as any).rawYaml,
+      summary: foundComponent.summary,
+      usage: foundComponent.usage,
+      notes: foundComponent.notes,
+      rawYaml: foundComponent.rawYaml,
       parameters: (foundComponent.variables || []).map((v: GitLabCatalogVariable) => ({
         name: v.name,
         description: v.description || `Parameter: ${v.name}`,
@@ -648,10 +646,10 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
       const cacheComponent = {
         name: foundComponent.name,
         description: componentDescription, // Use the enhanced description
-        summary: (foundComponent as any).summary,
-        usage: (foundComponent as any).usage,
-        notes: (foundComponent as any).notes,
-        rawYaml: (foundComponent as any).rawYaml,
+        summary: foundComponent.summary,
+        usage: foundComponent.usage,
+        notes: foundComponent.notes,
+        rawYaml: foundComponent.rawYaml,
         parameters: (foundComponent.variables || []).map((v: GitLabCatalogVariable) => ({
           name: v.name,
           description: v.description || `Parameter: ${v.name}`,
@@ -699,9 +697,9 @@ export async function getGitRepositoryContext(forUri?: vscode.Uri): Promise<{
     // Use VS Code's Git extension API if available
     const gitExtension = vscode.extensions.getExtension('vscode.git');
     if (gitExtension) {
-      const git = gitExtension.exports.getAPI(1);
+      const git: GitApi | undefined = gitExtension.exports.getAPI(1);
       if (git) {
-        let repo: any = null;
+        let repo: GitRepository | null = null;
         if (forUri) {
           // File-relative lookup. If the file isn't in any tracked repo,
           // do NOT fall through to workspace[0] — that would re-introduce
@@ -713,14 +711,14 @@ export async function getGitRepositoryContext(forUri?: vscode.Uri): Promise<{
             return {};
           }
           const workspacePath = workspaceFolders[0].uri.fsPath;
-          repo = git.repositories.find((r: any) =>
+          repo = git.repositories.find(r =>
             workspacePath.startsWith(r.rootUri.fsPath)
           ) || git.repositories[0];
         }
         if (repo) {
           // Get remote URLs
           const remotes = repo.state.remotes;
-          const origin = remotes.find((r: any) => r.name === 'origin') || remotes[0];
+          const origin = remotes.find(r => r.name === 'origin') || remotes[0];
 
           if (origin && origin.fetchUrl) {
             const gitlabInfo = parseGitLabRemoteUrl(origin.fetchUrl);
@@ -810,16 +808,16 @@ async function getRawGitRepositoryContext(workspacePath: string): Promise<{
     // Use VS Code's Git extension API if available
     const gitExtension = vscode.extensions.getExtension('vscode.git');
     if (gitExtension) {
-      const git = gitExtension.exports.getAPI(1);
+      const git: GitApi | undefined = gitExtension.exports.getAPI(1);
       if (git && git.repositories.length > 0) {
-        const repo = git.repositories.find((r: any) =>
+        const repo = git.repositories.find(r =>
           workspacePath.startsWith(r.rootUri.fsPath)
         ) || git.repositories[0];
 
         if (repo) {
           // Get remote URLs
           const remotes = repo.state.remotes;
-          const origin = remotes.find((r: any) => r.name === 'origin') || remotes[0];
+          const origin = remotes.find(r => r.name === 'origin') || remotes[0];
 
           if (origin && origin.fetchUrl) {
             const repoInfo = parseAnyRemoteUrl(origin.fetchUrl);
@@ -893,12 +891,12 @@ async function detectNonGitLabRepository(workspaceFolder: vscode.WorkspaceFolder
         // First try VS Code's Git extension API
         const gitExtension = vscode.extensions.getExtension('vscode.git');
         if (gitExtension) {
-            const git = gitExtension.exports.getAPI(1);
+            const git: GitApi | undefined = gitExtension.exports.getAPI(1);
             if (git && git.repositories.length > 0) {
                 logger.debug(`[ComponentDetector] Found ${git.repositories.length} Git repositories via VS Code Git API`, 'ComponentDetector');
 
                 // Find a repository that contains or is contained by the workspace folder
-                let repo = git.repositories.find((r: any) =>
+                let repo = git.repositories.find(r =>
                     workspaceFolder.uri.fsPath.startsWith(r.rootUri.fsPath) ||
                     r.rootUri.fsPath.startsWith(workspaceFolder.uri.fsPath)
                 );
@@ -912,7 +910,7 @@ async function detectNonGitLabRepository(workspaceFolder: vscode.WorkspaceFolder
 
                 // Get remote URLs from VS Code Git API
                 const remotes = repo.state.remotes;
-                const origin = remotes.find((r: any) => r.name === 'origin') || remotes[0];
+                const origin = remotes.find(r => r.name === 'origin') || remotes[0];
 
                 if (origin && origin.fetchUrl) {
                     logger.debug(`[ComponentDetector] Found origin remote via VS Code Git API: ${origin.fetchUrl}`, 'ComponentDetector');
