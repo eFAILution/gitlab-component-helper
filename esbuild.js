@@ -23,33 +23,58 @@ const esbuildProblemMatcherPlugin = {
   },
 };
 
+/**
+ * Build config for the Node-side extension bundle.
+ */
+const extensionConfig = {
+  entryPoints: ['src/extension.ts'],
+  bundle: true,
+  format: 'cjs',
+  minify: production,
+  sourcemap: !production,
+  sourcesContent: false,
+  platform: 'node',
+  outfile: 'out/extension.js',
+  external: ['vscode'],
+  logLevel: 'silent',
+  // Additional optimizations
+  treeShaking: true,
+  metafile: production,
+  // Drop console logs in production for smaller bundle
+  drop: production ? ['console', 'debugger'] : [],
+  plugins: [
+    /* add to the end of plugins array */
+    esbuildProblemMatcherPlugin,
+  ],
+};
+
+/**
+ * Build config for webview assets (styles, and client scripts as they are
+ * added). These run in the browser-like webview context, not Node, so they
+ * build separately and emit under out/webview for asWebviewUri loading.
+ */
+const webviewConfig = {
+  entryPoints: ['src/webview/styles/loading.css'],
+  bundle: true,
+  minify: production,
+  sourcemap: !production,
+  platform: 'browser',
+  outdir: 'out/webview',
+  // Preserve the src/webview/* folder structure (styles/, client/) under the
+  // output dir so asset URIs resolve to the same sub-path as the source.
+  outbase: 'src/webview',
+  logLevel: 'silent',
+  plugins: [esbuildProblemMatcherPlugin],
+};
+
 async function main() {
-  const ctx = await esbuild.context({
-    entryPoints: ['src/extension.ts'],
-    bundle: true,
-    format: 'cjs',
-    minify: production,
-    sourcemap: !production,
-    sourcesContent: false,
-    platform: 'node',
-    outfile: 'out/extension.js',
-    external: ['vscode'],
-    logLevel: 'silent',
-    // Additional optimizations
-    treeShaking: true,
-    metafile: production,
-    // Drop console logs in production for smaller bundle
-    drop: production ? ['console', 'debugger'] : [],
-    plugins: [
-      /* add to the end of plugins array */
-      esbuildProblemMatcherPlugin,
-    ],
-  });
+  const ctx = await esbuild.context(extensionConfig);
+  const webviewCtx = await esbuild.context(webviewConfig);
   if (watch) {
-    await ctx.watch();
+    await Promise.all([ctx.watch(), webviewCtx.watch()]);
   } else {
-    await ctx.rebuild();
-    await ctx.dispose();
+    await Promise.all([ctx.rebuild(), webviewCtx.rebuild()]);
+    await Promise.all([ctx.dispose(), webviewCtx.dispose()]);
   }
 }
 
