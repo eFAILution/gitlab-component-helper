@@ -186,44 +186,6 @@ export function containsGitLabVariables(text: string): boolean {
 }
 
 /**
- * Expands GitLab variables in a component URL using context from the current workspace/project
- * This is a best-effort expansion for development purposes
- */
-export function expandGitLabVariables(text: string, context?: {
-  gitlabInstance?: string;
-  projectPath?: string;
-  serverUrl?: string;
-}): string {
-  let expanded = text;
-
-  if (context) {
-    // Expand common variables based on context
-    if (context.gitlabInstance) {
-      expanded = expanded.replace(/\$CI_SERVER_FQDN/g, context.gitlabInstance);
-      expanded = expanded.replace(/\$CI_SERVER_HOST/g, context.gitlabInstance);
-      expanded = expanded.replace(/\$CI_SERVER_URL/g, context.serverUrl || `https://${context.gitlabInstance}`);
-    }
-
-    if (context.projectPath) {
-      expanded = expanded.replace(/\$CI_PROJECT_PATH/g, context.projectPath);
-
-      // Extract namespace and project name
-      const parts = context.projectPath.split('/');
-      if (parts.length >= 2) {
-        const namespace = parts.slice(0, -1).join('/');
-        const projectName = parts[parts.length - 1];
-
-        expanded = expanded.replace(/\$CI_PROJECT_NAMESPACE/g, namespace);
-        expanded = expanded.replace(/\$CI_PROJECT_NAME/g, projectName);
-        expanded = expanded.replace(/\$CI_PROJECT_ROOT_NAMESPACE/g, parts[0]);
-      }
-    }
-  }
-
-  return expanded;
-}
-
-/**
  * Expands GitLab variables specifically in component URLs, ensuring proper URL formatting
  */
 export function expandComponentUrl(componentUrl: string, context?: {
@@ -280,41 +242,6 @@ export function expandComponentUrl(componentUrl: string, context?: {
   }
 
   return expanded;
-}
-
-/**
- * Validates that a component URL with variables can be properly resolved
- */
-export function validateComponentUrlWithVariables(url: string): {
-  isValid: boolean;
-  unresolvedVariables: string[];
-  suggestions: string[];
-} {
-  const variables = detectGitLabVariables(url);
-  const unresolvedVariables: string[] = [];
-  const suggestions: string[] = [];
-
-  for (const variable of variables) {
-    const varInfo = GITLAB_PREDEFINED_VARIABLES.find(v => v.name === variable);
-    if (varInfo) {
-      // Check if this is a variable that can be reasonably resolved in development
-      if (['CI_SERVER_FQDN', 'CI_SERVER_HOST', 'CI_SERVER_URL', 'CI_PROJECT_PATH', 'CI_PROJECT_NAMESPACE', 'CI_PROJECT_NAME'].includes(variable)) {
-        suggestions.push(`Consider setting ${variable} context or using a literal value for development`);
-      } else {
-        unresolvedVariables.push(variable);
-        suggestions.push(`${variable}: ${varInfo.description} (example: ${varInfo.example})`);
-      }
-    } else {
-      unresolvedVariables.push(variable);
-      suggestions.push(`Unknown variable: ${variable}`);
-    }
-  }
-
-  return {
-    isValid: unresolvedVariables.length === 0,
-    unresolvedVariables,
-    suggestions
-  };
 }
 
 /**
