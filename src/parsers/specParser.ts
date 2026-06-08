@@ -122,7 +122,7 @@ export class GitLabSpecParser {
     const inputLines = inputsSection.split('\n')
       .filter(line => line.trim() && !line.trim().startsWith('#'));
 
-    let currentInput: any = null;
+    let currentInput: ComponentVariable | null = null;
 
     for (const line of inputLines) {
       const trimmedLine = line.trim();
