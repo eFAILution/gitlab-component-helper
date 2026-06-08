@@ -50,11 +50,9 @@ workflows:
     command: npm test
     options:
       all_tests: npm run test:all
-      unit_tests: npm run test:unit
-      integration_tests: npm run test:integration
-      performance_tests: npm run test:performance
+      extension_host_tests: npm run test:extension-host
       watch_mode: npm test -- --watch
-      specific_file: npm test -- tests/unit/{filename}.test.js
+      specific_file: npm test -- tests/unit/{filename}.test.ts
   debug_extension:
     description: Debug the extension in VS Code
     steps:

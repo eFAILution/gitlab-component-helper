@@ -14,9 +14,8 @@ import { GitLabSpecParser, ComponentVariable } from '../../parsers/specParser';
 import { TokenManager } from './tokenManager';
 import { UrlParser } from './urlParser';
 import {
-  deriveComponentName,
-  filterSubdirectories,
-  filterYamlBlobs,
+  buildCatalogComponents,
+  fetchAllTemplateFiles,
 } from './componentFetcherTemplates';
 
 /**
@@ -468,7 +467,7 @@ export class ComponentFetcher {
       this.logger.debug(`Found project: ${projectInfo.name} (ID: ${projectInfo.id}), using ref: ${ref}`);
 
       // Re-fetch templates with correct ref and include one subdirectory level.
-      const yamlFiles = await this.fetchAllTemplateFiles(apiBaseUrl, projectPath, ref, fetchOptions);
+      const yamlFiles = await fetchAllTemplateFiles(this.httpClient, apiBaseUrl, projectPath, ref, fetchOptions);
       this.logger.debug(`Found ${yamlFiles.length} YAML template files`);
 
       if (yamlFiles.length === 0) {
@@ -481,62 +480,15 @@ export class ComponentFetcher {
       // Process components in batches
       const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
       const batchSize = config.get<number>('batchSize', 5);
-      const componentResults = await this.httpClient.processBatch(
+      const components = await buildCatalogComponents(
+        this.httpClient,
+        apiBaseUrl,
+        projectInfo.id,
         yamlFiles,
-        async (file: GitLabTreeItem) => {
-          const name = deriveComponentName(file.path);
-          if (name === null) {
-            this.logger.debug(`[ComponentFetcher] Skipping ${file.path}: not a recognised component layout`);
-            return null;
-          }
-          const relativePath = file.path.slice('templates/'.length);
-          this.logger.debug(`Processing component: ${name} (${relativePath})`);
-
-          // Fetch template content
-          const templateResult = await this.fetchTemplateContent(
-            apiBaseUrl,
-            projectInfo.id,
-            relativePath,
-            ref,
-            fetchOptions
-          );
-
-          let description: string;
-          let variables: ComponentVariable[];
-
-          // Process template content - skip files that don't have a spec section
-          if (templateResult) {
-            const { extractedVariables, extractedDescription, isValidComponent } = templateResult;
-
-            // Skip non-component templates
-            if (!isValidComponent) {
-              this.logger.debug(
-                `[ComponentFetcher] Skipping ${name}: not a valid GitLab CI/CD component (no spec section)`
-              );
-              return null;
-            }
-
-            variables = extractedVariables;
-            description = extractedDescription || `${name} component`;
-          } else {
-            // If we couldn't fetch the template, skip it
-            this.logger.debug(`[ComponentFetcher] Skipping ${name}: could not fetch template content`);
-            return null;
-          }
-
-          return {
-            name,
-            description,
-            variables,
-            latest_version: ref,
-            templatePath: file.path
-          };
-        },
-        batchSize
+        ref,
+        batchSize,
+        fetchOptions
       );
-
-      // Filter out null results (non-component templates)
-      const components = componentResults.filter((c): c is NonNullable<typeof c> => c !== null);
       this.logger.debug(
         `[ComponentFetcher] ${components.length} of ${yamlFiles.length} templates are valid components`
       );
@@ -555,66 +507,6 @@ export class ComponentFetcher {
     } catch (error) {
       this.logger.error(`Error fetching catalog data for ${projectPath}: ${error}`);
       throw error;
-    }
-  }
-
-  /**
-   * Fetch YAML template files from templates/ including one nested directory level.
-   */
-  private async fetchAllTemplateFiles(
-    apiBaseUrl: string,
-    projectPath: string,
-    ref: string,
-    fetchOptions?: { headers?: Record<string, string> }
-  ): Promise<GitLabTreeItem[]> {
-    const treeUrl = `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=templates&ref=${ref}`;
-    const topLevel = await this.httpClient.fetchJson<GitLabTreeItem[]>(treeUrl, fetchOptions).catch(() => [] as GitLabTreeItem[]);
-
-    const yamlFiles: GitLabTreeItem[] = filterYamlBlobs(topLevel);
-
-    const subdirs = filterSubdirectories(topLevel);
-    for (const subdir of subdirs) {
-      const subdirUrl = `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}/repository/tree?path=${encodeURIComponent('templates/' + subdir.name)}&ref=${ref}`;
-      const subdirContents = await this.httpClient.fetchJson<GitLabTreeItem[]>(subdirUrl, fetchOptions).catch(() => [] as GitLabTreeItem[]);
-      yamlFiles.push(...filterYamlBlobs(subdirContents));
-    }
-
-    return yamlFiles;
-  }
-
-  /**
-   * Helper method for parallel template content fetching
-   */
-  private async fetchTemplateContent(
-    apiBaseUrl: string,
-    projectId: string | number,
-    relativePath: string,
-    ref: string,
-    fetchOptions?: { headers?: Record<string, string> }
-  ): Promise<{
-    content: string;
-    extractedVariables: ComponentVariable[];
-    extractedDescription?: string;
-    isValidComponent: boolean;
-  } | null> {
-    try {
-      const contentUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(
-        'templates/' + relativePath
-      )}/raw?ref=${ref}`;
-      const content = await this.httpClient.fetchText(contentUrl, fetchOptions);
-
-      // Use unified parser to extract spec information
-      const parsedSpec = GitLabSpecParser.parse(content, relativePath);
-
-      return {
-        content,
-        extractedVariables: parsedSpec.variables,
-        extractedDescription: parsedSpec.description,
-        isValidComponent: parsedSpec.isValidComponent
-      };
-    } catch (error) {
-      this.logger.debug(`Could not fetch template content: ${error}`);
-      return null;
     }
   }
 

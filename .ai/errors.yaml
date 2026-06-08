@@ -122,8 +122,8 @@ errors:
       solution:
         steps:
         - Ensure @vscode/test-electron is installed
-        - Check tests/run-tests.js configuration
-        - 'Run: npm run test:unit (faster)'
+        - Check .mocharc.cjs configuration
+        - 'Run: npm test (Mocha unit suite, faster)'
     - cause: Mock data out of date
       solution:
         location: tests/fixtures/mock-data.json
@@ -140,8 +140,8 @@ errors:
     solutions:
     - steps:
       - Ensure @vscode/test-electron is installed
-      - Check tests/run-tests.js configuration
-      - 'Run: npm run test:unit (faster)'
+      - Check .mocharc.cjs configuration
+      - 'Run: npm test (Mocha unit suite, faster)'
     - location: tests/fixtures/mock-data.json
       action: Update mock data to match current API responses
     - config: Increase timeout in test file

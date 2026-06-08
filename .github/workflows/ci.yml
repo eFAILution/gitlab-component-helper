@@ -32,13 +32,10 @@ jobs:
       - name: Run compile
         run: node esbuild.js
 
-      - name: Run tests
-        run: npm run test
-
       - name: Run Mocha unit tests
         # Writes junit.xml via Mocha's built-in xunit reporter (configured in .mocharc.cjs).
         # The test-reporter step below parses that file for annotations + check-run summary.
-        run: npm run test:mocha
+        run: npm test
 
       - name: Publish Mocha test report
         if: always()

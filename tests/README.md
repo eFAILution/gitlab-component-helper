@@ -2,28 +2,24 @@
 
 Two layers, answering two different questions.
 
-## `tests/unit/` and `tests/integration/` — characterization tests
+## `tests/unit/` — fast unit tests
 
-Plain Node scripts that spawn under `tests/run-tests.js`. They inline the
-algorithms they assert on (URL parsing shape, spec parsing shape, YAML
-template detection, hover text composition) rather than importing them
-from `src/`. That's deliberate: `src/**/*.ts` transitively imports
-`vscode` via `Logger`, so importing real source from plain Node would
-require a full `vscode` mock layer for every test — more maintenance
-than they're worth.
+Mocha tests (`.mocharc.cjs`, TDD `suite`/`test`, `node:assert/strict`) that
+import the real `src/` code they assert on. `tsx` loads the TypeScript
+sources directly, and modules that touch `vscode` resolve it lazily (via
+`Logger`'s `createRequire`) so they import cleanly under plain Node. Where
+a behaviour lived inside a `vscode`-coupled class, the pure part is
+extracted into an importable helper and tested directly — e.g. the
+catalog-fetch pipeline lives in `componentFetcherTemplates.ts`
+(`fetchAllTemplateFiles` / `buildCatalogComponents`) and is covered by
+`catalogPipeline.test.ts` with a duck-typed HTTP client.
 
-Treat them as **documentation of intent**: if the algorithm changes,
-these tests won't break, but the inline expectation is a durable record
-of the behaviour we decided on. They are fast (<1s total), run in every
-pre-push and CI build, and exist mainly so trivial regressions (a regex
-typo in a copy-pasted helper) get noticed quickly.
+They are fast (<1s total) and run in every pre-push and CI build.
 
 Run locally:
 
 ```sh
-npm test                # all characterization tests
-npm run test:unit       # unit/ only
-npm run test:integration # integration/ only
+npm test  # the full Mocha unit suite
 ```
 
 ## `tests/extension-host/` — real-code tests
@@ -43,20 +39,7 @@ npm run test:extension-host
 
 On Linux CI this runs under `xvfb-run`.
 
-## Runner behaviour (`run-tests.js`)
-
-Fails on any of:
-
-- non-zero exit from the child
-- `Cannot find module ...` in output (catches silently-swallowed require errors)
-- `UnhandledPromiseRejectionWarning` / `Unhandled rejection:`
-- an explicit `❌ FAIL` / `❌ ERROR` / `FAIL:` marker on a line
-
-Before this change, tests that `try/catch`'d a require failure and
-returned normally were reported ✅. That's how two integration tests
-passed green for months while never actually running.
-
 ## Fixtures
 
-`tests/fixtures/` — sample `.gitlab-ci.yml` and mock component data.
-Shared across both layers.
+`tests/fixtures/` — sample `.gitlab-ci.yml` and mock component data,
+used by the extension-host tests.
