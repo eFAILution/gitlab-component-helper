@@ -176,6 +176,24 @@ suite('catalog pipeline — flat template layout', () => {
     assert.strictEqual(deploy.description, 'Deploy component');
     assert.strictEqual(deploy.templatePath, 'templates/deploy.yml');
   });
+
+  test('a template that throws on parse is dropped, not the whole catalog', async () => {
+    const http = new MockHttpClient({
+      [treeUrl('templates')]: [makeTemplateItem('deploy.yml'), makeTemplateItem('broken.yml')],
+      [rawUrl('templates/deploy.yml')]: TEMPLATE_DEPLOY,
+      // Empty body — GitLabSpecParser.parse throws on this. The bad template must be
+      // skipped (return null), not abort the entire catalog fetch.
+      [rawUrl('templates/broken.yml')]: '',
+    });
+
+    const components = await runPipeline(http);
+
+    assert.deepStrictEqual(
+      components.map((c) => c.name),
+      ['deploy'],
+      'valid component should survive a sibling template that throws on parse',
+    );
+  });
 });
 
 suite('catalog pipeline — subdirectory layout (canonical template.yml)', () => {

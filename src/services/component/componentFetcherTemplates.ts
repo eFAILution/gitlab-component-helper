@@ -164,25 +164,23 @@ export async function buildCatalogComponents(
 
       const relativePath = file.path.slice('templates/'.length);
 
-      let content: string;
       try {
         const contentUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent('templates/' + relativePath)}/raw?ref=${ref}`;
-        content = await http.fetchText(contentUrl, fetchOptions);
+        const content = await http.fetchText(contentUrl, fetchOptions);
+        const parsedSpec = GitLabSpecParser.parse(content, relativePath);
+        if (!parsedSpec.isValidComponent) return null;
+
+        return {
+          name,
+          description: parsedSpec.description || `${name} component`,
+          variables: parsedSpec.variables,
+          latest_version: ref,
+          templatePath: file.path,
+        };
       } catch {
-        // Couldn't fetch the template — drop it.
+        // Couldn't fetch or parse the template — drop just this one (don't abort the whole catalog).
         return null;
       }
-
-      const parsedSpec = GitLabSpecParser.parse(content, relativePath);
-      if (!parsedSpec.isValidComponent) return null;
-
-      return {
-        name,
-        description: parsedSpec.description || `${name} component`,
-        variables: parsedSpec.variables,
-        latest_version: ref,
-        templatePath: file.path,
-      };
     },
     batchSize,
   );
