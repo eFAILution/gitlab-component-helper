@@ -50,42 +50,12 @@
     "configuration": {
       "title": "GitLab Component Helper",
       "properties": {
-        "gitlabComponentHelper.componentSource": {
-          "type": "string",
-          "enum": [
-            "local",
-            "gitlab",
-            "url"
-          ],
-          "default": "local",
-          "description": "Source for component definitions"
-        },
-        "gitlabComponentHelper.gitlabUrl": {
-          "type": "string",
-          "default": "https://gitlab.com",
-          "description": "GitLab instance URL"
-        },
-        "gitlabComponentHelper.gitlabProjectId": {
-          "type": "string",
-          "default": "",
-          "description": "GitLab project ID containing component definitions"
-        },
         "gitlabComponentHelper.gitlabToken": {
           "type": "string",
           "default": "",
           "description": "GitLab API access token (DEPRECATED - stored in plain text). Use the 'GitLab CI: Add Component Project/Group' command instead, which stores tokens encrypted via VS Code SecretStorage.",
           "deprecationMessage": "Tokens stored here live in plain text in settings.json. Run the 'GitLab CI: Add Component Project/Group' command to migrate to encrypted SecretStorage, then clear this field.",
           "markdownDescription": "**Deprecated:** Tokens stored here live in plain text in `settings.json`. Run the **GitLab CI: Add Component Project/Group** command instead - it stores tokens encrypted via VS Code SecretStorage. Once migrated, clear this field."
-        },
-        "gitlabComponentHelper.gitlabComponentsFilePath": {
-          "type": "string",
-          "default": "components.json",
-          "description": "Path to components JSON file in GitLab repository"
-        },
-        "gitlabComponentHelper.componentsUrl": {
-          "type": "string",
-          "default": "",
-          "description": "URL to a JSON file containing component definitions"
         },
         "gitlabComponentHelper.cacheTime": {
           "type": "number",

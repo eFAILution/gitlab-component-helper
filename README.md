@@ -342,12 +342,7 @@ The following settings are available for the GitLab Component Helper extension. 
 
 | Setting | Type | Default | Description |
 |--------|------|---------|-------------|
-| `gitlabComponentHelper.componentSource` | string | `local` | Source for component definitions. One of: `local`, `gitlab`, `url` |
-| `gitlabComponentHelper.gitlabUrl` | string | `https://gitlab.com` | GitLab instance URL |
-| `gitlabComponentHelper.gitlabProjectId` | string | `""` | GitLab project ID containing component definitions |
 | `gitlabComponentHelper.gitlabToken` | string | `""` | ⚠️ **Deprecated** — stores tokens in plain text. Use the **GitLab CI: Add Component Project/Group** command instead, which encrypts via SecretStorage. |
-| `gitlabComponentHelper.gitlabComponentsFilePath` | string | `components.json` | Path to components JSON file in GitLab repository |
-| `gitlabComponentHelper.componentsUrl` | string | `""` | URL to a JSON file containing component definitions |
 | `gitlabComponentHelper.cacheTime` | number | `3600` | Cache time for components in seconds |
 | `gitlabComponentHelper.logLevel` | string | `ERROR` | Logging level for component service. One of: `DEBUG`, `INFO`, `WARN`, `ERROR` |
 | `gitlabComponentHelper.autoShowOutput` | boolean | `false` | Automatically show output channel when log level changes |
