@@ -117,6 +117,38 @@ export class ComponentService implements ComponentSource {
     return this.versionManager.fetchProjectTags(gitlabInstance, projectPath);
   }
 
+  /**
+   * Resolve the HEAD commit SHA of a branch, used to detect when a branch ref has moved.
+   *
+   * @param gitlabInstance The GitLab instance hostname (e.g. `gitlab.com`).
+   * @param projectPath The project path (e.g. `my-group/shared-ci`).
+   * @param branch The branch name to resolve.
+   * @returns The commit SHA, or null if the branch can't be resolved (network error, missing branch, no access).
+   */
+  public async resolveBranchSha(
+    gitlabInstance: string,
+    projectPath: string,
+    branch: string
+  ): Promise<string | null> {
+    return this.versionManager.resolveBranchSha(gitlabInstance, projectPath, branch);
+  }
+
+  /**
+   * Authoritatively determine whether a ref is a tag (taken as fixed, skips freshness checks) versus a branch.
+   *
+   * @param gitlabInstance The GitLab instance hostname (e.g. `gitlab.com`).
+   * @param projectPath The project path (e.g. `my-group/shared-ci`).
+   * @param ref The ref name to classify.
+   * @returns `true` if a tag, `false` if definitively not a tag, or `null` when it can't be determined.
+   */
+  public async isRefATag(
+    gitlabInstance: string,
+    projectPath: string,
+    ref: string
+  ): Promise<boolean | null> {
+    return this.versionManager.isRefATag(gitlabInstance, projectPath, ref);
+  }
+
   // Catalog data delegation
   public async fetchCatalogData(
     gitlabInstance: string,

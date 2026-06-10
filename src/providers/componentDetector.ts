@@ -8,11 +8,82 @@ import { spawn } from 'child_process';
 import { detectLocalIncludeComponent } from './localComponentResolver';
 import type { ComponentParameter } from '../types/git-component';
 import type { GitApi, GitRepository } from '../types/vscode-git';
+import type { CachedComponent, RefType } from '../types/cache';
+import { DEFAULT_BRANCH_CACHE_TIME_SECONDS } from '../constants/timing';
+import { resolveBranchFreshness, type BranchFreshnessResult } from '../utils/branchFreshness';
 
 // Re-export so existing consumers (e.g. localComponentResolver, validationProvider) keep their import path.
 export type { ComponentParameter };
 
 const logger = Logger.getInstance();
+
+/**
+ * Resolve the current HEAD SHA for a ref via the component service. Only meaningful for branches.
+ *
+ * @param gitlabInstance The GitLab instance hostname (e.g. `gitlab.com`).
+ * @param projectPath The project path (e.g. `my-group/shared-ci`).
+ * @param ref The branch name to resolve.
+ * @returns The HEAD commit SHA, or undefined on any failure (network error, missing branch, no access) so callers
+ *          treat the result as "unknown" rather than "unchanged" or "changed".
+ */
+async function resolveRefSha(
+  gitlabInstance: string,
+  projectPath: string,
+  ref: string
+): Promise<string | undefined> {
+  const sha = await getComponentService().resolveBranchSha(gitlabInstance, projectPath, ref);
+  return sha ?? undefined;
+}
+
+/**
+ * Classify a ref as a `branch` (treated as moving) or `tag` (treated as fixed by convention).
+ *
+ * Resolution order, cheapest/most-trusted first:
+ *  1. A previously persisted verdict on the cache entry (`cachedVerdict`) — resolved once, never re-checked.
+ *  2. GitLab's dedicated single-tag endpoint via the component service — definitive 200/404.
+ *  3. If the API can't answer (offline, no access), default to `branch` (the safe default — at worst one extra
+ *     freshness check; never serving stale data).
+ *
+ * @param gitlabInstance The GitLab instance hostname (e.g. `gitlab.com`).
+ * @param projectPath The project path (e.g. `my-group/shared-ci`).
+ * @param ref The ref being classified.
+ * @param cachedVerdict A verdict already persisted on the cache entry, if any (skips the network call).
+ * @returns `'branch'` or `'tag'`. Never undefined — defaults to `'branch'` when undetermined.
+ */
+async function resolveRefType(
+  gitlabInstance: string,
+  projectPath: string,
+  ref: string,
+  cachedVerdict?: RefType
+): Promise<RefType> {
+  if (cachedVerdict) {
+    return cachedVerdict;
+  }
+
+  const isTag = await getComponentService().isRefATag(gitlabInstance, projectPath, ref);
+  return isTag ? 'tag' : 'branch';
+}
+
+/**
+ * Resolve a cached branch entry's freshness against GitLab, mutating its `refType`/`cachedAt` in place. Thin adapter
+ * binding the real service + clock to the pure {@link resolveBranchFreshness}.
+ *
+ * @param cachedComponent The cached entry under consideration; its `refType`/`cachedAt` may be mutated.
+ * @param ref The effective ref being requested (branch name, or the cached version when none was specified).
+ * @returns Whether the entry is stale, and whether persistent fields were mutated (so the caller can re-save once).
+ */
+async function checkBranchFreshness(
+  cachedComponent: CachedComponent,
+  ref: string
+): Promise<BranchFreshnessResult> {
+  return resolveBranchFreshness(cachedComponent, DEFAULT_BRANCH_CACHE_TIME_SECONDS * 1000, {
+    now: () => Date.now(),
+    resolveRefType: cached =>
+      resolveRefType(cachedComponent.gitlabInstance, cachedComponent.sourcePath, ref, cached),
+    resolveHeadSha: () =>
+      resolveRefSha(cachedComponent.gitlabInstance, cachedComponent.sourcePath, ref),
+  });
+}
 
 // Update your Component interface to include the context property
 export interface Component {
@@ -31,6 +102,9 @@ export interface Component {
   gitlabInstance?: string; // GitLab instance
   sourcePath?: string; // Source path
   templatePath?: string; // Repo-relative path to the template file, resolved at fetch time
+  resolvedSha?: string; // Branch HEAD SHA at fetch time (branch refs only); used for cache freshness
+  cachedAt?: number; // Epoch ms of last branch fetch/revalidation; used for the branch TTL
+  refType?: RefType; // Authoritative ref classification (branch|tag), resolved once and persisted
   originalUrl?: string; // Original URL with variables (if any)
   // Add this context property that's needed by the hover provider
   context?: {
@@ -236,51 +310,18 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
 
     logger.debug(`[ComponentDetector] Looking for component: ${requestedName} from ${requestedGitlabInstance}/${requestedProjectPath}${requestedVersion ? `@${requestedVersion}` : ''}`, 'ComponentDetector');
 
-    // First, try to find an exact match (same name, project path, AND version)
-    if (requestedVersion) {
-      const exactMatch = cachedComponents.find(comp => {
-        // For cached components, extract project path from sourcePath
-        return (
-          comp.gitlabInstance === requestedGitlabInstance &&
-          comp.sourcePath === requestedProjectPath &&
-          comp.name === requestedName &&
-          comp.version === requestedVersion
-        );
-      });
+    // Prefer a cache entry whose version matches the request exactly; otherwise fall back to any cached entry for the
+    // same component. Both go through the same freshness-checked serve/refetch path below — a branch entry is only
+    // served after checkBranchFreshness confirms the branch HEAD hasn't moved.
+    const matchesComponent = (comp: CachedComponent): boolean =>
+      comp.gitlabInstance === requestedGitlabInstance &&
+      comp.sourcePath === requestedProjectPath &&
+      comp.name === requestedName;
 
-      if (exactMatch) {
-        logger.debug(`[ComponentDetector] Found exact version match in cache: ${exactMatch.name}@${exactMatch.version}`, 'ComponentDetector');
-        return {
-          name: exactMatch.name,
-          description: exactMatch.description,
-          parameters: exactMatch.parameters,
-          version: exactMatch.version,
-          source: `${exactMatch.gitlabInstance}/${exactMatch.sourcePath}`,
-          url: componentUrl,
-          originalUrl: originalUrl,
-          gitlabInstance: exactMatch.gitlabInstance,
-          sourcePath: exactMatch.sourcePath,
-          templatePath: exactMatch.templatePath,
-          readme: exactMatch.readme || '', // Include README from cache
-          context: {
-            gitlabInstance: exactMatch.gitlabInstance,
-            path: exactMatch.sourcePath
-          }
-        };
-      }
-
-      logger.debug(`[ComponentDetector] No exact version match found for ${requestedName}@${requestedVersion}`, 'ComponentDetector');
-    }
-
-    // If no exact match, look for any version of the same component
-    const cachedComponent = cachedComponents.find(comp => {
-      // Match by hostname, project path, and component name (ignoring version)
-      return (
-        comp.gitlabInstance === requestedGitlabInstance &&
-        comp.sourcePath === requestedProjectPath &&
-        comp.name === requestedName
-      );
-    });
+    const cachedComponent =
+      (requestedVersion &&
+        cachedComponents.find(comp => matchesComponent(comp) && comp.version === requestedVersion)) ||
+      cachedComponents.find(matchesComponent);
 
     if (cachedComponent) {
       logger.debug(`[ComponentDetector] Found matching component in cache: ${cachedComponent.name}`, 'ComponentDetector');
@@ -288,30 +329,46 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
       logger.debug(`[ComponentDetector] Cached component has README: ${!!cachedComponent.readme}`, 'ComponentDetector');
       logger.debug(`[ComponentDetector] Cached README length: ${cachedComponent.readme ? cachedComponent.readme.length : 0}`, 'ComponentDetector');
 
-      // If the requested version matches the cached version, return cached data
+      // If the requested version matches the cached version, return cached data — but for mutable branch refs first
+      // confirm the branch hasn't moved since we cached it.
       if (!requestedVersion || requestedVersion === cachedComponent.version) {
-        logger.debug(`[ComponentDetector] Version matches cache, returning cached component`, 'ComponentDetector');
-        return {
-          name: cachedComponent.name,
-          description: cachedComponent.description,
-          parameters: cachedComponent.parameters,
-          version: cachedComponent.version,
-          source: `${cachedComponent.gitlabInstance}/${cachedComponent.sourcePath}`,
-          url: componentUrl,
-          originalUrl: originalUrl,
-          gitlabInstance: cachedComponent.gitlabInstance,
-          sourcePath: cachedComponent.sourcePath,
-          templatePath: cachedComponent.templatePath,
-          readme: cachedComponent.readme || '', // Include README from cache
-          context: {
-            gitlabInstance: cachedComponent.gitlabInstance,
-            path: cachedComponent.sourcePath
+        const effectiveRef = requestedVersion || cachedComponent.version;
+        const freshness = await checkBranchFreshness(cachedComponent, effectiveRef);
+
+        if (!freshness.stale) {
+          logger.debug(`[ComponentDetector] Version matches cache, returning cached component`, 'ComponentDetector');
+          // checkBranchFreshness may have resolved `refType` and/or stamped a new "last verified" `cachedAt`; persist
+          // once if so, so the work survives the session. No write on a plain within-TTL serve (nothing changed).
+          if (freshness.mutated) {
+            cacheManager.persistComponentState();
           }
-        };
+          return {
+            name: cachedComponent.name,
+            description: cachedComponent.description,
+            parameters: cachedComponent.parameters,
+            version: cachedComponent.version,
+            source: `${cachedComponent.gitlabInstance}/${cachedComponent.sourcePath}`,
+            url: componentUrl,
+            originalUrl: originalUrl,
+            gitlabInstance: cachedComponent.gitlabInstance,
+            sourcePath: cachedComponent.sourcePath,
+            templatePath: cachedComponent.templatePath,
+            readme: cachedComponent.readme || '', // Include README from cache
+            resolvedSha: cachedComponent.resolvedSha,
+            context: {
+              gitlabInstance: cachedComponent.gitlabInstance,
+              path: cachedComponent.sourcePath
+            }
+          };
+        }
+
+        // Branch has moved on the remote — fall through to re-fetch fresh data.
+        logger.debug(`[ComponentDetector] Cached branch ${effectiveRef} is stale (HEAD moved), re-fetching`, 'ComponentDetector');
       }
 
-      // If versions differ, try to fetch the specific version
-      logger.debug(`[ComponentDetector] Version mismatch (cached: ${cachedComponent.version}, requested: ${requestedVersion}), attempting to fetch specific version`, 'ComponentDetector');
+      // Reached when the requested version differs from the cached one, or when a branch ref's HEAD has moved (stale
+      // fall-through above). Fetch fresh data.
+      logger.debug(`[ComponentDetector] Cache miss/stale (cached: ${cachedComponent.version}, requested: ${requestedVersion}), attempting to fetch specific version`, 'ComponentDetector');
       logger.debug(`[ComponentDetector] Calling componentService.getComponentFromUrl with: ${componentUrl}`, 'ComponentDetector');
 
       try {
@@ -322,20 +379,33 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
           logger.debug(`[ComponentDetector] Successfully fetched specific version ${requestedVersion} for ${cachedComponent.name}`, 'ComponentDetector');
           logger.debug(`[ComponentDetector] Fetched component has README: ${!!specificVersionComponent.readme}`, 'ComponentDetector');
 
+          const cacheVersion = requestedVersion || 'main';
+          // Authoritatively classify the ref, then record the branch HEAD + timestamp so the next hover can detect a
+          // moved branch (and apply the branch TTL) instead of re-fetching every time. Tags get neither (taken as fixed).
+          const refType = await resolveRefType(requestedGitlabInstance, requestedProjectPath, cacheVersion);
+          const isBranch = refType === 'branch';
+          const resolvedSha = isBranch
+            ? await resolveRefSha(requestedGitlabInstance, requestedProjectPath, cacheVersion)
+            : undefined;
+          const cachedAt = isBranch ? Date.now() : undefined;
+
           // Add the specific version to cache for future use
           cacheManager.addDynamicComponent({
             name: specificVersionComponent.name,
             description: specificVersionComponent.description,
             parameters: specificVersionComponent.parameters,
-            version: requestedVersion || 'main',
+            version: cacheVersion,
             url: componentUrl,
             gitlabInstance: requestedGitlabInstance,
             sourcePath: requestedProjectPath,
             source: `${requestedGitlabInstance}/${requestedProjectPath}`,
-            templatePath: specificVersionComponent.templatePath
+            templatePath: specificVersionComponent.templatePath,
+            resolvedSha,
+            cachedAt,
+            refType
           });
 
-          return specificVersionComponent;
+          return { ...specificVersionComponent, resolvedSha, cachedAt, refType };
         } else {
           logger.debug(`[ComponentDetector] getComponentFromUrl returned null/undefined for specific version`, 'ComponentDetector');
         }
@@ -643,6 +713,12 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
     // Add to cache for future use
     try {
       const cacheManager = getComponentCacheManager();
+      // Authoritatively classify the ref once; branches get a HEAD SHA + timestamp, tags get neither (taken as fixed).
+      const refType = await resolveRefType(gitlabInstance, projectPath, version);
+      const isBranch = refType === 'branch';
+      const resolvedSha = isBranch
+        ? await resolveRefSha(gitlabInstance, projectPath, version)
+        : undefined;
       const cacheComponent = {
         name: foundComponent.name,
         description: componentDescription, // Use the enhanced description
@@ -662,7 +738,12 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
         gitlabInstance: gitlabInstance,
         version: version,
         url: componentUrl,
-        templatePath: resolvedTemplatePath
+        templatePath: resolvedTemplatePath,
+        // Branch HEAD + timestamp let subsequent hovers detect a moved branch (and apply the branch TTL) rather than
+        // re-fetching every time. Tags are taken as fixed → neither is recorded.
+        resolvedSha,
+        cachedAt: isBranch ? Date.now() : undefined,
+        refType
       };
 
       cacheManager.addDynamicComponent(cacheComponent);

@@ -15,7 +15,7 @@ import {
 
 // Bump when the on-disk CachedComponent shape changes. Mismatched caches are discarded on load so the new fields can be
 // populated by re-fetching.
-const CURRENT_CACHE_VERSION = '1.1.0';
+const CURRENT_CACHE_VERSION = '1.2.0';
 
 /**
  * ComponentCacheManager - Main orchestrator for component caching
@@ -139,12 +139,27 @@ export class ComponentCacheManager {
           'ComponentCache'
         );
       }
+
+      // Persist so dynamically fetched entries (and their freshness fields) survive across sessions instead of being
+      // re-resolved on next launch. Fire-and-forget — a failed save only costs a re-fetch, never correctness.
+      this.persistComponentState();
     } catch (error) {
       this.logger.debug(
         `[ComponentCache] Error adding dynamic component: ${error}`,
         'ComponentCache'
       );
     }
+  }
+
+  /**
+   * Persist the current in-memory component list to disk. Use after mutating a cached entry on a read path (e.g. the
+   * hover provider recording a branch's `refType`/`cachedAt`/`resolvedSha`) so the update survives the session. No-op
+   * when no extension context is set. Fire-and-forget — failure only costs a re-fetch, never correctness.
+   */
+  public persistComponentState(): void {
+    this.saveCacheToDisk().catch(error => {
+      this.logger.debug(`[ComponentCache] Failed to persist component state: ${error}`, 'ComponentCache');
+    });
   }
 
   public getSourceErrors(): Map<string, string> {

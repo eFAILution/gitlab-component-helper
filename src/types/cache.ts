@@ -5,6 +5,12 @@
 import type { ParameterDefault } from './git-component';
 
 /**
+ * How a component's ref is classified for caching: a `branch` gets the freshness check (it can move); a `tag` skips it
+ * (taken as fixed by convention).
+ */
+export type RefType = 'branch' | 'tag';
+
+/**
  * Generic cache entry with timestamp for expiration tracking
  */
 export interface CacheEntry<T> {
@@ -90,6 +96,12 @@ export interface CachedComponent {
   notes?: string[];
   /** Raw YAML source of the template, populated when the fetch retrieved the template file. */
   rawYaml?: string;
+  /** For components pinned to a mutable branch ref, the branch HEAD commit SHA at the time this entry was cached. */
+  resolvedSha?: string;
+  /** Epoch ms when this branch entry was last fetched/revalidated. */
+  cachedAt?: number;
+  /** Authoritative ref classification for this entry, resolved once against GitLab and persisted. */
+  refType?: RefType;
 }
 
 /**
