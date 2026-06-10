@@ -1,11 +1,15 @@
 /**
  * Pure helpers for the Component Browser's "what to show in the tree" stage. Given the flat list of cached
  * components, produce a nested `source → project → component → versions` array shape the webview consumes.
- *
- * Loose `any` types match the surrounding provider — the cached entries come from two layers (catalog discovery and
- * editor-detected components) whose precise shapes still need a typed unification pass. Tightening them is its own
- * refactor (tracked under the `no-explicit-any` cleanup).
  */
+
+import type { CachedComponent } from '../types/cache';
+import type {
+  SourceGroup,
+  SourceGroupBuilder,
+  ProjectGroupBuilder,
+  ComponentGroupBuilder,
+} from './componentBrowserTypes';
 
 /**
  * Convert a `https://host/group/project/name@version` component URL into the public GitLab project URL by stripping
@@ -98,10 +102,10 @@ export type OnSkip = (component: unknown, reason: string) => void;
  * @returns                 An array of source-group objects.
  */
 export function transformCachedComponentsToGroups(
-  cachedComponents: any[],
+  cachedComponents: Array<Partial<CachedComponent>>,
   onSkip?: OnSkip,
-): any[] {
-  const hierarchy = new Map<string, any>();
+): SourceGroup[] {
+  const hierarchy = new Map<string, SourceGroupBuilder>();
 
   for (const comp of cachedComponents) {
     if (!comp.source || !comp.sourcePath || !comp.name) {
@@ -126,23 +130,24 @@ export function transformCachedComponentsToGroups(
         source: mainSource,
         type: 'source',
         isExpanded: true,
-        projects: new Map<string, any>(),
+        projects: new Map<string, ProjectGroupBuilder>(),
         totalComponents: 0,
         totalVersions: 0,
       };
       hierarchy.set(mainSource, sourceGroup);
     }
 
-    const projectKey = `${projectPath}@${comp.gitlabInstance}`;
+    const gitlabInstance = comp.gitlabInstance || 'gitlab.com';
+    const projectKey = `${projectPath}@${gitlabInstance}`;
     let projectGroup = sourceGroup.projects.get(projectKey);
     if (!projectGroup) {
       projectGroup = {
         name: projectName,
         path: projectPath,
-        gitlabInstance: comp.gitlabInstance,
+        gitlabInstance,
         type: 'project',
         isExpanded: false,
-        components: new Map<string, any>(),
+        components: new Map<string, ComponentGroupBuilder>(),
       };
       sourceGroup.projects.set(projectKey, projectGroup);
     }
@@ -161,7 +166,7 @@ export function transformCachedComponentsToGroups(
         sourcePath: comp.sourcePath,
         gitlabInstance: comp.gitlabInstance || 'gitlab.com',
         documentationUrl: comp.url ? extractProjectUrl(comp.url) : '',
-        versions: new Map<string, any>(),
+        versions: new Map(),
         defaultVersion: comp.version || 'latest',
         availableVersions: comp.availableVersions || [],
       };
@@ -194,9 +199,9 @@ export function transformCachedComponentsToGroups(
     ...source,
     projectCount: source.projects.size,
     componentCount: source.totalComponents,
-    projects: Array.from(source.projects.values()).map((project: any) => ({
+    projects: Array.from(source.projects.values()).map((project) => ({
       ...project,
-      components: Array.from(project.components.values()).map((component: any) => {
+      components: Array.from(project.components.values()).map((component) => {
         const availableVersions: string[] =
           component.availableVersions && component.availableVersions.length > 0
             ? component.availableVersions
@@ -204,24 +209,24 @@ export function transformCachedComponentsToGroups(
               ? Array.from(component.versions.keys()) as string[]
               : [component.defaultVersion || 'latest'];
 
-        const versions: any[] = availableVersions.filter(Boolean).map((version: string) => {
-          const versionData = component.versions.get(version) || {};
+        const versions = availableVersions.filter(Boolean).map((version: string) => {
+          const versionData = component.versions.get(version);
           return {
             version,
-            description: versionData.description || component.description || 'No description available',
-            summary: versionData.summary || component.summary,
-            usage: versionData.usage || component.usage,
-            notes: versionData.notes || component.notes,
-            rawYaml: versionData.rawYaml || component.rawYaml,
-            parameters: versionData.parameters || component.parameters || [],
-            documentationUrl: versionData.documentationUrl || component.documentationUrl || '',
-            source: versionData.source || component.source,
-            sourcePath: versionData.sourcePath || component.sourcePath,
-            gitlabInstance: versionData.gitlabInstance || component.gitlabInstance || 'gitlab.com',
+            description: versionData?.description || component.description || 'No description available',
+            summary: versionData?.summary || component.summary,
+            usage: versionData?.usage || component.usage,
+            notes: versionData?.notes || component.notes,
+            rawYaml: versionData?.rawYaml || component.rawYaml,
+            parameters: versionData?.parameters || component.parameters || [],
+            documentationUrl: versionData?.documentationUrl || component.documentationUrl || '',
+            source: versionData?.source || component.source,
+            sourcePath: versionData?.sourcePath || component.sourcePath,
+            gitlabInstance: versionData?.gitlabInstance || component.gitlabInstance || 'gitlab.com',
           };
         });
 
-        const defaultVersion = selectDefaultVersion(availableVersions, component.version || 'latest');
+        const defaultVersion = selectDefaultVersion(availableVersions, component.defaultVersion || 'latest');
 
         return {
           ...component,

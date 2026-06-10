@@ -2,13 +2,43 @@
  * Generates the YAML snippet inserted into a `.gitlab-ci.yml` when the Component Browser confirms an "Add" or "Edit"
  * action. Pure string transform — no `vscode` types — so the same routine that runs inside the provider also runs
  * inside the unit suite.
- *
- * Inputs are typed loosely (`any`) because the Component Browser feeds in two shapes interchangeably: a cached
- * catalog component and a freshly-detected component pulled from the editor. Tightening those types is a separate
- * refactor.
  */
 
 import { containsGitLabVariables } from '../utils/gitlabVariables';
+
+/**
+ * Minimal parameter shape this routine reads. Wider than {@link ComponentParameter} (`default` allows
+ * arbitrary JSON-encodable objects, not just `ParameterDefault`) and looser on requiredness so tests
+ * can build partial fixtures. Description is intentionally absent — the generator never reads it.
+ */
+interface GeneratableParameter {
+  name: string;
+  type?: string;
+  required?: boolean;
+  /** Accepts anything `JSON.stringify` can encode — primitive or composite. */
+  default?: unknown;
+}
+
+/**
+ * Minimal component shape this routine reads. The component browser feeds in two flavours
+ * interchangeably (a cached catalog component, or one freshly detected from the editor) — this shape
+ * captures only the fields the generator actually consumes.
+ */
+interface GeneratableComponent {
+  name: string;
+  version?: string;
+  sourcePath?: string;
+  gitlabInstance?: string;
+  originalUrl?: string;
+  parameters?: GeneratableParameter[];
+}
+
+/**
+ * Pre-existing component slot parsed out of a `.gitlab-ci.yml` `include:` entry — `inputs` is the previous
+ * mapping the user had set, which we round-trip rather than overwrite during an edit. The provider passes
+ * the result of `parseExistingComponentText` (typed `unknown`) directly in; the function narrows below.
+ */
+type ExistingComponent = { inputs?: Record<string, unknown> };
 
 /**
  * Build the `  - component: <url>\n    inputs:\n      key: value # required/optional` snippet for an add or edit.
@@ -35,10 +65,10 @@ import { containsGitLabVariables } from '../utils/gitlabVariables';
  * @returns                 YAML snippet ready to splice into a `.gitlab-ci.yml` `include:` list.
  */
 export function generateComponentText(
-  component: any,
+  component: GeneratableComponent,
   includeInputs: boolean,
   selectedInputs: string[] = [],
-  existingComponent: any = null,
+  existingComponent: ExistingComponent | null = null,
 ): string {
   const gitlabInstance = component.gitlabInstance || 'gitlab.com';
 
@@ -62,7 +92,7 @@ export function generateComponentText(
 
   insertion += '\n    inputs:';
 
-  const finalInputs = new Map<string, any>();
+  const finalInputs = new Map<string, unknown>();
 
   if (existingComponent && existingComponent.inputs) {
     for (const [key, value] of Object.entries(existingComponent.inputs)) {
@@ -72,7 +102,7 @@ export function generateComponentText(
 
   if (selectedInputs && selectedInputs.length > 0) {
     // Drop any existing inputs that the user didn't keep selected.
-    const filteredInputs = new Map<string, any>();
+    const filteredInputs = new Map<string, unknown>();
     for (const inputName of selectedInputs) {
       if (finalInputs.has(inputName)) {
         filteredInputs.set(inputName, finalInputs.get(inputName));
@@ -100,7 +130,7 @@ export function generateComponentText(
   }
 
   for (const [inputName, inputValue] of finalInputs) {
-    const param = component.parameters?.find((p: any) => p.name === inputName);
+    const param = component.parameters?.find(p => p.name === inputName);
     const comment = param?.required ? ' # required' : ' # optional';
     insertion += `\n      ${inputName}: ${inputValue}${comment}`;
   }
@@ -113,7 +143,7 @@ export function generateComponentText(
  * declared `default` for YAML insertion (quoting strings, stringifying booleans/numbers, JSON-encoding objects) or
  * falls back to a type-and-required-aware placeholder when no default is declared.
  */
-function formatDefaultForInsertion(param: any): string {
+function formatDefaultForInsertion(param: GeneratableParameter): string {
   const declared = param.default;
   if (declared !== undefined) {
     if (typeof declared === 'string') {
