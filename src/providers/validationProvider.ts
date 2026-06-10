@@ -8,6 +8,28 @@ import { expandComponentUrl, containsGitLabVariables } from '../utils/gitlabVari
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { spawn } from 'child_process';
 import { resolveLocalComponent, isUnsupportedLocalPath } from './localComponentResolver';
+import { attachDiagnosticMetadata, readDiagnosticMetadata } from './validationMetadata';
+import type { MissingRequiredInputMetadata } from './validationMetadata';
+import type { GitApi, GitRepository } from '../types/vscode-git';
+
+/**
+ * A `.gitlab-ci.yml` include entry that this provider validates. Either a remote `component:` URL
+ * or a `local:` path; both branches carry an optional `inputs` mapping. Built by narrowing a parsed
+ * YAML node — fields outside the union (anything else under the include) are intentionally not modelled.
+ */
+type ComponentInclude = { component: string; local?: undefined; inputs?: Record<string, unknown> };
+type LocalInclude = { local: string; component?: undefined; inputs?: Record<string, unknown> };
+type IncludeEntry = ComponentInclude | LocalInclude;
+
+/** Narrow a parsed YAML value to an {@link IncludeEntry} (string-typed `component` or `local`). */
+function isIncludeEntry(value: unknown): value is IncludeEntry {
+    if (!isYamlNode(value)) {
+        return false;
+    }
+    const hasComponent = typeof value.component === 'string';
+    const hasLocal = typeof value.local === 'string';
+    return hasComponent !== hasLocal; // exactly one of the two
+}
 
 export class ValidationProvider implements vscode.CodeActionProvider {
     private diagnosticCollection: vscode.DiagnosticCollection;
@@ -109,7 +131,8 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             return;
         }
 
-        const includes = Array.isArray(parsedYaml.include) ? parsedYaml.include : [parsedYaml.include];
+        const rawIncludes: unknown[] = Array.isArray(parsedYaml.include) ? parsedYaml.include : [parsedYaml.include];
+        const includes: IncludeEntry[] = rawIncludes.filter(isIncludeEntry);
         this.logger.debug(`[ValidationProvider] Found ${includes.length} include entries`, 'ValidationProvider');
 
         for (let includeIndex = 0; includeIndex < includes.length; includeIndex++) {
@@ -162,12 +185,13 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
                             diagnostic.code = 'unresolved-variables';
                             diagnostic.source = 'gitlab-component-helper';
-                            (diagnostic as any).metadata = {
+                            attachDiagnosticMetadata(diagnostic, {
+                                code: 'unresolved-variables',
                                 componentUrl: componentUrl,
                                 expandedUrl: expandedUrl,
                                 includeInputs: include.inputs || {},
                                 isNonGitlabRepo: true
-                            };
+                            });
 
                             this.logger.debug(`[ValidationProvider] Created unresolved variables diagnostic for non-GitLab repo: ${componentUrl}`, 'ValidationProvider');
                             diagnostics.push(diagnostic);
@@ -195,11 +219,12 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
                         diagnostic.code = 'unresolved-variables';
                         diagnostic.source = 'gitlab-component-helper';
-                        (diagnostic as any).metadata = {
+                        attachDiagnosticMetadata(diagnostic, {
+                            code: 'unresolved-variables',
                             componentUrl: componentUrl,
                             expandedUrl: expandedUrl,
                             includeInputs: include.inputs || {}
-                        };
+                        });
 
                         this.logger.debug(`[ValidationProvider] Created unresolved variables diagnostic for ${componentUrl}`, 'ValidationProvider');
                         diagnostics.push(diagnostic);
@@ -272,11 +297,12 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
                     diagnostic.code = 'component-fetch-failed';
                     diagnostic.source = 'gitlab-component-helper';
-                    (diagnostic as any).metadata = {
+                    attachDiagnosticMetadata(diagnostic, {
+                        code: 'component-fetch-failed',
                         componentUrl: componentUrl,
                         expandedUrl: expandedUrl,
                         includeInputs: include.inputs || {}
-                    };
+                    });
 
                     this.logger.debug(`[ValidationProvider] Created component fetch failure diagnostic for ${componentUrl}`, 'ValidationProvider');
                     diagnostics.push(diagnostic);
@@ -317,7 +343,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     }
 
                     for (const providedInput in providedInputs) {
-                        if (!componentInputs.some((p: any) => p.name === providedInput)) {
+                        if (!componentInputs.some(p => p.name === providedInput)) {
                             const line = this.findLineForInput(document, include, providedInput);
 
                             // Create a unique key to prevent duplicate diagnostics for the same input
@@ -354,15 +380,16 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                             // Add metadata for code actions - specific to this input only
                             diagnostic.code = 'unknown-input';
                             diagnostic.source = 'gitlab-component-helper';
-                            (diagnostic as any).metadata = {
+                            attachDiagnosticMetadata(diagnostic, {
+                                code: 'unknown-input',
                                 componentName: component.name,
                                 componentUrl: componentUrl,
                                 unknownInput: providedInput,
-                                availableInputs: componentInputs.map((p: any) => p.name),
+                                availableInputs: componentInputs.map(p => p.name),
                                 componentInputs: componentInputs, // Include full input details for descriptions
                                 // Only include the current unknown input, not all provided inputs
                                 currentInputOnly: true
-                            };
+                            });
 
                             this.logger.debug(`[ValidationProvider] Created diagnostic for unknown input '${providedInput}' at range ${range.start.line}:${range.start.character}-${range.end.line}:${range.end.character}`, 'ValidationProvider');
                             diagnostics.push(diagnostic);
@@ -382,7 +409,8 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                             // Add metadata for code actions
                             diagnostic.code = 'missing-required-input';
                             diagnostic.source = 'gitlab-component-helper';
-                            (diagnostic as any).metadata = {
+                            attachDiagnosticMetadata(diagnostic, {
+                                code: 'missing-required-input',
                                 componentName: component.name,
                                 componentUrl: componentUrl,
                                 missingInput: componentInput.name,
@@ -390,7 +418,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                                 inputType: componentInput.type,
                                 inputDefault: componentInput.default,
                                 providedInputs: Object.keys(providedInputs)
-                            };
+                            });
 
                             diagnostics.push(diagnostic);
                         }
@@ -543,10 +571,11 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
             this.logger.debug(`[ValidationProvider] Processing diagnostic: code=${diagnostic.code}, range=${diagnostic.range.start.line}:${diagnostic.range.start.character}, message="${diagnostic.message}"`, 'ValidationProvider');
 
-            if (diagnostic.code === 'unknown-input' && (diagnostic as any).metadata) {
-                const metadata = (diagnostic as any).metadata;
-                const availableInputs = metadata.availableInputs as string[];
-                const unknownInput = metadata.unknownInput as string;
+            const diagnosticMetadata = readDiagnosticMetadata(diagnostic);
+            if (diagnosticMetadata?.code === 'unknown-input') {
+                const metadata = diagnosticMetadata;
+                const availableInputs = metadata.availableInputs;
+                const unknownInput = metadata.unknownInput;
 
                 // For individual input diagnostics, only suggest replacements for that specific input
                 // Don't exclude other provided inputs since this diagnostic is specific to one input
@@ -611,9 +640,9 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     }
                 }
             }
-            else if (diagnostic.code === 'unresolved-variables' && (diagnostic as any).metadata) {
-                const metadata = (diagnostic as any).metadata;
-                const isNonGitlabRepo = metadata.isNonGitlabRepo as boolean;
+            else if (diagnosticMetadata?.code === 'unresolved-variables') {
+                const metadata = diagnosticMetadata;
+                const isNonGitlabRepo = metadata.isNonGitlabRepo ?? false;
 
                 // Different suggestions based on repository type
                 if (isNonGitlabRepo) {
@@ -661,9 +690,9 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     }
                 }
             }
-            else if (diagnostic.code === 'component-fetch-failed' && (diagnostic as any).metadata) {
-                const metadata = (diagnostic as any).metadata;
-                const componentUrl = metadata.componentUrl as string;
+            else if (diagnosticMetadata?.code === 'component-fetch-failed') {
+                const metadata = diagnosticMetadata;
+                const componentUrl = metadata.componentUrl;
 
                 // Suggest actions for component fetch failures
                 const retryTitle = `Retry fetching component from '${componentUrl}'`;
@@ -693,11 +722,11 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     actions.push(validateUrlAction);
                 }
             }
-            else if (diagnostic.code === 'missing-required-input' && (diagnostic as any).metadata) {
-                const metadata = (diagnostic as any).metadata;
-                const missingInput = metadata.missingInput as string;
-                const inputDescription = metadata.inputDescription as string;
-                const inputType = metadata.inputType as string;
+            else if (diagnosticMetadata?.code === 'missing-required-input') {
+                const metadata = diagnosticMetadata;
+                const missingInput = metadata.missingInput;
+                const inputDescription = metadata.inputDescription;
+                const inputType = metadata.inputType;
                 const inputDefault = metadata.inputDefault;
 
                 const actionTitle = `Add required input '${missingInput}'`;
@@ -754,10 +783,12 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
                     // Add action to show all missing inputs for this component if there are multiple
                     const componentUrl = metadata.componentUrl;
-                    const allMissingForComponent = relevantDiagnostics.filter(d =>
-                        d.code === 'missing-required-input' &&
-                        (d as any).metadata?.componentUrl === componentUrl
-                    );
+                    const allMissingForComponent = relevantDiagnostics
+                        .map(d => ({ diagnostic: d, metadata: readDiagnosticMetadata(d) }))
+                        .filter((pair): pair is { diagnostic: vscode.Diagnostic; metadata: MissingRequiredInputMetadata } =>
+                            pair.metadata?.code === 'missing-required-input' &&
+                            pair.metadata.componentUrl === componentUrl
+                        );
 
                     if (allMissingForComponent.length > 1) {
                         const showAllMissingTitle = `Add all ${allMissingForComponent.length} missing inputs for '${metadata.componentName}'`;
@@ -773,13 +804,13 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                                     type: 'add',
                                     documentUri: document.uri.toString(),
                                     range: diagnostic.range,
-                                    availableInputs: allMissingForComponent.map(d => (d as any).metadata.missingInput),
+                                    availableInputs: allMissingForComponent.map(p => p.metadata.missingInput),
                                     componentName: metadata.componentName,
-                                    missingInputs: allMissingForComponent.map(d => ({
-                                        name: (d as any).metadata.missingInput,
-                                        description: (d as any).metadata.inputDescription || '',
-                                        type: (d as any).metadata.inputType || 'string',
-                                        default: (d as any).metadata.inputDefault,
+                                    missingInputs: allMissingForComponent.map(p => ({
+                                        name: p.metadata.missingInput,
+                                        description: p.metadata.inputDescription || '',
+                                        type: p.metadata.inputType || 'string',
+                                        default: p.metadata.inputDefault,
                                         required: true
                                     }))
                                 }]
@@ -795,7 +826,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         return actions;
     }
 
-    private findLineForInput(document: vscode.TextDocument, include: any, inputName: string): number {
+    private findLineForInput(document: vscode.TextDocument, include: IncludeEntry, inputName: string): number {
         const text = document.getText();
         const lines = text.split('\n');
         const componentLine = this.findLineForComponent(document, include);
@@ -933,7 +964,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         }
     }
 
-    private findLineForComponent(document: vscode.TextDocument, include: any): number {
+    private findLineForComponent(document: vscode.TextDocument, include: IncludeEntry): number {
         const text = document.getText();
         const lines = text.split('\n');
         const componentUrl = include.component ?? include.local;
@@ -1137,15 +1168,11 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         range: vscode.Range;
         unknownInput?: string;
         availableInputs: string[];
-        componentInputs?: Array<{ name: string; description?: string; type?: string; required?: boolean; default?: any }>; // Add full input details
+        /** Full component-spec parameters, used to render descriptions/types alongside replacement suggestions. */
+        componentInputs?: ComponentParameter[];
         componentName: string;
-        missingInputs?: Array<{
-            name: string;
-            description: string;
-            type: string;
-            default?: any;
-            required: boolean;
-        }>;
+        /** Required parameters the document is missing — same shape as componentInputs, populated from diagnostic metadata. */
+        missingInputs?: ComponentParameter[];
     }): Promise<void> {
         this.logger.debug(`[ValidationProvider] Showing QuickPick for ${args.type} with ${args.availableInputs.length} options`, 'ValidationProvider');
 
@@ -1414,15 +1441,15 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             // Use VS Code's Git extension API if available
             const gitExtension = vscode.extensions.getExtension('vscode.git');
             if (gitExtension) {
-                const git = gitExtension.exports.getAPI(1);
+                const git: GitApi | undefined = gitExtension.exports.getAPI(1);
                 if (git) {
-                    let repo: any = null;
+                    let repo: GitRepository | null = null;
                     if (forUri) {
                         // File-relative lookup; null if file isn't in any repo.
                         // Do NOT fall through to workspace[0] here.
                         repo = git.getRepository(forUri);
                     } else if (git.repositories.length > 0) {
-                        repo = git.repositories.find((r: any) =>
+                        repo = git.repositories.find(r =>
                             workspacePath.startsWith(r.rootUri.fsPath)
                         ) || git.repositories[0];
                     }
@@ -1430,7 +1457,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     if (repo) {
                         // Get remote URLs
                         const remotes = repo.state.remotes;
-                        const origin = remotes.find((r: any) => r.name === 'origin') || remotes[0];
+                        const origin = remotes.find(r => r.name === 'origin') || remotes[0];
 
                         if (origin && origin.fetchUrl) {
                             const gitlabInfo = this.parseGitLabRemoteUrl(origin.fetchUrl);
@@ -1538,11 +1565,11 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             // First try VS Code's Git extension API
             const gitExtension = vscode.extensions.getExtension('vscode.git');
             if (gitExtension) {
-                const git = gitExtension.exports.getAPI(1);
+                const git: GitApi | undefined = gitExtension.exports.getAPI(1);
                 if (git && git.repositories.length > 0) {
                     this.logger.debug(`[ValidationProvider] Found ${git.repositories.length} Git repositories via VS Code Git API`, 'ValidationProvider');
 
-                    const repo = git.repositories.find((r: any) =>
+                    const repo = git.repositories.find(r =>
                         workspacePath.startsWith(r.rootUri.fsPath) ||
                         r.rootUri.fsPath.startsWith(workspacePath)
                     ) || git.repositories[0];
@@ -1552,7 +1579,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
                         // Get remote URLs from VS Code Git API
                         const remotes = repo.state.remotes;
-                        const origin = remotes.find((r: any) => r.name === 'origin') || remotes[0];
+                        const origin = remotes.find(r => r.name === 'origin') || remotes[0];
 
                         if (origin && origin.fetchUrl) {
                             this.logger.debug(`[ValidationProvider] Found origin remote via VS Code Git API: ${origin.fetchUrl}`, 'ValidationProvider');
