@@ -27,4 +27,9 @@ export interface ComponentParameter {
     required: boolean;
     type: string;
     default?: ParameterDefault;
+    /**
+     * Allowed values for the input, from the spec's `options:` field. When present, completion offers these as a
+     * choice rather than a free-text placeholder. Entries mirror the primitive shapes a default can take.
+     */
+    options?: Array<string | number | boolean>;
 }

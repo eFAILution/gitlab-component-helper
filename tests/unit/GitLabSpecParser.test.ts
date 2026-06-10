@@ -110,6 +110,76 @@ component-job:
   });
 });
 
+suite('GitLabSpecParser.parse — options (enum) extraction', () => {
+  test('extracts an expanded `- item` options list, preserving order', () => {
+    const template = `spec:
+  inputs:
+    registry_type:
+      description: Configures the type of registry to use.
+      type: string
+      options:
+        - aws
+        - gcp
+        - azure`;
+
+    const parsed = GitLabSpecParser.parse(template);
+
+    const registry = parsed.variables.find((v) => v.name === 'registry_type');
+    assert.ok(registry, 'registry_type input missing');
+    assert.deepStrictEqual(registry.options, ['aws', 'gcp', 'azure']);
+  });
+
+  test('extracts an inline `[a, b]` options list, stripping quotes', () => {
+    const template = `spec:
+  inputs:
+    region:
+      type: string
+      options: ["us-east-1", 'eu-west-2']`;
+
+    const parsed = GitLabSpecParser.parse(template);
+
+    const region = parsed.variables.find((v) => v.name === 'region');
+    assert.ok(region, 'region input missing');
+    assert.deepStrictEqual(region.options, ['us-east-1', 'eu-west-2']);
+  });
+
+  test('leaves options undefined for an input without an options block', () => {
+    const template = `spec:
+  inputs:
+    environment:
+      type: string
+      default: development`;
+
+    const parsed = GitLabSpecParser.parse(template);
+
+    const environment = parsed.variables.find((v) => v.name === 'environment');
+    assert.ok(environment, 'environment input missing');
+    assert.strictEqual(environment.options, undefined);
+  });
+
+  test('a following input after an options list is parsed as its own input, not an option', () => {
+    const template = `spec:
+  inputs:
+    registry_type:
+      type: string
+      options:
+        - aws
+        - gcp
+    region:
+      type: string
+      default: us-east-1`;
+
+    const parsed = GitLabSpecParser.parse(template);
+
+    const registry = parsed.variables.find((v) => v.name === 'registry_type');
+    const region = parsed.variables.find((v) => v.name === 'region');
+    assert.deepStrictEqual(registry?.options, ['aws', 'gcp']);
+    assert.ok(region, 'region input missing — options list may have swallowed the next input');
+    assert.strictEqual(region.default, 'us-east-1');
+    assert.strictEqual(region.options, undefined);
+  });
+});
+
 suite('GitLabSpecParser.parse — description extraction', () => {
   test('extracts description from a leading `#` comment', () => {
     const template = `# Deploys a service to the target environment

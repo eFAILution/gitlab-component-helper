@@ -48,6 +48,7 @@ export interface ComponentCacheEntry {
     required: boolean;
     type: string;
     default?: ParameterDefault;
+    options?: Array<string | number | boolean>;
   }>;
   version?: string;
   source?: string;
@@ -78,6 +79,7 @@ export interface CachedComponent {
     required: boolean;
     type: string;
     default?: ParameterDefault;
+    options?: Array<string | number | boolean>;
   }>;
   source: string;
   sourcePath: string;

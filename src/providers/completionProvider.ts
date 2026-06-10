@@ -392,7 +392,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       this.logger.debug(`[CompletionProvider] Found ${missingInputs.length} missing inputs for completion: ${missingInputs.map(p => p.name).join(', ')}`, 'CompletionProvider');
 
       // Create completion items for missing inputs
-      return missingInputs.map((param: ComponentParameter & { enum?: unknown[] }) => {
+      return missingInputs.map((param: ComponentParameter) => {
         const item = new vscode.CompletionItem(param.name, vscode.CompletionItemKind.Property);
 
         // Enhanced documentation

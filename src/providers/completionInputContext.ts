@@ -166,13 +166,34 @@ function findInputsSection(lines: string[], componentLineIndex: number, lineInde
 /**
  * Build the value portion of the snippet inserted after `param.name: ` when an input is accepted from completion.
  *
- * Returns a TextMate snippet body (with `${1...}` tab-stops) the caller wraps in a `vscode.SnippetString`:
- * a quoted/literal form of the parameter's default when one exists, otherwise a type-appropriate placeholder
- * (booleans offer both values, arrays/objects seed empty literals, enums offer a choice of the allowed values).
+ * Returns a TextMate snippet body (with `${1...}` tab-stops) the caller wraps in a `vscode.SnippetString`.
+ *
+ * Values are inserted unquoted: GitLab CI parses a bare YAML scalar by the input's declared type, so a string
+ * input is a bare scalar, not a quoted one. The exception is a string ending in a colon — bare, YAML would read it
+ * as a nested mapping, so those are wrapped in double quotes. Precedence: an explicit `default` is rendered as the
+ * YAML it represents; otherwise an `options:` enum becomes a choice; otherwise a type-appropriate placeholder.
  */
-export function buildInputInsertValue(param: ComponentParameter & { enum?: unknown[] }): string {
+export function buildInputInsertValue(param: ComponentParameter): string {
+  // A bare YAML scalar ending in a colon parses as a nested mapping, so those strings are quoted.
+  const quoteIfColon = (value: string): string => (value.endsWith(':') ? `"${value}"` : value);
+
   if (param.default !== undefined) {
-    return typeof param.default === 'string' ? `"${param.default}"` : String(param.default);
+    // Render the default as the YAML the input expects: arrays as flow sequences (`[a, b]`),
+    // strings bare (quoted only when they end in a colon), everything else as its bare scalar form.
+    if (Array.isArray(param.default)) {
+      return `[${param.default.map((v) => String(v)).join(', ')}]`;
+    }
+    return typeof param.default === 'string' ? quoteIfColon(param.default) : String(param.default);
+  }
+
+  if (param.options && param.options.length > 0) {
+    // Offer the allowed values (`options:`) as a choice. Entries stay unquoted so a number/boolean
+    // option isn't turned into a string; string entries are quoted only when a trailing colon would
+    // otherwise break the YAML.
+    const optionValues = param.options
+      .map((val) => (typeof val === 'string' ? quoteIfColon(val) : String(val)))
+      .join(',');
+    return `\${1|${optionValues}|}`;
   }
 
   switch (param.type) {
@@ -187,10 +208,6 @@ export function buildInputInsertValue(param: ComponentParameter & { enum?: unkno
     case 'object':
       return '${1:{}}';
     default:
-      if (param.enum && Array.isArray(param.enum)) {
-        const enumValues = param.enum.map((val: unknown) => `"${String(val)}"`).join(',');
-        return `\${1|${enumValues}|}`;
-      }
-      return param.required ? '${1:"TODO: set value"}' : '${1:""}';
+      return param.required ? '${1:TODO set value}' : '${1:}';
   }
 }

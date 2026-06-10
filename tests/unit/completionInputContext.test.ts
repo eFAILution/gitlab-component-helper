@@ -166,10 +166,19 @@ variables:
 suite('buildInputInsertValue', () => {
   const base: ComponentParameter = { name: 'p', description: '', required: false, type: 'string' };
 
-  test('quotes a string default and stringifies a non-string default', () => {
-    assert.strictEqual(buildInputInsertValue({ ...base, default: 'dev' }), '"dev"');
+  test('renders a string default bare and stringifies a non-string default', () => {
+    assert.strictEqual(buildInputInsertValue({ ...base, default: 'dev' }), 'dev');
     assert.strictEqual(buildInputInsertValue({ ...base, type: 'number', default: 42 }), '42');
     assert.strictEqual(buildInputInsertValue({ ...base, type: 'boolean', default: true }), 'true');
+  });
+
+  test('quotes a string default only when it ends in a colon', () => {
+    assert.strictEqual(buildInputInsertValue({ ...base, default: 'ns:' }), '"ns:"');
+    assert.strictEqual(buildInputInsertValue({ ...base, default: 'a:b' }), 'a:b');
+  });
+
+  test('renders an array default as a flow sequence', () => {
+    assert.strictEqual(buildInputInsertValue({ ...base, type: 'array', default: ['a', 'b'] }), '[a, b]');
   });
 
   test('offers both boolean values, leading with the safer one by requiredness', () => {
@@ -182,13 +191,16 @@ suite('buildInputInsertValue', () => {
     assert.strictEqual(buildInputInsertValue({ ...base, type: 'object' }), '${1:{}}');
   });
 
-  test('offers a choice of allowed values when an enum is present', () => {
-    const param = { ...base, enum: ['a', 'b'] } as ComponentParameter & { enum?: unknown[] };
-    assert.strictEqual(buildInputInsertValue(param), '${1|"a","b"|}');
+  test('offers a choice of the allowed values (options), unquoted', () => {
+    assert.strictEqual(buildInputInsertValue({ ...base, options: ['aws', 'gcp'] }), '${1|aws,gcp|}');
+  });
+
+  test('quotes an options entry only when it ends in a colon, leaving others bare', () => {
+    assert.strictEqual(buildInputInsertValue({ ...base, options: ['ns:', 'plain'] }), '${1|"ns:",plain|}');
   });
 
   test('falls back to a TODO placeholder for a required untyped input', () => {
-    assert.strictEqual(buildInputInsertValue({ ...base, required: true }), '${1:"TODO: set value"}');
-    assert.strictEqual(buildInputInsertValue({ ...base, required: false }), '${1:""}');
+    assert.strictEqual(buildInputInsertValue({ ...base, required: true }), '${1:TODO set value}');
+    assert.strictEqual(buildInputInsertValue({ ...base, required: false }), '${1:}');
   });
 });

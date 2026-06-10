@@ -114,14 +114,27 @@ function parseInputs(specInputs: unknown): ComponentParameter[] {
   return Object.entries(specInputs).map(([name, raw]) => {
     const definition: Record<string, unknown> = isYamlNode(raw) ? raw : {};
     const rawDefault = definition.default;
+    const rawOptions = definition.options;
     return {
       name,
       description: typeof definition.description === 'string' ? definition.description : '',
       required: rawDefault === undefined,
       type: typeof definition.type === 'string' ? definition.type : 'string',
       default: isParameterDefault(rawDefault) ? rawDefault : undefined,
+      options: isOptionsList(rawOptions) ? rawOptions : undefined,
     };
   });
+}
+
+/** Narrow an unknown value to the primitive array accepted by `inputs.*.options`. */
+function isOptionsList(value: unknown): value is Array<string | number | boolean> {
+  return (
+    Array.isArray(value) &&
+    value.every(v => {
+      const t = typeof v;
+      return t === 'string' || t === 'number' || t === 'boolean';
+    })
+  );
 }
 
 /** Narrow an unknown value to {@link ParameterDefault} (the union accepted by `inputs.*.default`). */
