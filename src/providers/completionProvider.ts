@@ -5,7 +5,7 @@ import { getVariableCompletions, containsGitLabVariables, expandComponentUrl } f
 import { Logger } from '../utils/logger';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { resolveLocalComponent } from './localComponentResolver';
-import { parseYaml, isYamlNode } from '../utils/yamlParser';
+import { findCompletionInputContextAtLine, buildInputInsertValue } from './completionInputContext';
 import type { ComponentParameter } from '../types/git-component';
 import type { CachedComponent } from '../types/cache';
 
@@ -362,204 +362,59 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
   ): Promise<vscode.CompletionItem[] | null> {
     try {
       const text = document.getText();
-      const parsedYaml = parseYaml(text);
 
-      if (!isYamlNode(parsedYaml) || !parsedYaml.include) {
+      const context = findCompletionInputContextAtLine(text, position.line);
+      if (!context) {
+        this.logger.debug(`[CompletionProvider] No inputs parameter-name slot at cursor`, 'CompletionProvider');
         return null;
       }
 
-      const includes = Array.isArray(parsedYaml.include) ? parsedYaml.include : [parsedYaml.include];
-      const currentLineIndex = position.line;
-      const lines = text.split('\n');
+      const { componentUrl, includeKind, existingInputNames } = context;
+      const isLocal = includeKind === 'local';
 
-      this.logger.debug(`[CompletionProvider] Found ${includes.length} components in YAML at line ${currentLineIndex + 1}`, 'CompletionProvider');
+      this.logger.debug(`[CompletionProvider] In inputs slot for ${componentUrl} (local=${isLocal})`, 'CompletionProvider');
 
-      // Find which component the cursor is actually within by finding the closest component above the cursor
-      let closestComponent = null;
-      let closestDistance = Infinity;
-
-      // Find which component's inputs section we're in
-      for (const include of includes) {
-        const isLocal = !!include.local && !include.component;
-        const componentUrl = include.component ?? include.local;
-        if (!componentUrl) continue;
-        const includeKey = isLocal ? 'local:' : 'component:';
-
-        // Look for this component's position in the file
-        let componentLineIndex = -1;
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].includes(includeKey) && lines[i].includes(componentUrl)) {
-            componentLineIndex = i;
-            break;
-          }
-        }
-
-        if (componentLineIndex === -1) continue;
-
-        // Check if this component is above the cursor and closer than any previous component
-        if (componentLineIndex < currentLineIndex) {
-          const distance = currentLineIndex - componentLineIndex;
-          if (distance < closestDistance) {
-            closestDistance = distance;
-            closestComponent = { include, componentLineIndex, componentUrl, isLocal };
-          }
-        }
-      }
-
-      if (!closestComponent) {
-        this.logger.debug(`[CompletionProvider] No component found above cursor position`, 'CompletionProvider');
+      // Get the component details - local includes resolve from the workspace file, others from cache.
+      const component = isLocal
+        ? await resolveLocalComponent(componentUrl, document)
+        : await this.findComponentInCache(componentUrl, document.uri);
+      if (!component || !component.parameters) {
+        this.logger.debug(`[CompletionProvider] Component not found in cache or has no parameters: ${componentUrl}`, 'CompletionProvider');
         return null;
       }
 
-      this.logger.debug(`[CompletionProvider] Found closest component at line ${closestComponent.componentLineIndex + 1}: ${closestComponent.componentUrl}`, 'CompletionProvider');
+      this.logger.debug(`[CompletionProvider] Found component ${component.name} with ${component.parameters.length} parameters; existing inputs: ${existingInputNames.join(', ') || 'none'}`, 'CompletionProvider');
 
-      // Now check if we're in the inputs section of the closest component
-      const include = closestComponent.include;
-      const componentUrl = closestComponent.componentUrl;
-      const componentLineIndex = closestComponent.componentLineIndex;
+      // Filter out already provided inputs
+      const existing = new Set(existingInputNames);
+      const missingInputs = component.parameters.filter((param: ComponentParameter) => !existing.has(param.name));
 
-      // Check if we're in the inputs section of this component
-      let inputsSectionStart = -1;
-      let inputsSectionEnd = -1;
+      this.logger.debug(`[CompletionProvider] Found ${missingInputs.length} missing inputs for completion: ${missingInputs.map(p => p.name).join(', ')}`, 'CompletionProvider');
 
-      // Look for inputs: after the component line
-      for (let i = componentLineIndex + 1; i < lines.length; i++) {
-        const line = lines[i];
-        const trimmedLine = line.trim();
+      // Create completion items for missing inputs
+      return missingInputs.map((param: ComponentParameter & { enum?: unknown[] }) => {
+        const item = new vscode.CompletionItem(param.name, vscode.CompletionItemKind.Property);
 
-        // If we find a new component or job, stop looking
-        if (trimmedLine.startsWith('- ') || (trimmedLine.includes(':') && !line.startsWith('  '))) {
-          inputsSectionEnd = i;
-          break;
+        // Enhanced documentation
+        let documentation = `**${param.name}** (${param.required ? 'required' : 'optional'})\n\n`;
+        documentation += `${param.description || 'No description available'}\n\n`;
+        documentation += `**Type:** ${param.type || 'string'}\n`;
+        if (param.default !== undefined) {
+          documentation += `**Default:** \`${param.default}\`\n`;
         }
 
-        // If we find inputs:, mark the start
-        if (trimmedLine === 'inputs:') {
-          inputsSectionStart = i;
-          continue;
-        }
-      }
+        item.documentation = new vscode.MarkdownString(documentation);
 
-      // If we didn't find an explicit end, assume it goes to the end of the component
-      if (inputsSectionStart !== -1 && inputsSectionEnd === -1) {
-        inputsSectionEnd = lines.length;
-      }
+        item.insertText = new vscode.SnippetString(`${param.name}: ${buildInputInsertValue(param)}`);
 
-      this.logger.debug(`[CompletionProvider] Component ${componentUrl}: inputs section from line ${inputsSectionStart + 1} to ${inputsSectionEnd}`, 'CompletionProvider');
+        // Add sorting priority (required params first)
+        item.sortText = param.required ? `0${param.name}` : `1${param.name}`;
 
-      // Check if current position is in the inputs section
-      if (inputsSectionStart !== -1 &&
-          currentLineIndex > inputsSectionStart &&
-          currentLineIndex < inputsSectionEnd) {
+        // Add detail showing requirement status
+        item.detail = `${param.type || 'string'} ${param.required ? '(required)' : '(optional)'}`;
 
-        this.logger.debug(`[CompletionProvider] Found inputs section context for component: ${componentUrl}`, 'CompletionProvider');
-
-        // Check if we're on a line that looks like it's starting a parameter
-        const currentLine = lines[currentLineIndex];
-        const currentLineText = currentLine.trim();
-
-        // Only provide completions if:
-        // 1. Line is empty or only has whitespace and partial parameter name
-        // 2. Line starts with proper indentation for parameters (6+ spaces)
-        // 3. We're not in the middle of a value assignment
-        const lineIndent = currentLine.length - currentLine.trimStart().length;
-        const isParameterContext = lineIndent >= 6 &&
-          (!currentLineText.includes(':') || currentLineText.endsWith(':'));
-
-        if (!isParameterContext) {
-          this.logger.debug(`[CompletionProvider] Not in parameter name context (line: "${currentLineText}")`, 'CompletionProvider');
-          return null;
-        }
-
-        // Get the component details - local includes resolve from the workspace file, others from cache.
-        this.logger.debug(`[CompletionProvider] Looking up component: ${componentUrl} (local=${closestComponent.isLocal})`, 'CompletionProvider');
-        const component = closestComponent.isLocal
-          ? await resolveLocalComponent(componentUrl, document)
-          : await this.findComponentInCache(componentUrl, document.uri);
-        if (!component || !component.parameters) {
-          this.logger.debug(`[CompletionProvider] Component not found in cache or has no parameters: ${componentUrl}`, 'CompletionProvider');
-          return null;
-        }
-
-        this.logger.debug(`[CompletionProvider] Found component ${component.name} with ${component.parameters.length} parameters`, 'CompletionProvider');
-
-        // Get existing inputs
-        const existingInputs = include.inputs || {};
-
-        this.logger.debug(`[CompletionProvider] Component ${component.name} has ${component.parameters.length} total parameters`, 'CompletionProvider');
-        this.logger.debug(`[CompletionProvider] Existing inputs: ${Object.keys(existingInputs).join(', ') || 'none'}`, 'CompletionProvider');
-
-        // Filter out already provided inputs
-        const missingInputs = component.parameters.filter((param: ComponentParameter) =>
-          !Object.prototype.hasOwnProperty.call(existingInputs, param.name)
-        );
-
-        this.logger.debug(`[CompletionProvider] Found ${missingInputs.length} missing inputs for completion: ${missingInputs.map(p => p.name).join(', ')}`, 'CompletionProvider');
-
-        // Create completion items for missing inputs
-        return missingInputs.map((param: ComponentParameter & { enum?: unknown[] }) => {
-          const item = new vscode.CompletionItem(param.name, vscode.CompletionItemKind.Property);
-
-          // Enhanced documentation
-          let documentation = `**${param.name}** (${param.required ? 'required' : 'optional'})\n\n`;
-          documentation += `${param.description || 'No description available'}\n\n`;
-          documentation += `**Type:** ${param.type || 'string'}\n`;
-          if (param.default !== undefined) {
-            documentation += `**Default:** \`${param.default}\`\n`;
-          }
-
-          item.documentation = new vscode.MarkdownString(documentation);
-
-          // Smart insert text based on parameter type and default value
-          let insertValue: string;
-          if (param.default !== undefined) {
-            if (typeof param.default === 'string') {
-              insertValue = `"${param.default}"`;
-            } else {
-              insertValue = String(param.default);
-            }
-          } else {
-            // Provide type-appropriate placeholders with better snippets
-            switch (param.type) {
-              case 'boolean':
-                insertValue = param.required ? '${1|true,false|}' : '${1|false,true|}';
-                break;
-              case 'number':
-                insertValue = param.required ? '${1:0}' : '${1:0}';
-                break;
-              case 'integer':
-                insertValue = param.required ? '${1:1}' : '${1:0}';
-                break;
-              case 'array':
-                insertValue = '${1:[]}';
-                break;
-              case 'object':
-                insertValue = '${1:{}}';
-                break;
-              default:
-                // Check if there are enum values
-                if (param.enum && Array.isArray(param.enum)) {
-                  const enumValues = param.enum.map((val: unknown) => `"${String(val)}"`).join(',');
-                  insertValue = `\${1|${enumValues}|}`;
-                } else {
-                  insertValue = param.required ? '${1:"TODO: set value"}' : '${1:""}';
-                }
-            }
-          }
-
-          item.insertText = new vscode.SnippetString(`${param.name}: ${insertValue}`);
-
-          // Add sorting priority (required params first)
-          item.sortText = param.required ? `0${param.name}` : `1${param.name}`;
-
-          // Add detail showing requirement status
-          item.detail = `${param.type || 'string'} ${param.required ? '(required)' : '(optional)'}`;
-
-          return item;
-        });
-      }
-
-      return null;
+        return item;
+      });
     } catch (error) {
       this.logger.error(`[CompletionProvider] Error in provideComponentInputCompletions: ${error}`, 'CompletionProvider');
       return null;
