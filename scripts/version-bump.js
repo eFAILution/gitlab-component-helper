@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* eslint-env node */
 
 const fs = require('fs');
 const { execSync } = require('child_process');
@@ -12,7 +11,7 @@ function handleErrorAndExit(message, error = null) {
   if (error) {
     console.error('Error details:', error.message || error);
   }
-  process.exit(1); // eslint-disable-line no-process-exit
+  process.exit(1);
 }
 
 // Helper function to run commands
@@ -45,7 +44,7 @@ function getCommitsSinceLastTag() {
     const lastTag = execSync('git describe --tags --abbrev=0', { encoding: 'utf8' }).trim();
     const commits = execSync(`git log ${lastTag}..HEAD --oneline --pretty=format:"%s"`, { encoding: 'utf8' });
     return commits.trim().split('\n').filter(commit => commit.length > 0);
-  } catch (error) {
+  } catch {
     // No previous tags, get all commits
     const commits = execSync('git log --oneline --pretty=format:"%s"', { encoding: 'utf8' });
     return commits.trim().split('\n').filter(commit => commit.length > 0);
@@ -99,7 +98,7 @@ function bumpVersion(currentVersion, bumpType) {
 // Update changelog
 function updateChangelog(version, commits) {
   const today = new Date().toISOString().split('T')[0];
-  let changelogContent = '';
+  let changelogContent;
 
   if (fs.existsSync('CHANGELOG.md')) {
     changelogContent = fs.readFileSync('CHANGELOG.md', 'utf8');

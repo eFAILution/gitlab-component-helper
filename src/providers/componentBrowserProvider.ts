@@ -2,13 +2,47 @@ import * as vscode from 'vscode';
 import { getComponentService } from '../services/component';
 import { ComponentCacheManager } from '../services/cache/componentCacheManager';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
-import { ComponentParameter } from './componentDetector';
+import type { ComponentParameter, Component } from './componentDetector';
+import type { CachedComponent } from '../types/cache';
+import type { SourceGroup, ComponentGroup, ComponentVersion } from './componentBrowserTypes';
+import type { HoverContext } from './hoverContentBuilder';
 import { containsGitLabVariables } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
 import { generateComponentText } from './componentBrowserGenerate';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
 import { transformCachedComponentsToGroups } from './componentBrowserTransform';
+
+/**
+ * Component shape carried through the detach-hover webview's "Open in Detailed View" round trip.
+ * Adds the hover-builder's location context so the message handler can route inserts back to the
+ * originating editor position. Mirrors the same alias in `extension.ts` — kept local here rather
+ * than centralised because the field is a runtime-only extension applied by `hoverContentBuilder`.
+ */
+type DetachableComponent = Component & { _hoverContext?: HoverContext };
+
+/**
+ * Type-guard narrowing a `Component`-shaped value to one that also satisfies `CachedComponent`.
+ * `Component` carries `source`/`sourcePath`/`gitlabInstance`/`version`/`url` as optional; cache
+ * methods like `fetchComponentVersions` require them. The guard checks all five before the call so
+ * we don't pass a half-populated `Component` into a function expecting the full cache shape.
+ */
+function isCachedComponentShape(component: Component): component is Component & CachedComponent {
+  return typeof component.source === 'string'
+    && typeof component.sourcePath === 'string'
+    && typeof component.gitlabInstance === 'string'
+    && typeof component.version === 'string'
+    && typeof component.url === 'string';
+}
+
+/**
+ * Pre-existing component shape parsed out of a `.gitlab-ci.yml` include line by
+ * `parseExistingComponentText`. The parser returns `unknown`; this guard narrows it to the
+ * `{ inputs?: Record<string, unknown> }` shape that `generateComponentText` expects.
+ */
+function isExistingComponentShape(value: unknown): value is { inputs?: Record<string, unknown> } {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 // Constants for timing delays
 const EDITOR_ACTIVATION_DELAY_MS = 50;
@@ -156,11 +190,11 @@ export class ComponentBrowserProvider {
       this.logger.debug(`[ComponentBrowser] Cache has ${Object.keys(cacheErrors).length} source errors`, 'ComponentBrowser');
 
       // Debug: log what components we actually have
-      allComponents.forEach((source: any, index: number) => {
+      allComponents.forEach((source, index) => {
         this.logger.debug(`[ComponentBrowser] Source ${index + 1}: ${source.source} (${source.totalComponents} total components)`, 'ComponentBrowser');
-        source.projects.forEach((project: any) => {
+        source.projects.forEach(project => {
           this.logger.debug(`[ComponentBrowser]   Project: ${project.name} (${project.components.length} components)`, 'ComponentBrowser');
-          project.components.forEach((comp: any) => {
+          project.components.forEach(comp => {
             this.logger.debug(`[ComponentBrowser]     - ${comp.name}`, 'ComponentBrowser');
           });
         });
@@ -184,9 +218,10 @@ export class ComponentBrowserProvider {
         const contextInstance = componentContext.gitlabInstance;
         const contextPath = componentContext.path;
 
-        // Check if the context source is already in the cache
-        const contextSourceExists = allComponents.some(
-          (group: any) => group.gitlabInstance === contextInstance && group.sourcePath === contextPath
+        // Check if the context source is already in the cache. Match by any project's `path`/`gitlabInstance`
+        // within the source group — `SourceGroup` doesn't carry these fields itself.
+        const contextSourceExists = allComponents.some(group =>
+          group.projects.some(p => p.gitlabInstance === contextInstance && p.path === contextPath)
         );
 
         // If not in cache, try to add it dynamically
@@ -223,34 +258,49 @@ export class ComponentBrowserProvider {
               }));
 
               // Add to the components list with proper hierarchical structure
-              allComponents.unshift({
+              const contextProjectComponents: ComponentGroup[] = components.map((comp): ComponentGroup => ({
+                name: comp.name,
+                description: comp.description,
+                summary: comp.summary,
+                usage: comp.usage,
+                notes: comp.notes,
+                rawYaml: comp.rawYaml,
+                parameters: comp.parameters,
+                source: comp.source,
+                sourcePath: comp.sourcePath,
+                gitlabInstance: comp.gitlabInstance,
+                documentationUrl: comp.documentationUrl ?? '',
+                versions: [{
+                  version: comp.version,
+                  description: comp.description,
+                  parameters: comp.parameters,
+                  documentationUrl: comp.documentationUrl ?? '',
+                  source: comp.source,
+                  sourcePath: comp.sourcePath,
+                  gitlabInstance: comp.gitlabInstance,
+                }],
+                versionCount: 1,
+                defaultVersion: comp.version,
+                availableVersions: [comp.version],
+              }));
+              const contextSource: SourceGroup = {
                 source: `Components from ${contextPath}`,
                 type: 'source',
                 isExpanded: true,
                 totalComponents: components.length,
+                totalVersions: components.length,
+                projectCount: 1,
+                componentCount: components.length,
                 projects: [{
                   name: contextPath.split('/').pop() || contextPath,
                   path: contextPath,
                   gitlabInstance: contextInstance,
                   type: 'project',
                   isExpanded: true, // Auto-expand context projects
-                  components: components.map((comp: any) => ({
-                    ...comp,
-                    versions: [{
-                      version: comp.version,
-                      description: comp.description,
-                      parameters: comp.parameters,
-                      documentationUrl: comp.documentationUrl,
-                      source: comp.source,
-                      sourcePath: comp.sourcePath,
-                      gitlabInstance: comp.gitlabInstance
-                    }],
-                    versionCount: 1,
-                    defaultVersion: comp.version,
-                    availableVersions: [comp.version]
-                  }))
-                }]
-              });
+                  components: contextProjectComponents,
+                }],
+              };
+              allComponents.unshift(contextSource);
 
               this.logger.debug(`[ComponentBrowser] Successfully added ${components.length} components from context source`, 'ComponentBrowser');
             }
@@ -281,7 +331,7 @@ export class ComponentBrowserProvider {
       const filteredErrors: Record<string, string> = {};
 
       // Get list of sources that have components
-      const sourcesWithComponents = new Set(allComponents.map((group: any) => group.source));
+      const sourcesWithComponents = new Set(allComponents.map(group => group.source));
 
       // Only include errors for sources that don't have any components
       Object.entries(cacheErrors).forEach(([source, error]) => {
@@ -303,7 +353,7 @@ export class ComponentBrowserProvider {
     }
   }
 
-  private async insertComponent(component: any, includeInputs: boolean = false, selectedInputs?: string[]) {
+  private async insertComponent(component: Component, includeInputs: boolean = false, selectedInputs?: string[]) {
     // Check if we have the original editor stored
     if (!this.originalEditor) {
       vscode.window.showErrorMessage("No active editor to insert component into");
@@ -354,7 +404,7 @@ export class ComponentBrowserProvider {
       let parametersToInclude = component.parameters;
       if (selectedInputs && selectedInputs.length > 0) {
         // Only include specifically selected inputs
-        parametersToInclude = component.parameters.filter((param: any) => selectedInputs.includes(param.name));
+        parametersToInclude = component.parameters.filter(param => selectedInputs.includes(param.name));
       }
 
       for (const param of parametersToInclude) {
@@ -427,11 +477,11 @@ export class ComponentBrowserProvider {
   }
 
   // Public method to insert component from detached view (called from extension.ts)
-  public async insertComponentFromDetached(component: any, includeInputs: boolean = false, selectedInputs?: string[]) {
+  public async insertComponentFromDetached(component: Component, includeInputs: boolean = false, selectedInputs?: string[]) {
     return this.insertComponent(component, includeInputs, selectedInputs);
   }
 
-  public async showComponentDetails(component: any) {
+  public async showComponentDetails(component: DetachableComponent) {
     // Create a new webview panel for component details
     const detailsPanel = vscode.window.createWebviewPanel(
       'gitlabComponentDetails',
@@ -454,6 +504,10 @@ export class ComponentBrowserProvider {
 
           // Update component version if specified
           if (version && version !== component.version) {
+            if (!component.sourcePath || !component.gitlabInstance) {
+              vscode.window.showErrorMessage('Cannot fetch version: component is missing source path or GitLab instance.');
+              return;
+            }
             const updatedComponent = await this.cacheManager.fetchSpecificVersion(
               component.name,
               component.sourcePath,
@@ -491,6 +545,9 @@ export class ComponentBrowserProvider {
         } else if (message.command === 'fetchVersions') {
           // Fetch available versions for the component
           try {
+            if (!isCachedComponentShape(component)) {
+              throw new Error('Component is missing required fields (source, sourcePath, gitlabInstance, version) for version lookup.');
+            }
             const versions = await this.cacheManager.fetchComponentVersions(component);
             detailsPanel.webview.postMessage({
               command: 'versionsLoaded',
@@ -509,6 +566,10 @@ export class ComponentBrowserProvider {
           try {
             this.logger.debug(`[ComponentBrowser] Version changed to ${selectedVersion}, fetching details...`, 'ComponentBrowser');
 
+            if (!component.sourcePath || !component.gitlabInstance) {
+              vscode.window.showErrorMessage('Cannot change version: component is missing source path or GitLab instance.');
+              return;
+            }
             const updatedComponent = await this.cacheManager.fetchSpecificVersion(
               component.name,
               component.sourcePath,
@@ -587,20 +648,20 @@ export class ComponentBrowserProvider {
     `;
   }
 
-  private getComponentBrowserHtml(componentGroups: any[], cacheErrors: Record<string, string> = {}): string {
+  private getComponentBrowserHtml(componentGroups: SourceGroup[], cacheErrors: Record<string, string> = {}): string {
     const hasErrors = Object.keys(cacheErrors).length > 0;
 
     // Prepare version data as a safe JSON string
-    const versionData = componentGroups.reduce((acc: any, source: any) => {
+    const versionData = componentGroups.reduce<Record<string, Record<string, ComponentVersion>>>((acc, source) => {
       if (source.projects && Array.isArray(source.projects)) {
-        source.projects.forEach((project: any) => {
+        source.projects.forEach(project => {
           if (project.components && Array.isArray(project.components)) {
-            project.components.forEach((component: any) => {
+            project.components.forEach(component => {
               if (!acc[component.name]) {
                 acc[component.name] = {};
               }
               if (component.versions && Array.isArray(component.versions)) {
-                component.versions.forEach((version: any) => {
+                component.versions.forEach(version => {
                   acc[component.name][version.version] = version;
                 });
               }
@@ -630,14 +691,14 @@ export class ComponentBrowserProvider {
     // Build components HTML
     const componentsHtml = componentGroups.length === 0 ?
       '<p class="no-components">No components found. Click "Refresh" to load components from your configured sources.</p>' :
-      componentGroups.map((source: any) => {
+      componentGroups.map(source => {
         const sourceId = source.source.replace(/[^a-zA-Z0-9]/g, '_');
-        const projectsHtml = (source.projects && Array.isArray(source.projects) ? source.projects : []).map((project: any) => {
+        const projectsHtml = (source.projects && Array.isArray(source.projects) ? source.projects : []).map(project => {
           const projectId = `${sourceId}_${project.path.replace(/[^a-zA-Z0-9]/g, '_')}`;
           const components = project.components && Array.isArray(project.components) ? project.components : [];
           const componentsHtml = components.length === 0 ?
             '<p class="no-components">No components found in this project</p>' :
-            components.map((component: any) => {
+            components.map(component => {
               const componentKey = `${component.name}-${component.sourcePath}`;
               const hasVersions = component.availableVersions && component.availableVersions.length > 0;
 
@@ -1388,7 +1449,7 @@ export class ComponentBrowserProvider {
     `;
   }
 
-  public getComponentDetailsHtml(component: any): string {
+  public getComponentDetailsHtml(component: Component & { availableVersions?: string[] }): string {
     const parameters = component.parameters || [];
     const availableVersions = component.availableVersions || [component.version || 'main'];
     const headerSummary = component.summary;
@@ -1968,7 +2029,7 @@ export class ComponentBrowserProvider {
       .replace(/'/g, '&#39;');
   }
 
-  private buildTemplateFileUrl(component: any): string | undefined {
+  private buildTemplateFileUrl(component: Component): string | undefined {
     if (!component || !component.gitlabInstance || !component.sourcePath || !component.templatePath) {
       return undefined;
     }
@@ -2230,7 +2291,8 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
   }
 
 
-  private getErrorHtml(error: any): string {
+  private getErrorHtml(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
     return `
       <!DOCTYPE html>
       <html lang="en">
@@ -2268,7 +2330,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
         <h1>Component Loading Error</h1>
 
         <div class="error">
-          <strong>Error:</strong> ${error}
+          <strong>Error:</strong> ${message}
         </div>
 
         <div>
@@ -2479,28 +2541,9 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     }
   }
 
-  private async fetchSpecificVersion(component: any, version: string): Promise<any | null> {
-    try {
-      this.logger.debug(`[ComponentBrowser] Fetching version ${version} of ${component.name}`, 'ComponentBrowser');
-
-      // Use the cache manager to fetch the specific version
-      const specificComponent = await this.cacheManager.fetchSpecificVersion(
-        component.name,
-        component.sourcePath,
-        component.gitlabInstance,
-        version
-      );
-
-      return specificComponent;
-    } catch (error) {
-      this.logger.error(`[ComponentBrowser] Error fetching version ${version}: ${error}`, 'ComponentBrowser');
-      return null;
-    }
-  }
-
   // Public method to edit an existing component from detached view (called from extension.ts)
   public async editExistingComponentFromDetached(
-    component: any,
+    component: Component,
     documentUri: string,
     position: { line: number; character: number },
     includeInputs: boolean = false,
@@ -2528,7 +2571,8 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     }
 
     // Parse the existing component to see what inputs it already has
-    const existingComponent = await this.parseExistingComponent(document, componentRange);
+    const parsedExisting = await this.parseExistingComponent(document, componentRange);
+    const existingComponent = isExistingComponentShape(parsedExisting) ? parsedExisting : null;
 
     // Generate the new component text with updated inputs
     const newComponentText = generateComponentText(
@@ -2572,7 +2616,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     );
   }
 
-  private async parseExistingComponent(document: vscode.TextDocument, range: vscode.Range): Promise<any> {
+  private async parseExistingComponent(document: vscode.TextDocument, range: vscode.Range): Promise<unknown> {
     return parseExistingComponentText(document.getText(range));
   }
 }

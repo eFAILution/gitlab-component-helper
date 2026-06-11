@@ -34,7 +34,7 @@ deploy-job:
     ENV_VAR: "should not be parsed"
     ANOTHER_VAR: "also should not be parsed"
   script:
-    - echo "Deploying to \$[[ inputs.environment ]]"
+    - echo "Deploying to $[[ inputs.environment ]]"
   after_script:
     - echo "Cleanup"`;
 
@@ -91,7 +91,7 @@ deploy:
 ---
 component-job:
   script: echo job 1
-  stage: \$[[ inputs.stage ]]
+  stage: $[[ inputs.stage ]]
   variables:
     JOB_VAR: "should not be extracted"
     ANOTHER_JOB_VAR: "also should not be extracted"

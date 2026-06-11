@@ -124,7 +124,7 @@ suite('transformCachedComponentsToGroups — shape', () => {
       {
         name: 'test-component',
         description: 'A test component',
-        parameters: [{ name: 'env', required: true, type: 'string' }],
+        parameters: [{ name: 'env', description: 'Target environment', required: true, type: 'string' }],
         version: 'v1.0.0',
         source: 'Test Source',
         sourcePath: 'group/project',
@@ -145,7 +145,7 @@ suite('transformCachedComponentsToGroups — shape', () => {
   });
 
   test('skips entries missing source / sourcePath / name and invokes the onSkip callback', () => {
-    const skipped: Array<{ comp: any; reason: string }> = [];
+    const skipped: Array<{ comp: unknown; reason: string }> = [];
     const result = transformCachedComponentsToGroups(
       [
         {

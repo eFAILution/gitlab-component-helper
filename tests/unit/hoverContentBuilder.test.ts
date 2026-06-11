@@ -30,7 +30,7 @@ suite('buildComponentHoverMarkdown — title + detach link', () => {
 
   test('emits the detach link with the JSON-encoded component + cursor context', () => {
     const md = buildComponentHoverMarkdown(baseComponent(), HOVER_CONTEXT);
-    const detachLineMatch = md.match(/\[🔗 Open in Detailed View\]\((command:[^\)]+)\)/);
+    const detachLineMatch = md.match(/\[🔗 Open in Detailed View\]\((command:[^)]+)\)/);
     assert.ok(detachLineMatch, 'detach link markdown missing');
     const url = detachLineMatch[1];
     assert.ok(url.startsWith('command:gitlab-component-helper.detachHover?'));
@@ -50,7 +50,7 @@ suite('buildComponentHoverMarkdown — title + detach link', () => {
       baseComponent({ description: 'Status: :) (see note 1) and more text after' }),
       HOVER_CONTEXT,
     );
-    const detachLineMatch = md.match(/\[🔗 Open in Detailed View\]\((command:[^\)]+)\)/);
+    const detachLineMatch = md.match(/\[🔗 Open in Detailed View\]\((command:[^)]+)\)/);
     assert.ok(detachLineMatch, 'detach link markdown missing');
     const url = detachLineMatch[1];
     // The URL must contain no literal `(` or `)` — those would terminate the markdown link prematurely.

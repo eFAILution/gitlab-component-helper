@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* eslint-env node */
 
 const fs = require('fs');
 const { execSync } = require('child_process');
@@ -27,7 +26,7 @@ function runCommand(command, description) {
     return output;
   } catch (error) {
     console.error(`❌ ${description} failed:`, error.message);
-    process.exit(1); // eslint-disable-line no-process-exit
+    process.exit(1);
   }
 }
 
@@ -43,11 +42,11 @@ function checkGitStatus() {
       console.log('❌ Working directory is not clean. Please commit your changes first.');
       console.log('Uncommitted changes:');
       console.log(status);
-      process.exit(1); // eslint-disable-line no-process-exit
+      process.exit(1);
     }
   } catch (error) {
     console.error('❌ Failed to check git status:', error.message);
-    process.exit(1); // eslint-disable-line no-process-exit
+    process.exit(1);
   }
 }
 
@@ -57,7 +56,7 @@ function getCommitsSinceLastTag() {
     const lastTag = execSync('git describe --tags --abbrev=0', { encoding: 'utf8' }).trim();
     const commits = execSync(`git log ${lastTag}..HEAD --oneline --pretty=format:"%s"`, { encoding: 'utf8' });
     return commits.trim().split('\n').filter(commit => commit.length > 0);
-  } catch (error) {
+  } catch {
     // No previous tags, get all commits
     const commits = execSync('git log --oneline --pretty=format:"%s"', { encoding: 'utf8' });
     return commits.trim().split('\n').filter(commit => commit.length > 0);
@@ -134,7 +133,7 @@ function updateChangelog(version, commits) {
   }
 
   const today = new Date().toISOString().split('T')[0];
-  let changelogContent = '';
+  let changelogContent;
 
   if (fs.existsSync('CHANGELOG.md')) {
     changelogContent = fs.readFileSync('CHANGELOG.md', 'utf8');
