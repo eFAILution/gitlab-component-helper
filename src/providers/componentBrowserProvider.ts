@@ -12,6 +12,7 @@ import { templateFileUrlForResolved } from '../utils/templateFileUrl';
 import { generateComponentText } from './componentBrowserGenerate';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
 import { transformCachedComponentsToGroups } from './componentBrowserTransform';
+import { compileTagTemplate, stripTagPrefix } from '../services/component/tagScoping';
 
 /**
  * Component shape carried through the detach-hover webview's "Open in Detailed View" round trip.
@@ -492,8 +493,12 @@ export class ComponentBrowserProvider {
       }
     );
 
+    // The component arrives from the webview carrying only the selected version and none of the source settings;
+    // recover the full version list and monorepo settings from the cache so the dropdown is complete and labelled.
+    const enriched = await this.lookupComponentDetails(component);
+
     // Show component details
-    detailsPanel.webview.html = this.getComponentDetailsHtml(component);
+    detailsPanel.webview.html = this.getComponentDetailsHtml({ ...component, ...enriched });
 
     // Handle messages from the details panel
     detailsPanel.webview.onDidReceiveMessage(
@@ -648,6 +653,32 @@ export class ComponentBrowserProvider {
     `;
   }
 
+  /**
+   * Render the `<option>` markup for a component's version dropdown.
+   *
+   * For a monorepo source the available versions are full prefixed tags (`<name>-1.1.0`). The option **value** is
+   * always the full tag (the ref inserted into the file); only the visible label is the prefix-stripped form.
+   * Non-monorepo components keep value == label == the version string.
+   *
+   * @param component  The component group to render options for. Its `availableVersions` become the options,
+   *                   `defaultVersion` marks the pre-selected one, and a `tagPattern` (if present) drives the
+   *                   prefix-stripped labels.
+   * @returns          The concatenated `<option>` HTML for the dropdown's contents (no wrapping `<select>`).
+   */
+  private renderVersionOptions(component: ComponentGroup): string {
+    const selectedAttr = (version: string): string =>
+      version === component.defaultVersion ? ' selected' : '';
+
+    return component.availableVersions
+      .map((version) => {
+        const label = component.tagPattern
+          ? stripTagPrefix(version, component.name, component.tagPattern)
+          : version;
+        return `<option value="${this.escapeHtml(version)}"${selectedAttr(version)}>${this.escapeHtml(label)}</option>`;
+      })
+      .join('');
+  }
+
   private getComponentBrowserHtml(componentGroups: SourceGroup[], cacheErrors: Record<string, string> = {}): string {
     const hasErrors = Object.keys(cacheErrors).length > 0;
 
@@ -713,9 +744,7 @@ export class ComponentBrowserProvider {
                     ${hasVersions ? `
                       ${component.availableVersions.length > 1 ? `
                         <select class="version-dropdown" onchange="updateComponentVersion('${component.name}', this.value, '${projectId}')" oncontextmenu="showContextMenu(event, '${component.name}', this.value, '${projectId}')">
-                          ${component.availableVersions.map((version: string) => `
-                            <option value="${version}" ${version === component.defaultVersion ? 'selected' : ''}>${version}</option>
-                          `).join('')}
+                          ${this.renderVersionOptions(component)}
                         </select>
                       ` : `<span class="single-version">${component.availableVersions[0] || 'latest'}</span>`}
                       <button onclick="viewDetailsById('${component.name}', '${component.defaultVersion || component.availableVersions[0]}', '${projectId}')">Details</button>
@@ -1151,7 +1180,12 @@ export class ComponentBrowserProvider {
             const projectId = componentCard.getAttribute('data-project-id'), actionsDiv = document.getElementById('actions-' + componentKey);
             if (actionsDiv) {
               if (versions.length > 1) {
-                const opts = versions.map(function(v) { return '<option value="' + v + '" ' + (v === defaultVersion ? 'selected' : '') + '>' + v + '</option>'; }).join('');
+                // For monorepo sources the version values are full tags (e.g. <name>-1.1.0); the server sends a
+                // versionLabels map (full tag → stripped {version}) so we display the short form while keeping the
+                // full tag as the option value (the inserted ref).
+                const labels = message.versionLabels || {};
+                const label = function(v) { return labels[v] || v; };
+                const opts = versions.map(function(v) { return '<option value="' + v + '" ' + (v === defaultVersion ? 'selected' : '') + '>' + label(v) + '</option>'; }).join('');
                 actionsDiv.innerHTML = '<select class="version-dropdown" onchange="updateComponentVersion(&#39;' + componentName + '&#39;, this.value, &#39;' + projectId + '&#39;)">' + opts + '</select><button onclick="viewDetailsById(&#39;' + componentName + '&#39;, &#39;' + defaultVersion + '&#39;, &#39;' + projectId + '&#39;)">Details</button><button onclick="insertComponentById(&#39;' + componentName + '&#39;, &#39;' + defaultVersion + '&#39;, &#39;' + projectId + '&#39;)">Insert</button>';
                 const descElement = document.getElementById('desc-' + componentName + '-' + projectId);
                 if (descElement && !document.getElementById('version-info-' + componentName + '-' + projectId)) {
@@ -1449,7 +1483,61 @@ export class ComponentBrowserProvider {
     `;
   }
 
-  public getComponentDetailsHtml(component: Component & { availableVersions?: string[] }): string {
+  /**
+   * Enrich a webview-supplied component from the cache for the details panel. The object posted from the browser
+   * carries only the selected version and none of the source-level settings, so here we recover:
+   *  - the full `availableVersions` list (so the version dropdown isn't limited to the one selected version), and
+   *  - the source's `tagPattern` (for monorepo prefix-stripped labels).
+   *
+   * Best-effort: returns an empty object if the component isn't found or the cache read fails.
+   *
+   * @param component  Identity of the component to look up. Matched against the cache by `name` plus its location —
+   *                   the flat `sourcePath`/`gitlabInstance` fields (browser components) or `context` (hover-detected
+   *                   components).
+   * @returns          The recovered `availableVersions` and `tagPattern`, each omitted when the cache has no value
+   *                   for it; an empty object if no matching component is cached or the read fails.
+   */
+  public async lookupComponentDetails(
+    component: {
+      name: string;
+      sourcePath?: string;
+      gitlabInstance?: string;
+      context?: { gitlabInstance: string; path: string };
+    },
+  ): Promise<{ availableVersions?: string[]; tagPattern?: string }> {
+    try {
+      // Hover-detected components carry their location under `context`; browser components use the flat fields.
+      const sourcePath = component.sourcePath || component.context?.path;
+      const gitlabInstance = component.gitlabInstance || component.context?.gitlabInstance;
+
+      const cached = await this.cacheManager.getComponents();
+      const match = cached.find(c =>
+        c.name === component.name &&
+        c.sourcePath === sourcePath &&
+        c.gitlabInstance === gitlabInstance
+      );
+      if (!match) return {};
+
+      const enriched: { availableVersions?: string[]; tagPattern?: string } = {};
+      if (match.availableVersions && match.availableVersions.length > 0) {
+        enriched.availableVersions = match.availableVersions;
+      }
+      if (match.tagPattern) {
+        enriched.tagPattern = match.tagPattern;
+      }
+      return enriched;
+    } catch {
+      // Best-effort enrichment — fall through to no enrichment.
+      return {};
+    }
+  }
+
+  public getComponentDetailsHtml(
+    component: Component & {
+      availableVersions?: string[];
+      tagPattern?: string;
+    },
+  ): string {
     const parameters = component.parameters || [];
     const availableVersions = component.availableVersions || [component.version || 'main'];
     const headerSummary = component.summary;
@@ -1648,9 +1736,17 @@ export class ComponentBrowserProvider {
           <div class="version-control">
             <strong>Version:</strong>
             <select id="versionSelect" onchange="onVersionChange()">
-              ${availableVersions.map((version: string) =>
-                `<option value="${version}" ${version === component.version ? 'selected' : ''}>${version}</option>`
-              ).join('')}
+              ${(() => {
+                // For monorepo tags show the template's {version} capture as the label, keeping the full tag as the
+                // option value (the ref used to fetch and insert the version).
+                const matcher = component.tagPattern
+                  ? compileTagTemplate(component.tagPattern, component.name)
+                  : null;
+                return availableVersions.map((version: string) => {
+                  const label = matcher?.extractVersion(version) ?? version;
+                  return `<option value="${version}" ${version === component.version ? 'selected' : ''}>${label}</option>`;
+                }).join('');
+              })()}
             </select>
             <span class="version-loading" id="versionLoading" style="display: none;">Loading version details...</span>
           </div>
@@ -1966,7 +2062,7 @@ export class ComponentBrowserProvider {
 
             switch (message.command) {
               case 'versionsLoaded':
-                updateVersionDropdown(message.versions, message.currentVersion);
+                updateVersionDropdown(message.versions, message.currentVersion, message.versionLabels);
                 break;
               case 'versionsError':
                 document.getElementById('versionLoading').style.display = 'none';
@@ -1984,18 +2080,20 @@ export class ComponentBrowserProvider {
             }
           });
 
-          function updateVersionDropdown(versions, currentVersion) {
+          function updateVersionDropdown(versions, currentVersion, versionLabels) {
             const select = document.getElementById('versionSelect');
             const loading = document.getElementById('versionLoading');
+            const labels = versionLabels || {};
 
             // Clear existing options
             select.innerHTML = '';
 
-            // Add new options
+            // Add new options. The option value is the full tag (the inserted ref); the label is the stripped
+            // {version} for monorepo sources (falls back to the full tag when no label is provided).
             versions.forEach(version => {
               const option = document.createElement('option');
               option.value = version;
-              option.textContent = version;
+              option.textContent = labels[version] || version;
               if (version === currentVersion) {
                 option.selected = true;
               }
@@ -2494,19 +2592,26 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
       this.versionsFetched.add(componentKey);
       this.versionsLoading.delete(componentKey);
 
-      // Calculate default version (prefer latest, main, master, or highest semantic version)
+      // Pick the default version. `availableVersions` is already sorted highest-priority-first (semantic versions
+      // before branches), so the first entry is the best default — except `latest`, the catalog floating tag, which
+      // wins when present.
       const availableVersions = updatedComponent.availableVersions || [];
       let defaultVersion = updatedComponent.version || 'latest';
 
       if (availableVersions.length > 0) {
-        if (availableVersions.includes('latest')) {
-          defaultVersion = 'latest';
-        } else if (availableVersions.includes('main')) {
-          defaultVersion = 'main';
-        } else if (availableVersions.includes('master')) {
-          defaultVersion = 'master';
-        } else {
-          defaultVersion = availableVersions[0];
+        defaultVersion = availableVersions.includes('latest') ? 'latest' : availableVersions[0];
+      }
+
+      // For a monorepo source, precompute display labels (full tag → stripped {version}) server-side, since the
+      // webview can't reach the template matcher. Non-monorepo sources send no labels (value == label).
+      let versionLabels: Record<string, string> | undefined;
+      if (updatedComponent.tagPattern) {
+        const matcher = compileTagTemplate(updatedComponent.tagPattern, componentName);
+        if (matcher) {
+          versionLabels = {};
+          for (const v of availableVersions) {
+            versionLabels[v] = matcher.extractVersion(v) ?? v;
+          }
         }
       }
 
@@ -2517,6 +2622,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
           componentName,
           sourcePath,
           versions: availableVersions,
+          versionLabels,
           defaultVersion
         });
       }

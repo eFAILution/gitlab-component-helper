@@ -1,6 +1,7 @@
 import { Logger } from '../../utils/logger';
 import { HttpClient } from '../../utils/httpClient';
 import { TokenManager } from './tokenManager';
+import { scopeTagsToComponent } from './tagScoping';
 import type { GitLabProjectInfo, GitLabTag, GitLabBranch } from '../../types/api';
 import { NetworkError } from '../../errors';
 
@@ -21,11 +22,17 @@ export class VersionManager {
    * Fetch all tags/versions for a GitLab project with optimizations
    * @param gitlabInstance The GitLab instance hostname
    * @param projectPath The project path
+   * @param scopeToComponent When set, the project is treated as a tag-per-component monorepo and tags are scoped to
+   *                         this component using `tagPattern` (full tags retained as the version strings).
+   * @param tagPattern The tag-version template for scoping (e.g. `{name}-{version}`); defaults to the house
+   *                           convention when omitted.
    * @returns Array of version strings (tags and important branches)
    */
   public async fetchProjectVersions(
     gitlabInstance: string,
-    projectPath: string
+    projectPath: string,
+    scopeToComponent?: string,
+    tagPattern?: string
   ): Promise<string[]> {
     const startTime = Date.now();
 
@@ -69,9 +76,12 @@ export class VersionManager {
 
       // Process tags
       if (tagsResult.status === 'fulfilled' && Array.isArray(tagsResult.value)) {
-        const tagVersions = tagsResult.value
+        const tagNames = tagsResult.value
           .map(tag => tag.name)
           .filter(name => name);
+        const tagVersions = scopeToComponent
+          ? scopeTagsToComponent(tagNames, scopeToComponent, tagPattern)
+          : tagNames;
         versions.push(...tagVersions);
         this.logger.debug(`Found ${tagVersions.length} tags`);
       } else {
@@ -152,6 +162,31 @@ export class VersionManager {
     } catch (error) {
       this.logger.warn(`Error fetching tags: ${error}`);
       return [];
+    }
+  }
+
+  /**
+   * Fetch a project's default branch name (e.g. `main`) from its project info.
+   *
+   * @param gitlabInstance The GitLab instance hostname.
+   * @param projectPath The project path; URL-encoded internally.
+   * @returns The default branch name, or null if it can't be resolved (network error, no access).
+   */
+  public async fetchProjectDefaultBranch(
+    gitlabInstance: string,
+    projectPath: string
+  ): Promise<string | null> {
+    try {
+      const apiUrl = `https://${gitlabInstance}/api/v4/projects/${encodeURIComponent(projectPath)}`;
+      const token = await this.tokenManager.getTokenForProject(gitlabInstance);
+      const options = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+      const projectInfo = await this.httpClient.fetchJson<GitLabProjectInfo>(apiUrl, options);
+      return projectInfo?.default_branch || null;
+    } catch (error) {
+      this.logger.debug(
+        `[VersionManager] Could not resolve default branch for ${projectPath}: ${error}`
+      );
+      return null;
     }
   }
 

@@ -106,15 +106,44 @@ export class ComponentService implements ComponentSource {
   }
 
   // Version management delegation
+  /**
+   * Fetch all tags/versions for a GitLab project.
+   *
+   * @param gitlabInstance The GitLab instance hostname.
+   * @param projectPath The project path.
+   * @param scopeToComponent When set, the project is treated as a tag-per-component monorepo and tags are scoped to
+   *                         this component using `tagPattern` (full tags retained as the version strings).
+   * @param tagPattern The tag pattern for scoping (e.g. `{name}-{version}`); defaults to the house convention when
+   *                   omitted.
+   * @returns Array of version strings (tags and important branches).
+   */
   public async fetchProjectVersions(
     gitlabInstance: string,
-    projectPath: string
+    projectPath: string,
+    scopeToComponent?: string,
+    tagPattern?: string
   ): Promise<string[]> {
-    return this.versionManager.fetchProjectVersions(gitlabInstance, projectPath);
+    return this.versionManager.fetchProjectVersions(
+      gitlabInstance,
+      projectPath,
+      scopeToComponent,
+      tagPattern
+    );
   }
 
   public async fetchProjectTags(gitlabInstance: string, projectPath: string) {
     return this.versionManager.fetchProjectTags(gitlabInstance, projectPath);
+  }
+
+  /**
+   * Fetch a project's default branch name (e.g. `main`) from its project info.
+   *
+   * @param gitlabInstance The GitLab instance hostname.
+   * @param projectPath The project path; URL-encoded internally.
+   * @returns The default branch name, or null if it can't be resolved (network error, no access).
+   */
+  public async fetchProjectDefaultBranch(gitlabInstance: string, projectPath: string) {
+    return this.versionManager.fetchProjectDefaultBranch(gitlabInstance, projectPath);
   }
 
   /**

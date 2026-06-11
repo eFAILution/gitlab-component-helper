@@ -104,6 +104,12 @@ export interface CachedComponent {
   cachedAt?: number;
   /** Authoritative ref classification for this entry, resolved once against GitLab and persisted. */
   refType?: RefType;
+  /**
+   * The per-source tag-version template (e.g. `{name}-{version}`, `apps/{name}/v{version}`) used to scope and strip
+   * this component's tags. Its presence marks the source as a tag-per-component monorepo; absent means an ordinary
+   * single-component repository whose tags are listed as-is.
+   */
+  tagPattern?: string;
 }
 
 /**

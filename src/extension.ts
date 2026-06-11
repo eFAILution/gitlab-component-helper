@@ -5,6 +5,7 @@ import { CompletionProvider } from './providers/completionProvider';
 import { ComponentDocumentLinkProvider } from './providers/documentLinkProvider';
 import { ComponentBrowserProvider } from './providers/componentBrowserProvider';
 import { detectIncludeComponent, Component } from './providers/componentDetector';
+import { stripTagPrefix } from './services/component/tagScoping';
 import { getComponentCacheManager, ComponentCacheManager } from './services/cache/componentCacheManager';
 import { Logger } from './utils/logger';
 import { ValidationProvider } from './providers/validationProvider';
@@ -410,6 +411,12 @@ export function activate(context: vscode.ExtensionContext) {
           logger.debug(`[Extension] Failed to enrich detached hover component: ${error}`, 'Extension');
         }
 
+        // Recover the full (and, for monorepos, scoped) version list plus tag-template settings from the cache so the
+        // hover details dropdown matches the browser's — instead of every tag in the repo, unscoped and unstripped.
+        // Stamp the monorepo settings onto activeComponent too, so the panel's later `fetchVersions` round-trip
+        // (cacheManager.fetchComponentVersions) scopes to this component instead of returning every repo tag.
+        const enriched = await componentBrowser.lookupComponentDetails(activeComponent);
+        activeComponent = { ...activeComponent, ...enriched };
         panel.webview.html = componentBrowser.getComponentDetailsHtml(activeComponent);
 
         // Ensure the original editor remains focused after panel creation
@@ -503,9 +510,19 @@ export function activate(context: vscode.ExtensionContext) {
                   throw new Error('Component is missing required fields (source, sourcePath, gitlabInstance, version) for version lookup.');
                 }
                 const versions = await cacheManager.fetchComponentVersions(activeComponent);
+                // For a monorepo source, map each full tag to its stripped {version} so the dropdown shows short
+                // labels while keeping the full tag as the option value (the inserted ref).
+                let versionLabels: Record<string, string> | undefined;
+                if (activeComponent.tagPattern) {
+                  versionLabels = {};
+                  for (const v of versions) {
+                    versionLabels[v] = stripTagPrefix(v, activeComponent.name, activeComponent.tagPattern);
+                  }
+                }
                 panel.webview.postMessage({
                   command: 'versionsLoaded',
                   versions: versions,
+                  versionLabels,
                   currentVersion: activeComponent.version
                 });
               } catch (error) {
