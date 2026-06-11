@@ -28,6 +28,9 @@ export interface ParsedSpec {
  * Returns an empty array for the expanded form (`options:` with the values on following `- item` lines), which the
  * caller then fills in as it reads those lines. Surrounding brackets and per-entry quotes are stripped; blank entries
  * (e.g. a trailing comma) are dropped.
+ *
+ * @param rawValue - The text after `options:` on the same line, e.g. `[a, "b", c]` (or empty for the expanded form).
+ * @returns The parsed option values, or an empty array when the value isn't an inline `[...]` list.
  */
 function parseInlineOptions(rawValue: string): string[] {
   if (!rawValue.startsWith('[')) {

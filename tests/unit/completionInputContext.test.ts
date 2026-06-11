@@ -172,13 +172,28 @@ suite('buildInputInsertValue', () => {
     assert.strictEqual(buildInputInsertValue({ ...base, type: 'boolean', default: true }), 'true');
   });
 
-  test('quotes a string default only when it ends in a colon', () => {
-    assert.strictEqual(buildInputInsertValue({ ...base, default: 'ns:' }), '"ns:"');
-    assert.strictEqual(buildInputInsertValue({ ...base, default: 'a:b' }), 'a:b');
+  test('quotes a string default only when a bare scalar would not round-trip', () => {
+    // Bare-safe values stay bare.
+    assert.strictEqual(buildInputInsertValue({ ...base, default: 'a:b' }), 'a:b'); // colon without trailing/space
+    assert.strictEqual(buildInputInsertValue({ ...base, default: '1.2.3' }), '1.2.3');
+    // Hazards that bare YAML would reinterpret get quoted.
+    assert.strictEqual(buildInputInsertValue({ ...base, default: 'ns:' }), '"ns:"'); // trailing colon → mapping
+    assert.strictEqual(buildInputInsertValue({ ...base, default: 'a: b' }), '"a: b"'); // `: ` → mapping
+    assert.strictEqual(buildInputInsertValue({ ...base, default: 'tag #1' }), '"tag #1"'); // ` #` → comment
+    assert.strictEqual(buildInputInsertValue({ ...base, default: '*anchor' }), '"*anchor"'); // leading indicator
+    assert.strictEqual(buildInputInsertValue({ ...base, default: ' padded ' }), '" padded "'); // surrounding space
+    assert.strictEqual(buildInputInsertValue({ ...base, default: 'true' }), '"true"'); // type-like token
+    assert.strictEqual(buildInputInsertValue({ ...base, default: '42' }), '"42"'); // number-like token
+    // An inner double quote is harmless in a bare plain scalar (quotes are only special at the start), so it stays bare.
+    assert.strictEqual(buildInputInsertValue({ ...base, default: 'say "hi"' }), 'say "hi"');
+    // When the value quotes for another reason and also contains a quote, inner quotes are escaped.
+    assert.strictEqual(buildInputInsertValue({ ...base, default: '"wrapped"' }), '"\\"wrapped\\""'); // leading quote indicator
   });
 
-  test('renders an array default as a flow sequence', () => {
+  test('renders an array default as a flow sequence, quoting flow-unsafe elements', () => {
     assert.strictEqual(buildInputInsertValue({ ...base, type: 'array', default: ['a', 'b'] }), '[a, b]');
+    // A comma is significant inside the flow sequence even though it isn't a leading indicator.
+    assert.strictEqual(buildInputInsertValue({ ...base, type: 'array', default: ['a,b', 'c'] }), '["a,b", c]');
   });
 
   test('offers both boolean values, leading with the safer one by requiredness', () => {
@@ -195,8 +210,9 @@ suite('buildInputInsertValue', () => {
     assert.strictEqual(buildInputInsertValue({ ...base, options: ['aws', 'gcp'] }), '${1|aws,gcp|}');
   });
 
-  test('quotes an options entry only when it ends in a colon, leaving others bare', () => {
+  test('quotes an options entry only when bare YAML would reinterpret it, leaving others bare', () => {
     assert.strictEqual(buildInputInsertValue({ ...base, options: ['ns:', 'plain'] }), '${1|"ns:",plain|}');
+    assert.strictEqual(buildInputInsertValue({ ...base, options: ['true', 'aws'] }), '${1|"true",aws|}');
   });
 
   test('falls back to a TODO placeholder for a required untyped input', () => {

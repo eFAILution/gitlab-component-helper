@@ -164,34 +164,73 @@ function findInputsSection(lines: string[], componentLineIndex: number, lineInde
 }
 
 /**
+ * Wrap a string in double quotes, escaping backslashes and inner quotes so the result is a valid YAML scalar.
+ *
+ * @param value - The raw string value to wrap.
+ * @returns The value as a double-quoted YAML scalar with backslashes and inner quotes escaped.
+ */
+function asDoubleQuoted(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * Quote a string for insertion as a YAML value, but only when a bare scalar wouldn't round-trip to the same string.
+ *
+ * Rather than hand-encode YAML's plain-scalar rules, we ask the parser: render `value` bare and check it parses back
+ * to exactly `value`. Plain values (the common case for GitLab enum/default values — `aws`, `production`, `1.2.3`)
+ * round-trip and stay bare; anything YAML reinterprets bare — `true`/`null`, numbers, leading indicators, embedded
+ * `: ` or ` #`, surrounding whitespace — fails the check and is double-quoted instead.
+ *
+ * @param value - The raw string value to render as YAML.
+ * @param flow - When true the value sits inside a flow collection (`[a, b]`), where `,`, `[`, `]`, `{`, `}` are
+ *   significant anywhere in the scalar; those always force quoting since the bare-scalar probe below is block-context.
+ * @returns The value bare when a bare scalar round-trips, otherwise a double-quoted (escaped) form.
+ */
+function quoteYamlIfUnsafe(value: string, flow = false): string {
+  if (flow && /[,[\]{}]/.test(value)) {
+    return asDoubleQuoted(value);
+  }
+  try {
+    const parsed = parseYaml(`probe: ${value}`);
+    if (isYamlNode(parsed) && parsed.probe === value) {
+      return value;
+    }
+  } catch {
+    // Bare form isn't even valid YAML — fall through to quoting.
+  }
+  return asDoubleQuoted(value);
+}
+
+/**
  * Build the value portion of the snippet inserted after `param.name: ` when an input is accepted from completion.
  *
  * Returns a TextMate snippet body (with `${1...}` tab-stops) the caller wraps in a `vscode.SnippetString`.
  *
- * Values are inserted unquoted: GitLab CI parses a bare YAML scalar by the input's declared type, so a string
- * input is a bare scalar, not a quoted one. The exception is a string ending in a colon — bare, YAML would read it
- * as a nested mapping, so those are wrapped in double quotes. Precedence: an explicit `default` is rendered as the
- * YAML it represents; otherwise an `options:` enum becomes a choice; otherwise a type-appropriate placeholder.
+ * Values are inserted bare where a bare YAML scalar round-trips to the same string — GitLab CI parses a bare scalar
+ * by the input's declared type, so a string input is a bare scalar, not a quoted one. Strings that bare YAML would
+ * reinterpret (indicators, embedded `: `/` #`, type-like tokens, etc.) are double-quoted; see {@link quoteYamlIfUnsafe}.
+ * Precedence: an explicit `default` is rendered as the YAML it represents; otherwise an `options:` enum becomes a
+ * choice; otherwise a type-appropriate placeholder.
+ *
+ * @param param - The input parameter spec (type, optional default, optional `options` enum, requiredness).
+ * @returns The snippet body to insert after `param.name: ` — a rendered value, a `${1|...|}` choice, or a `${1:...}` placeholder.
  */
 export function buildInputInsertValue(param: ComponentParameter): string {
-  // A bare YAML scalar ending in a colon parses as a nested mapping, so those strings are quoted.
-  const quoteIfColon = (value: string): string => (value.endsWith(':') ? `"${value}"` : value);
-
   if (param.default !== undefined) {
     // Render the default as the YAML the input expects: arrays as flow sequences (`[a, b]`),
-    // strings bare (quoted only when they end in a colon), everything else as its bare scalar form.
+    // strings bare-or-quoted by round-trip safety, everything else as its bare scalar form.
     if (Array.isArray(param.default)) {
-      return `[${param.default.map((v) => String(v)).join(', ')}]`;
+      return `[${param.default.map((v) => (typeof v === 'string' ? quoteYamlIfUnsafe(v, true) : String(v))).join(', ')}]`;
     }
-    return typeof param.default === 'string' ? quoteIfColon(param.default) : String(param.default);
+    return typeof param.default === 'string' ? quoteYamlIfUnsafe(param.default) : String(param.default);
   }
 
   if (param.options && param.options.length > 0) {
     // Offer the allowed values (`options:`) as a choice. Entries stay unquoted so a number/boolean
-    // option isn't turned into a string; string entries are quoted only when a trailing colon would
-    // otherwise break the YAML.
+    // option isn't turned into a string; string entries are quoted only when bare YAML would
+    // reinterpret them.
     const optionValues = param.options
-      .map((val) => (typeof val === 'string' ? quoteIfColon(val) : String(val)))
+      .map((val) => (typeof val === 'string' ? quoteYamlIfUnsafe(val) : String(val)))
       .join(',');
     return `\${1|${optionValues}|}`;
   }

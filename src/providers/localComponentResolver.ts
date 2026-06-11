@@ -126,7 +126,12 @@ function parseInputs(specInputs: unknown): ComponentParameter[] {
   });
 }
 
-/** Narrow an unknown value to the primitive array accepted by `inputs.*.options`. */
+/**
+ * Narrow an unknown value to the primitive array accepted by `inputs.*.options`.
+ *
+ * @param value - The raw `options` value from a parsed input definition; may be any value.
+ * @returns `true` when `value` is an array of only string/number/boolean entries, narrowing it for the caller.
+ */
 function isOptionsList(value: unknown): value is Array<string | number | boolean> {
   return (
     Array.isArray(value) &&

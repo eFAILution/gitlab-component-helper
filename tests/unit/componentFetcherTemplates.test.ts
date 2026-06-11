@@ -10,7 +10,9 @@
 
 import * as assert from 'node:assert/strict';
 import type { GitLabTreeItem } from '../../src/types/api';
+import type { ComponentParameter } from '../../src/types/git-component';
 import {
+  backfillParameterOptions,
   deriveComponentName,
   filterSubdirectories,
   filterYamlBlobs,
@@ -124,5 +126,54 @@ suite('deriveComponentName — deeper nesting and edge cases', () => {
 
   test('completely empty path → null', () => {
     assert.strictEqual(deriveComponentName(''), null);
+  });
+});
+
+suite('backfillParameterOptions', () => {
+  const param = (name: string, extra: Partial<ComponentParameter> = {}): ComponentParameter => ({
+    name,
+    description: '',
+    required: false,
+    type: 'string',
+    ...extra,
+  });
+
+  test('grafts options onto the catalog param of the same name', () => {
+    const catalog = [param('registry_type'), param('region')];
+    const template = [param('registry_type', { options: ['aws', 'gcp'] }), param('region')];
+
+    const merged = backfillParameterOptions(catalog, template);
+
+    assert.deepStrictEqual(merged.find((p) => p.name === 'registry_type')?.options, ['aws', 'gcp']);
+    assert.strictEqual(merged.find((p) => p.name === 'region')?.options, undefined);
+  });
+
+  test('leaves a catalog param untouched when no template entry matches by name', () => {
+    const catalog = [param('region')];
+    const template = [param('registry_type', { options: ['aws'] })]; // different name
+
+    const merged = backfillParameterOptions(catalog, template);
+
+    assert.strictEqual(merged[0].options, undefined);
+  });
+
+  test('ignores template params whose options are absent or empty', () => {
+    const catalog = [param('a'), param('b')];
+    const template = [param('a', { options: [] }), param('b')]; // empty + missing
+
+    const merged = backfillParameterOptions(catalog, template);
+
+    assert.strictEqual(merged.find((p) => p.name === 'a')?.options, undefined);
+    assert.strictEqual(merged.find((p) => p.name === 'b')?.options, undefined);
+  });
+
+  test('does not mutate the input arrays or their elements', () => {
+    const catalogParam = param('registry_type');
+    const catalog = [catalogParam];
+    const template = [param('registry_type', { options: ['aws'] })];
+
+    backfillParameterOptions(catalog, template);
+
+    assert.strictEqual(catalogParam.options, undefined, 'original catalog param was mutated');
   });
 });
