@@ -9,6 +9,7 @@
 
 import type { GitLabTreeItem } from '../../types/api';
 import type { ParsedCatalogComponent } from '../../types/gitlab-catalog';
+import type { ComponentParameter } from '../../types/git-component';
 import { GitLabSpecParser } from '../../parsers/specParser';
 
 /**
@@ -186,4 +187,26 @@ export async function buildCatalogComponents(
   );
 
   return results.filter((c): c is ParsedCatalogComponent => c !== null);
+}
+
+/**
+ * Backfill `options` from template-parsed parameters onto catalog-derived parameters, matched by name.
+ *
+ * The GitLab catalog API doesn't return per-input `options`, but the parsed template spec does. When we keep the
+ * catalog's parameters (e.g. for their descriptions) we still want their `options` so completion can offer the
+ * allowed values — so we graft `options` from the template parse onto the catalog parameter of the same name.
+ *
+ * Only template parameters that actually declare `options` contribute; catalog parameters without a matching
+ * template entry are returned unchanged. The input arrays are not mutated.
+ */
+export function backfillParameterOptions(
+  catalogParams: readonly ComponentParameter[],
+  templateParams: readonly ComponentParameter[]
+): ComponentParameter[] {
+  const optionsByName = new Map(
+    templateParams.filter((p) => p.options?.length).map((p) => [p.name, p.options])
+  );
+  return catalogParams.map((p) =>
+    optionsByName.has(p.name) ? { ...p, options: optionsByName.get(p.name) } : p
+  );
 }

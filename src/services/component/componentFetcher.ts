@@ -14,6 +14,7 @@ import { GitLabSpecParser, ComponentVariable } from '../../parsers/specParser';
 import { TokenManager } from './tokenManager';
 import { UrlParser } from './urlParser';
 import {
+  backfillParameterOptions,
   buildCatalogComponents,
   fetchAllTemplateFiles,
 } from './componentFetcherTemplates';
@@ -175,6 +176,10 @@ export class ComponentFetcher {
             );
             if (extractedParameters.length === 0 && templateResult?.parameters?.length) {
               extractedParameters = templateResult.parameters;
+            } else if (templateResult?.parameters?.length) {
+              // The catalog API doesn't return per-input `options`, so backfill them from the parsed template
+              // (matched by name) onto the catalog-derived parameters we're keeping.
+              extractedParameters = backfillParameterOptions(extractedParameters, templateResult.parameters);
             }
 
             const component = {
