@@ -2,6 +2,8 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.2](https://github.com/eFAILution/gitlab-component-helper/compare/0.12.1...0.12.2) (2026-06-12)
+
 ## [0.12.1](https://github.com/eFAILution/gitlab-component-helper/compare/0.12.0...0.12.1) (2026-06-12)
 
 # [0.12.0](https://github.com/eFAILution/gitlab-component-helper/compare/0.10.4...0.12.0) (2026-06-12)
