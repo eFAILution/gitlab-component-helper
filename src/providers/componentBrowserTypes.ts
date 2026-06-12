@@ -56,6 +56,11 @@ export interface ComponentGroupBuilder {
   versions: Map<string, ComponentVersion>;
   defaultVersion: string;
   availableVersions: string[];
+  /**
+   * The per-source tag-version template (e.g. `{name}-{version}`). Its presence marks a tag-per-component monorepo
+   * and drives prefix-stripped version labels.
+   */
+  tagPattern?: string;
 }
 
 // -----------------------------------------------------------------------------
@@ -101,6 +106,11 @@ export interface ComponentGroup {
   versionCount: number;
   defaultVersion: string;
   availableVersions: string[];
+  /**
+   * The per-source tag-version template (e.g. `{name}-{version}`). Its presence marks a tag-per-component monorepo
+   * and drives prefix-stripped version labels.
+   */
+  tagPattern?: string;
 }
 
 /**

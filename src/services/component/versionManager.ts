@@ -156,6 +156,31 @@ export class VersionManager {
   }
 
   /**
+   * Fetch a project's default branch name (e.g. `main`) from its project info.
+   *
+   * @param gitlabInstance The GitLab instance hostname.
+   * @param projectPath The project path; URL-encoded internally.
+   * @returns The default branch name, or null if it can't be resolved (network error, no access).
+   */
+  public async fetchProjectDefaultBranch(
+    gitlabInstance: string,
+    projectPath: string
+  ): Promise<string | null> {
+    try {
+      const apiUrl = `https://${gitlabInstance}/api/v4/projects/${encodeURIComponent(projectPath)}`;
+      const token = await this.tokenManager.getTokenForProject(gitlabInstance);
+      const options = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+      const projectInfo = await this.httpClient.fetchJson<GitLabProjectInfo>(apiUrl, options);
+      return projectInfo?.default_branch || null;
+    } catch (error) {
+      this.logger.debug(
+        `[VersionManager] Could not resolve default branch for ${projectPath}: ${error}`
+      );
+      return null;
+    }
+  }
+
+  /**
    * Resolve the HEAD commit SHA of a branch in a single cheap API call.
    *
    * Used to revalidate cached components that are pinned to a (mutable) branch: if the branch HEAD still matches the

@@ -205,6 +205,7 @@ export class ComponentCacheManager {
           path: string;
           gitlabInstance?: string;
           type?: 'project' | 'group';
+          tagPattern?: string;
         }>
       >('componentSources', []);
 
@@ -242,21 +243,22 @@ export class ComponentCacheManager {
               'ComponentCache'
             );
 
-            if (sourceType === 'group') {
-              // Fetch all projects from the group and then get components from each
-              return await this.groupCache.fetchComponentsFromGroup(
-                gitlabInstance,
-                source.path,
-                source.name
-              );
-            } else {
-              // Original project-based fetching
-              return await this.projectCache.fetchComponentsFromProject(
-                gitlabInstance,
-                source.path,
-                source.name
-              );
+            const fetched =
+              sourceType === 'group'
+                ? // Fetch all projects from the group and then get components from each
+                  await this.groupCache.fetchComponentsFromGroup(gitlabInstance, source.path, source.name)
+                : // Original project-based fetching
+                  await this.projectCache.fetchComponentsFromProject(gitlabInstance, source.path, source.name);
+
+            // For a tag-per-component monorepo source, stamp its tag-version template onto each component so version
+            // discovery can scope tags to the component. Absent template = ordinary single-component repo.
+            if (source.tagPattern) {
+              for (const component of fetched) {
+                component.tagPattern = source.tagPattern;
+              }
             }
+
+            return fetched;
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             this.logger.error(

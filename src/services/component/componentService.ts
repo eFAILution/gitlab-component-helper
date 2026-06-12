@@ -106,6 +106,13 @@ export class ComponentService implements ComponentSource {
   }
 
   // Version management delegation
+  /**
+   * Fetch all tags/versions for a GitLab project.
+   *
+   * @param gitlabInstance The GitLab instance hostname.
+   * @param projectPath The project path.
+   * @returns Array of version strings (tags and important branches).
+   */
   public async fetchProjectVersions(
     gitlabInstance: string,
     projectPath: string
@@ -115,6 +122,17 @@ export class ComponentService implements ComponentSource {
 
   public async fetchProjectTags(gitlabInstance: string, projectPath: string) {
     return this.versionManager.fetchProjectTags(gitlabInstance, projectPath);
+  }
+
+  /**
+   * Fetch a project's default branch name (e.g. `main`) from its project info.
+   *
+   * @param gitlabInstance The GitLab instance hostname.
+   * @param projectPath The project path; URL-encoded internally.
+   * @returns The default branch name, or null if it can't be resolved (network error, no access).
+   */
+  public async fetchProjectDefaultBranch(gitlabInstance: string, projectPath: string) {
+    return this.versionManager.fetchProjectDefaultBranch(gitlabInstance, projectPath);
   }
 
   /**

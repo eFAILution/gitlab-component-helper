@@ -10,6 +10,7 @@ import type {
   ProjectGroupBuilder,
   ComponentGroupBuilder,
 } from './componentBrowserTypes';
+import { compileTagTemplate } from '../services/component/tagScoping';
 
 /**
  * Convert a `https://host/group/project/name@version` component URL into the public GitLab project URL by stripping
@@ -63,15 +64,29 @@ export function versionPriority(version: string | undefined): number {
  * synthetic `'latest'` tag, resolve it by re-running the priority pass on the remaining versions so users land on a
  * pinned semver instead of the floating tag.
  *
- * @param availableVersions  Candidates. May include falsy entries (filtered out internally).
+ * @param availableVersions  Candidates. May include falsy entries (filtered out internally). For a monorepo source
+ *                           these are full tags (`<name>-1.1.0`, `apps/<name>/v1.1.0`).
  * @param fallback           Returned when `availableVersions` has no truthy entries.
+ * @param monorepoComponent  When set, candidates are scored with the tag-version template applied (the `{version}`
+ *                           capture), so monorepo tags rank by their underlying semver. The returned value is the
+ *                           original (full) tag.
  */
-export function selectDefaultVersion(availableVersions: string[], fallback: string): string {
+export function selectDefaultVersion(
+  availableVersions: string[],
+  fallback: string,
+  monorepoComponent?: { name: string; tagPattern?: string },
+): string {
   const validVersions = availableVersions.filter(Boolean);
   if (validVersions.length === 0) return fallback;
 
+  const matcher = monorepoComponent
+    ? compileTagTemplate(monorepoComponent.tagPattern, monorepoComponent.name)
+    : null;
+  const score = (version: string): number =>
+    versionPriority(matcher?.extractVersion(version) ?? version);
+
   const bestVersionString = validVersions.reduce(
-    (best, current) => (versionPriority(current) > versionPriority(best) ? current : best),
+    (best, current) => (score(current) > score(best) ? current : best),
     validVersions[0],
   );
 
@@ -81,7 +96,7 @@ export function selectDefaultVersion(availableVersions: string[], fallback: stri
   const nonLatestVersions = validVersions.filter((v) => v !== 'latest');
   if (nonLatestVersions.length === 0) return bestVersionString;
   return nonLatestVersions.reduce(
-    (best, current) => (versionPriority(current) > versionPriority(best) ? current : best),
+    (best, current) => (score(current) > score(best) ? current : best),
     nonLatestVersions[0],
   );
 }
@@ -169,6 +184,7 @@ export function transformCachedComponentsToGroups(
         versions: new Map(),
         defaultVersion: comp.version || 'latest',
         availableVersions: comp.availableVersions || [],
+        tagPattern: comp.tagPattern,
       };
       projectGroup.components.set(comp.name, componentGroup);
       sourceGroup.totalComponents++;
@@ -226,7 +242,13 @@ export function transformCachedComponentsToGroups(
           };
         });
 
-        const defaultVersion = selectDefaultVersion(availableVersions, component.defaultVersion || 'latest');
+        const defaultVersion = selectDefaultVersion(
+          availableVersions,
+          component.defaultVersion || 'latest',
+          component.tagPattern
+            ? { name: component.name, tagPattern: component.tagPattern }
+            : undefined,
+        );
 
         return {
           ...component,

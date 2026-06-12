@@ -104,6 +104,22 @@ export interface CachedComponent {
   cachedAt?: number;
   /** Authoritative ref classification for this entry, resolved once against GitLab and persisted. */
   refType?: RefType;
+  /**
+   * The per-source tag-version template (e.g. `{name}-{version}`, `apps/{name}/v{version}`) used to scope and strip
+   * this component's tags. Its presence marks the source as a tag-per-component monorepo; absent means an ordinary
+   * single-component repository whose tags are listed as-is.
+   */
+  tagPattern?: string;
+}
+
+/**
+ * Serialized form of the per-project version caches, persisted in global state.
+ *
+ * Holds both maps so they survive a session restart together: the raw tag list and the resolved default branch.
+ */
+export interface VersionCacheSnapshot {
+  tags: Array<[string, string[]]>;
+  defaultBranches: Array<[string, string | null]>;
 }
 
 /**
@@ -112,6 +128,7 @@ export interface CachedComponent {
 export interface PersistentCacheData {
   components: CachedComponent[];
   lastRefreshTime: number;
-  projectVersionsCache: Array<[string, string[]]>;
+  /** Serialized version caches. A bare `Array<[key, tags]>` is also accepted on read (no default branches). */
+  projectVersionsCache: VersionCacheSnapshot | Array<[string, string[]]>;
   version: string;
 }

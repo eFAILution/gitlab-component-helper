@@ -133,6 +133,10 @@
                 "default": "gitlab.com",
                 "description": "GitLab instance hostname"
               },
+              "tagPattern": {
+                "type": "string",
+                "description": "Tag pattern for a tag-per-component monorepo, describing how tags embed the component name and version. Use the tokens {name} (the component/directory name) and {version} (the version shown in the dropdown); {version} matches anything starting with a digit. Examples: '{name}-{version}', 'apps/{name}/v{version}', '{name}_{version}'. When set, each component's versions are scoped to its own tags; leave unset for ordinary single-component repositories."
+              },
               "discovery": {
                 "type": "object",
                 "description": "Per-source discovery overrides (uses gitlabComponentHelper.discovery.* defaults if omitted)",
