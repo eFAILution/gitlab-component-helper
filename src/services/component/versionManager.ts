@@ -1,7 +1,6 @@
 import { Logger } from '../../utils/logger';
 import { HttpClient } from '../../utils/httpClient';
 import { TokenManager } from './tokenManager';
-import { scopeTagsToComponent } from './tagScoping';
 import type { GitLabProjectInfo, GitLabTag, GitLabBranch } from '../../types/api';
 import { NetworkError } from '../../errors';
 
@@ -22,17 +21,11 @@ export class VersionManager {
    * Fetch all tags/versions for a GitLab project with optimizations
    * @param gitlabInstance The GitLab instance hostname
    * @param projectPath The project path
-   * @param scopeToComponent When set, the project is treated as a tag-per-component monorepo and tags are scoped to
-   *                         this component using `tagPattern` (full tags retained as the version strings).
-   * @param tagPattern The tag-version template for scoping (e.g. `{name}-{version}`); defaults to the house
-   *                           convention when omitted.
    * @returns Array of version strings (tags and important branches)
    */
   public async fetchProjectVersions(
     gitlabInstance: string,
-    projectPath: string,
-    scopeToComponent?: string,
-    tagPattern?: string
+    projectPath: string
   ): Promise<string[]> {
     const startTime = Date.now();
 
@@ -76,12 +69,9 @@ export class VersionManager {
 
       // Process tags
       if (tagsResult.status === 'fulfilled' && Array.isArray(tagsResult.value)) {
-        const tagNames = tagsResult.value
+        const tagVersions = tagsResult.value
           .map(tag => tag.name)
           .filter(name => name);
-        const tagVersions = scopeToComponent
-          ? scopeTagsToComponent(tagNames, scopeToComponent, tagPattern)
-          : tagNames;
         versions.push(...tagVersions);
         this.logger.debug(`Found ${tagVersions.length} tags`);
       } else {

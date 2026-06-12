@@ -113,11 +113,22 @@ export interface CachedComponent {
 }
 
 /**
+ * Serialized form of the per-project version caches, persisted in global state.
+ *
+ * Holds both maps so they survive a session restart together: the raw tag list and the resolved default branch.
+ */
+export interface VersionCacheSnapshot {
+  tags: Array<[string, string[]]>;
+  defaultBranches: Array<[string, string | null]>;
+}
+
+/**
  * Persistent cache data structure stored in global state
  */
 export interface PersistentCacheData {
   components: CachedComponent[];
   lastRefreshTime: number;
-  projectVersionsCache: Array<[string, string[]]>;
+  /** Serialized version caches. A bare `Array<[key, tags]>` is also accepted on read (no default branches). */
+  projectVersionsCache: VersionCacheSnapshot | Array<[string, string[]]>;
   version: string;
 }

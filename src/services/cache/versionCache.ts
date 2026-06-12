@@ -1,7 +1,7 @@
 import { getComponentService } from '../component';
 import { compileTagTemplate, scopeTagsToComponent } from '../component/tagScoping';
 import { Logger } from '../../utils/logger';
-import { CachedComponent } from '../../types/cache';
+import { CachedComponent, VersionCacheSnapshot } from '../../types/cache';
 
 /**
  * VersionCache - Handles version fetching and caching for components
@@ -163,23 +163,36 @@ export class VersionCache {
   }
 
   /**
-   * Get serializable cache data for persistence
+   * Get serializable cache data for persistence.
    *
-   * @returns Array of [key, tags] tuples
+   * @returns Both per-project maps (tags and default branches) so they round-trip together across a restart.
    */
-  serializeCache(): Array<[string, string[]]> {
-    return Array.from(this.projectTagsCache.entries());
+  serializeCache(): VersionCacheSnapshot {
+    return {
+      tags: Array.from(this.projectTagsCache.entries()),
+      defaultBranches: Array.from(this.projectDefaultBranchCache.entries()),
+    };
   }
 
   /**
-   * Restore cache from serialized data
+   * Restore the version caches from serialized data.
    *
-   * @param data Array of [key, tags] tuples
+   * Accepts either a {@link VersionCacheSnapshot} object or a bare `Array<[key, tags]>`; the array form carries no
+   * default branches, so those stay empty until the next fetch.
+   *
+   * @param data The serialized snapshot, or a tags-only array.
    */
-  deserializeCache(data: Array<[string, string[]]>): void {
-    this.projectTagsCache = new Map(data);
+  deserializeCache(data: VersionCacheSnapshot | Array<[string, string[]]>): void {
+    if (Array.isArray(data)) {
+      this.projectTagsCache = new Map(data);
+      this.projectDefaultBranchCache = new Map();
+    } else {
+      this.projectTagsCache = new Map(data.tags);
+      this.projectDefaultBranchCache = new Map(data.defaultBranches);
+    }
     this.logger.debug(
-      `[VersionCache] Restored ${this.projectTagsCache.size} cached tag entries`,
+      `[VersionCache] Restored ${this.projectTagsCache.size} cached tag entries, ` +
+        `${this.projectDefaultBranchCache.size} default-branch entries`,
       'VersionCache'
     );
   }

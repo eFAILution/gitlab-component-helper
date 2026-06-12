@@ -1185,8 +1185,17 @@ export class ComponentBrowserProvider {
                 // full tag as the option value (the inserted ref).
                 const labels = message.versionLabels || {};
                 const label = function(v) { return labels[v] || v; };
-                const opts = versions.map(function(v) { return '<option value="' + v + '" ' + (v === defaultVersion ? 'selected' : '') + '>' + label(v) + '</option>'; }).join('');
-                actionsDiv.innerHTML = '<select class="version-dropdown" onchange="updateComponentVersion(&#39;' + componentName + '&#39;, this.value, &#39;' + projectId + '&#39;)">' + opts + '</select><button onclick="viewDetailsById(&#39;' + componentName + '&#39;, &#39;' + defaultVersion + '&#39;, &#39;' + projectId + '&#39;)">Details</button><button onclick="insertComponentById(&#39;' + componentName + '&#39;, &#39;' + defaultVersion + '&#39;, &#39;' + projectId + '&#39;)">Insert</button>';
+                // Build the dropdown shell + buttons as markup, then append options via the DOM so the untrusted
+                // version strings (tag names can contain <, >, &) are never interpolated into HTML.
+                actionsDiv.innerHTML = '<select class="version-dropdown" onchange="updateComponentVersion(&#39;' + componentName + '&#39;, this.value, &#39;' + projectId + '&#39;)"></select><button onclick="viewDetailsById(&#39;' + componentName + '&#39;, &#39;' + defaultVersion + '&#39;, &#39;' + projectId + '&#39;)">Details</button><button onclick="insertComponentById(&#39;' + componentName + '&#39;, &#39;' + defaultVersion + '&#39;, &#39;' + projectId + '&#39;)">Insert</button>';
+                const select = actionsDiv.querySelector('.version-dropdown');
+                versions.forEach(function(v) {
+                  const option = document.createElement('option');
+                  option.value = v;
+                  option.textContent = label(v);
+                  if (v === defaultVersion) { option.selected = true; }
+                  select.appendChild(option);
+                });
                 const descElement = document.getElementById('desc-' + componentName + '-' + projectId);
                 if (descElement && !document.getElementById('version-info-' + componentName + '-' + projectId)) {
                   const versionInfo = document.createElement('div');
@@ -1744,7 +1753,7 @@ export class ComponentBrowserProvider {
                   : null;
                 return availableVersions.map((version: string) => {
                   const label = matcher?.extractVersion(version) ?? version;
-                  return `<option value="${version}" ${version === component.version ? 'selected' : ''}>${label}</option>`;
+                  return `<option value="${this.escapeHtml(version)}" ${version === component.version ? 'selected' : ''}>${this.escapeHtml(label)}</option>`;
                 }).join('');
               })()}
             </select>

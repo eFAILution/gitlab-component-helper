@@ -111,24 +111,13 @@ export class ComponentService implements ComponentSource {
    *
    * @param gitlabInstance The GitLab instance hostname.
    * @param projectPath The project path.
-   * @param scopeToComponent When set, the project is treated as a tag-per-component monorepo and tags are scoped to
-   *                         this component using `tagPattern` (full tags retained as the version strings).
-   * @param tagPattern The tag pattern for scoping (e.g. `{name}-{version}`); defaults to the house convention when
-   *                   omitted.
    * @returns Array of version strings (tags and important branches).
    */
   public async fetchProjectVersions(
     gitlabInstance: string,
-    projectPath: string,
-    scopeToComponent?: string,
-    tagPattern?: string
+    projectPath: string
   ): Promise<string[]> {
-    return this.versionManager.fetchProjectVersions(
-      gitlabInstance,
-      projectPath,
-      scopeToComponent,
-      tagPattern
-    );
+    return this.versionManager.fetchProjectVersions(gitlabInstance, projectPath);
   }
 
   public async fetchProjectTags(gitlabInstance: string, projectPath: string) {
