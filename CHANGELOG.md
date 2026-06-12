@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+# [0.12.0](https://github.com/eFAILution/gitlab-component-helper/compare/0.10.4...0.12.0) (2026-06-12)
+
+
+### Bug Fixes
+
+* **api:** paginate tag and version fetches ([#151](https://github.com/eFAILution/gitlab-component-helper/issues/151)) ([ec1ed84](https://github.com/eFAILution/gitlab-component-helper/commit/ec1ed84b32aa6306b4e9299fcf08fc443af6e20b))
+* **cache:** cache branch-referenced components with HEAD-SHA revalidation ([#153](https://github.com/eFAILution/gitlab-component-helper/issues/153)) ([6165620](https://github.com/eFAILution/gitlab-component-helper/commit/6165620937779babf69b983e0d3408ebc1dff501))
+* completion options enum dropdown ([#169](https://github.com/eFAILution/gitlab-component-helper/issues/169)) ([f09345e](https://github.com/eFAILution/gitlab-component-helper/commit/f09345eb03bf458b7cfa9a3c9e011a27c50b0f0f))
+* **completion,validation:** resolve GitLab repo from the active file, not workspace[0] ([#123](https://github.com/eFAILution/gitlab-component-helper/issues/123)) ([db3c570](https://github.com/eFAILution/gitlab-component-helper/commit/db3c5706b10f0de9c8776f7b7af901fe2bccf944))
+* component: URLs and Component Browser "Template File" links ([#131](https://github.com/eFAILution/gitlab-component-helper/issues/131)) ([e7da2cd](https://github.com/eFAILution/gitlab-component-helper/commit/e7da2cdfb8efa1b1ae969a637e6cdc379723fed0))
+* input completions break after a multi-line array input ([#164](https://github.com/eFAILution/gitlab-component-helper/issues/164)) ([13f5c22](https://github.com/eFAILution/gitlab-component-helper/commit/13f5c2292df48ba174c02ede729ac4fb07c58022))
+* Remove legacy single source settings ([#155](https://github.com/eFAILution/gitlab-component-helper/issues/155)) ([f866e29](https://github.com/eFAILution/gitlab-component-helper/commit/f866e2902ec5ff3c8a46353ca791017896158321))
+
+
+### Features
+
+* monorepo tag scoping ([#171](https://github.com/eFAILution/gitlab-component-helper/issues/171)) ([35cbf52](https://github.com/eFAILution/gitlab-component-helper/commit/35cbf5268e67acea391f4ed39be9bed3c245275c))
+* recognise non-canonical GitLab CI file names via additionalFileGlobs ([#125](https://github.com/eFAILution/gitlab-component-helper/issues/125)) ([32aa5a8](https://github.com/eFAILution/gitlab-component-helper/commit/32aa5a85be3c88cd8c8a617b5f1d2c5fc1fd7911))
+* support local includes as first-class components ([#129](https://github.com/eFAILution/gitlab-component-helper/issues/129)) ([7ad82cd](https://github.com/eFAILution/gitlab-component-helper/commit/7ad82cd4b78618e4c2fdfab7e7aae927869348f8))
+
 ## [0.10.4](https://github.com/eFAILution/gitlab-component-helper/compare/0.10.3...0.10.4) (2026-05-28)
 
 
