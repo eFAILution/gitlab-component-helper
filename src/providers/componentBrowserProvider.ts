@@ -2,9 +2,48 @@ import * as vscode from 'vscode';
 import { getComponentService } from '../services/component';
 import { ComponentCacheManager } from '../services/cache/componentCacheManager';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
-import { Component, ComponentParameter } from './componentDetector';
-import { containsGitLabVariables, expandGitLabVariables } from '../utils/gitlabVariables';
+import type { ComponentParameter, Component } from './componentDetector';
+import type { CachedComponent } from '../types/cache';
+import type { SourceGroup, ComponentGroup, ComponentVersion } from './componentBrowserTypes';
+import type { HoverContext } from './hoverContentBuilder';
+import { containsGitLabVariables } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
+import { templateFileUrlForResolved } from '../utils/templateFileUrl';
+import { generateComponentText } from './componentBrowserGenerate';
+import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
+import { transformCachedComponentsToGroups } from './componentBrowserTransform';
+import { compileTagTemplate, stripTagPrefix } from '../services/component/tagScoping';
+
+/**
+ * Component shape carried through the detach-hover webview's "Open in Detailed View" round trip.
+ * Adds the hover-builder's location context so the message handler can route inserts back to the
+ * originating editor position. Mirrors the same alias in `extension.ts` — kept local here rather
+ * than centralised because the field is a runtime-only extension applied by `hoverContentBuilder`.
+ */
+type DetachableComponent = Component & { _hoverContext?: HoverContext };
+
+/**
+ * Type-guard narrowing a `Component`-shaped value to one that also satisfies `CachedComponent`.
+ * `Component` carries `source`/`sourcePath`/`gitlabInstance`/`version`/`url` as optional; cache
+ * methods like `fetchComponentVersions` require them. The guard checks all five before the call so
+ * we don't pass a half-populated `Component` into a function expecting the full cache shape.
+ */
+function isCachedComponentShape(component: Component): component is Component & CachedComponent {
+  return typeof component.source === 'string'
+    && typeof component.sourcePath === 'string'
+    && typeof component.gitlabInstance === 'string'
+    && typeof component.version === 'string'
+    && typeof component.url === 'string';
+}
+
+/**
+ * Pre-existing component shape parsed out of a `.gitlab-ci.yml` include line by
+ * `parseExistingComponentText`. The parser returns `unknown`; this guard narrows it to the
+ * `{ inputs?: Record<string, unknown> }` shape that `generateComponentText` expects.
+ */
+function isExistingComponentShape(value: unknown): value is { inputs?: Record<string, unknown> } {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 // Constants for timing delays
 const EDITOR_ACTIVATION_DELAY_MS = 50;
@@ -95,10 +134,10 @@ export class ComponentBrowserProvider {
             await this.fetchAndCacheVersion(message.componentName, message.sourcePath, message.gitlabInstance, message.version);
             return;
           case 'setDefaultVersion':
-            await this.setDefaultVersion(message.componentName, message.version, message.projectId);
+            await this.setDefaultVersion(message.componentName, message.version);
             return;
           case 'setAlwaysUseLatest':
-            await this.setAlwaysUseLatest(message.componentName, message.projectId);
+            await this.setAlwaysUseLatest(message.componentName);
             return;
           case 'expandComponent':
             await this.handleComponentExpand(message.componentName, message.projectId);
@@ -143,18 +182,20 @@ export class ComponentBrowserProvider {
       this.logger.debug('[ComponentBrowser] Components loaded, versions will be fetched on demand', 'ComponentBrowser');
 
       // Transform cached components to component groups format
-      const allComponents = this.transformCachedComponentsToGroups(cachedComponents);
+      const allComponents = transformCachedComponentsToGroups(cachedComponents, (comp, reason) =>
+        this.logger.warn(`[ComponentBrowser] Skipping component (${reason}): ${JSON.stringify(comp)}`, 'ComponentBrowser'),
+      );
       const cacheErrors = Object.fromEntries(sourceErrors);
 
       this.logger.debug(`[ComponentBrowser] Retrieved ${allComponents.length} component groups from cache`, 'ComponentBrowser');
       this.logger.debug(`[ComponentBrowser] Cache has ${Object.keys(cacheErrors).length} source errors`, 'ComponentBrowser');
 
       // Debug: log what components we actually have
-      allComponents.forEach((source: any, index: number) => {
+      allComponents.forEach((source, index) => {
         this.logger.debug(`[ComponentBrowser] Source ${index + 1}: ${source.source} (${source.totalComponents} total components)`, 'ComponentBrowser');
-        source.projects.forEach((project: any) => {
+        source.projects.forEach(project => {
           this.logger.debug(`[ComponentBrowser]   Project: ${project.name} (${project.components.length} components)`, 'ComponentBrowser');
-          project.components.forEach((comp: any) => {
+          project.components.forEach(comp => {
             this.logger.debug(`[ComponentBrowser]     - ${comp.name}`, 'ComponentBrowser');
           });
         });
@@ -178,9 +219,10 @@ export class ComponentBrowserProvider {
         const contextInstance = componentContext.gitlabInstance;
         const contextPath = componentContext.path;
 
-        // Check if the context source is already in the cache
-        const contextSourceExists = allComponents.some(
-          (group: any) => group.gitlabInstance === contextInstance && group.sourcePath === contextPath
+        // Check if the context source is already in the cache. Match by any project's `path`/`gitlabInstance`
+        // within the source group — `SourceGroup` doesn't carry these fields itself.
+        const contextSourceExists = allComponents.some(group =>
+          group.projects.some(p => p.gitlabInstance === contextInstance && p.path === contextPath)
         );
 
         // If not in cache, try to add it dynamically
@@ -217,34 +259,49 @@ export class ComponentBrowserProvider {
               }));
 
               // Add to the components list with proper hierarchical structure
-              allComponents.unshift({
+              const contextProjectComponents: ComponentGroup[] = components.map((comp): ComponentGroup => ({
+                name: comp.name,
+                description: comp.description,
+                summary: comp.summary,
+                usage: comp.usage,
+                notes: comp.notes,
+                rawYaml: comp.rawYaml,
+                parameters: comp.parameters,
+                source: comp.source,
+                sourcePath: comp.sourcePath,
+                gitlabInstance: comp.gitlabInstance,
+                documentationUrl: comp.documentationUrl ?? '',
+                versions: [{
+                  version: comp.version,
+                  description: comp.description,
+                  parameters: comp.parameters,
+                  documentationUrl: comp.documentationUrl ?? '',
+                  source: comp.source,
+                  sourcePath: comp.sourcePath,
+                  gitlabInstance: comp.gitlabInstance,
+                }],
+                versionCount: 1,
+                defaultVersion: comp.version,
+                availableVersions: [comp.version],
+              }));
+              const contextSource: SourceGroup = {
                 source: `Components from ${contextPath}`,
                 type: 'source',
                 isExpanded: true,
                 totalComponents: components.length,
+                totalVersions: components.length,
+                projectCount: 1,
+                componentCount: components.length,
                 projects: [{
                   name: contextPath.split('/').pop() || contextPath,
                   path: contextPath,
                   gitlabInstance: contextInstance,
                   type: 'project',
                   isExpanded: true, // Auto-expand context projects
-                  components: components.map((comp: any) => ({
-                    ...comp,
-                    versions: [{
-                      version: comp.version,
-                      description: comp.description,
-                      parameters: comp.parameters,
-                      documentationUrl: comp.documentationUrl,
-                      source: comp.source,
-                      sourcePath: comp.sourcePath,
-                      gitlabInstance: comp.gitlabInstance
-                    }],
-                    versionCount: 1,
-                    defaultVersion: comp.version,
-                    availableVersions: [comp.version]
-                  }))
-                }]
-              });
+                  components: contextProjectComponents,
+                }],
+              };
+              allComponents.unshift(contextSource);
 
               this.logger.debug(`[ComponentBrowser] Successfully added ${components.length} components from context source`, 'ComponentBrowser');
             }
@@ -275,7 +332,7 @@ export class ComponentBrowserProvider {
       const filteredErrors: Record<string, string> = {};
 
       // Get list of sources that have components
-      const sourcesWithComponents = new Set(allComponents.map((group: any) => group.source));
+      const sourcesWithComponents = new Set(allComponents.map(group => group.source));
 
       // Only include errors for sources that don't have any components
       Object.entries(cacheErrors).forEach(([source, error]) => {
@@ -297,7 +354,7 @@ export class ComponentBrowserProvider {
     }
   }
 
-  private async insertComponent(component: any, includeInputs: boolean = false, selectedInputs?: string[]) {
+  private async insertComponent(component: Component, includeInputs: boolean = false, selectedInputs?: string[]) {
     // Check if we have the original editor stored
     if (!this.originalEditor) {
       vscode.window.showErrorMessage("No active editor to insert component into");
@@ -348,7 +405,7 @@ export class ComponentBrowserProvider {
       let parametersToInclude = component.parameters;
       if (selectedInputs && selectedInputs.length > 0) {
         // Only include specifically selected inputs
-        parametersToInclude = component.parameters.filter((param: any) => selectedInputs.includes(param.name));
+        parametersToInclude = component.parameters.filter(param => selectedInputs.includes(param.name));
       }
 
       for (const param of parametersToInclude) {
@@ -421,11 +478,11 @@ export class ComponentBrowserProvider {
   }
 
   // Public method to insert component from detached view (called from extension.ts)
-  public async insertComponentFromDetached(component: any, includeInputs: boolean = false, selectedInputs?: string[]) {
+  public async insertComponentFromDetached(component: Component, includeInputs: boolean = false, selectedInputs?: string[]) {
     return this.insertComponent(component, includeInputs, selectedInputs);
   }
 
-  public async showComponentDetails(component: any) {
+  public async showComponentDetails(component: DetachableComponent) {
     // Create a new webview panel for component details
     const detailsPanel = vscode.window.createWebviewPanel(
       'gitlabComponentDetails',
@@ -436,8 +493,12 @@ export class ComponentBrowserProvider {
       }
     );
 
+    // The component arrives from the webview carrying only the selected version and none of the source settings;
+    // recover the full version list and monorepo settings from the cache so the dropdown is complete and labelled.
+    const enriched = await this.lookupComponentDetails(component);
+
     // Show component details
-    detailsPanel.webview.html = this.getComponentDetailsHtml(component);
+    detailsPanel.webview.html = this.getComponentDetailsHtml({ ...component, ...enriched });
 
     // Handle messages from the details panel
     detailsPanel.webview.onDidReceiveMessage(
@@ -448,6 +509,10 @@ export class ComponentBrowserProvider {
 
           // Update component version if specified
           if (version && version !== component.version) {
+            if (!component.sourcePath || !component.gitlabInstance) {
+              vscode.window.showErrorMessage('Cannot fetch version: component is missing source path or GitLab instance.');
+              return;
+            }
             const updatedComponent = await this.cacheManager.fetchSpecificVersion(
               component.name,
               component.sourcePath,
@@ -485,6 +550,9 @@ export class ComponentBrowserProvider {
         } else if (message.command === 'fetchVersions') {
           // Fetch available versions for the component
           try {
+            if (!isCachedComponentShape(component)) {
+              throw new Error('Component is missing required fields (source, sourcePath, gitlabInstance, version) for version lookup.');
+            }
             const versions = await this.cacheManager.fetchComponentVersions(component);
             detailsPanel.webview.postMessage({
               command: 'versionsLoaded',
@@ -503,6 +571,10 @@ export class ComponentBrowserProvider {
           try {
             this.logger.debug(`[ComponentBrowser] Version changed to ${selectedVersion}, fetching details...`, 'ComponentBrowser');
 
+            if (!component.sourcePath || !component.gitlabInstance) {
+              vscode.window.showErrorMessage('Cannot change version: component is missing source path or GitLab instance.');
+              return;
+            }
             const updatedComponent = await this.cacheManager.fetchSpecificVersion(
               component.name,
               component.sourcePath,
@@ -510,10 +582,14 @@ export class ComponentBrowserProvider {
               selectedVersion
             );
             if (updatedComponent) {
-              // Send the updated component details to the webview
+              // Send the updated component details to the webview, with the template-file URL precomputed
+              // server-side so the webview never has to do its own URL routing.
               detailsPanel.webview.postMessage({
                 command: 'componentDetailsUpdated',
-                component: updatedComponent
+                component: {
+                  ...updatedComponent,
+                  templateFileUrl: this.buildTemplateFileUrl(updatedComponent),
+                }
               });
             } else {
               detailsPanel.webview.postMessage({
@@ -577,20 +653,46 @@ export class ComponentBrowserProvider {
     `;
   }
 
-  private getComponentBrowserHtml(componentGroups: any[], cacheErrors: Record<string, string> = {}): string {
+  /**
+   * Render the `<option>` markup for a component's version dropdown.
+   *
+   * For a monorepo source the available versions are full prefixed tags (`<name>-1.1.0`). The option **value** is
+   * always the full tag (the ref inserted into the file); only the visible label is the prefix-stripped form.
+   * Non-monorepo components keep value == label == the version string.
+   *
+   * @param component  The component group to render options for. Its `availableVersions` become the options,
+   *                   `defaultVersion` marks the pre-selected one, and a `tagPattern` (if present) drives the
+   *                   prefix-stripped labels.
+   * @returns          The concatenated `<option>` HTML for the dropdown's contents (no wrapping `<select>`).
+   */
+  private renderVersionOptions(component: ComponentGroup): string {
+    const selectedAttr = (version: string): string =>
+      version === component.defaultVersion ? ' selected' : '';
+
+    return component.availableVersions
+      .map((version) => {
+        const label = component.tagPattern
+          ? stripTagPrefix(version, component.name, component.tagPattern)
+          : version;
+        return `<option value="${this.escapeHtml(version)}"${selectedAttr(version)}>${this.escapeHtml(label)}</option>`;
+      })
+      .join('');
+  }
+
+  private getComponentBrowserHtml(componentGroups: SourceGroup[], cacheErrors: Record<string, string> = {}): string {
     const hasErrors = Object.keys(cacheErrors).length > 0;
 
     // Prepare version data as a safe JSON string
-    const versionData = componentGroups.reduce((acc: any, source: any) => {
+    const versionData = componentGroups.reduce<Record<string, Record<string, ComponentVersion>>>((acc, source) => {
       if (source.projects && Array.isArray(source.projects)) {
-        source.projects.forEach((project: any) => {
+        source.projects.forEach(project => {
           if (project.components && Array.isArray(project.components)) {
-            project.components.forEach((component: any) => {
+            project.components.forEach(component => {
               if (!acc[component.name]) {
                 acc[component.name] = {};
               }
               if (component.versions && Array.isArray(component.versions)) {
-                component.versions.forEach((version: any) => {
+                component.versions.forEach(version => {
                   acc[component.name][version.version] = version;
                 });
               }
@@ -620,14 +722,14 @@ export class ComponentBrowserProvider {
     // Build components HTML
     const componentsHtml = componentGroups.length === 0 ?
       '<p class="no-components">No components found. Click "Refresh" to load components from your configured sources.</p>' :
-      componentGroups.map((source: any) => {
+      componentGroups.map(source => {
         const sourceId = source.source.replace(/[^a-zA-Z0-9]/g, '_');
-        const projectsHtml = (source.projects && Array.isArray(source.projects) ? source.projects : []).map((project: any) => {
+        const projectsHtml = (source.projects && Array.isArray(source.projects) ? source.projects : []).map(project => {
           const projectId = `${sourceId}_${project.path.replace(/[^a-zA-Z0-9]/g, '_')}`;
           const components = project.components && Array.isArray(project.components) ? project.components : [];
           const componentsHtml = components.length === 0 ?
             '<p class="no-components">No components found in this project</p>' :
-            components.map((component: any) => {
+            components.map(component => {
               const componentKey = `${component.name}-${component.sourcePath}`;
               const hasVersions = component.availableVersions && component.availableVersions.length > 0;
 
@@ -642,9 +744,7 @@ export class ComponentBrowserProvider {
                     ${hasVersions ? `
                       ${component.availableVersions.length > 1 ? `
                         <select class="version-dropdown" onchange="updateComponentVersion('${component.name}', this.value, '${projectId}')" oncontextmenu="showContextMenu(event, '${component.name}', this.value, '${projectId}')">
-                          ${component.availableVersions.map((version: string) => `
-                            <option value="${version}" ${version === component.defaultVersion ? 'selected' : ''}>${version}</option>
-                          `).join('')}
+                          ${this.renderVersionOptions(component)}
                         </select>
                       ` : `<span class="single-version">${component.availableVersions[0] || 'latest'}</span>`}
                       <button onclick="viewDetailsById('${component.name}', '${component.defaultVersion || component.availableVersions[0]}', '${projectId}')">Details</button>
@@ -1080,8 +1180,22 @@ export class ComponentBrowserProvider {
             const projectId = componentCard.getAttribute('data-project-id'), actionsDiv = document.getElementById('actions-' + componentKey);
             if (actionsDiv) {
               if (versions.length > 1) {
-                const opts = versions.map(function(v) { return '<option value="' + v + '" ' + (v === defaultVersion ? 'selected' : '') + '>' + v + '</option>'; }).join('');
-                actionsDiv.innerHTML = '<select class="version-dropdown" onchange="updateComponentVersion(&#39;' + componentName + '&#39;, this.value, &#39;' + projectId + '&#39;)">' + opts + '</select><button onclick="viewDetailsById(&#39;' + componentName + '&#39;, &#39;' + defaultVersion + '&#39;, &#39;' + projectId + '&#39;)">Details</button><button onclick="insertComponentById(&#39;' + componentName + '&#39;, &#39;' + defaultVersion + '&#39;, &#39;' + projectId + '&#39;)">Insert</button>';
+                // For monorepo sources the version values are full tags (e.g. <name>-1.1.0); the server sends a
+                // versionLabels map (full tag → stripped {version}) so we display the short form while keeping the
+                // full tag as the option value (the inserted ref).
+                const labels = message.versionLabels || {};
+                const label = function(v) { return labels[v] || v; };
+                // Build the dropdown shell + buttons as markup, then append options via the DOM so the untrusted
+                // version strings (tag names can contain <, >, &) are never interpolated into HTML.
+                actionsDiv.innerHTML = '<select class="version-dropdown" onchange="updateComponentVersion(&#39;' + componentName + '&#39;, this.value, &#39;' + projectId + '&#39;)"></select><button onclick="viewDetailsById(&#39;' + componentName + '&#39;, &#39;' + defaultVersion + '&#39;, &#39;' + projectId + '&#39;)">Details</button><button onclick="insertComponentById(&#39;' + componentName + '&#39;, &#39;' + defaultVersion + '&#39;, &#39;' + projectId + '&#39;)">Insert</button>';
+                const select = actionsDiv.querySelector('.version-dropdown');
+                versions.forEach(function(v) {
+                  const option = document.createElement('option');
+                  option.value = v;
+                  option.textContent = label(v);
+                  if (v === defaultVersion) { option.selected = true; }
+                  select.appendChild(option);
+                });
                 const descElement = document.getElementById('desc-' + componentName + '-' + projectId);
                 if (descElement && !document.getElementById('version-info-' + componentName + '-' + projectId)) {
                   const versionInfo = document.createElement('div');
@@ -1191,11 +1305,11 @@ export class ComponentBrowserProvider {
           function viewDetailsById(componentName, version, projectId) {
             const componentData = window.componentVersionData[componentName];
             if (componentData && componentData[version]) {
+              // Send the raw component data; the server computes the template-file URL when it renders the details panel.
               const component = {
                 ...componentData[version],
                 name: componentName,
                 version: version,
-                templateFileUrl: buildTemplateFileUrl(componentData[version], componentName, version)
               };
               vscode.postMessage({ command: 'viewComponentDetails', component });
             }
@@ -1213,14 +1327,6 @@ export class ComponentBrowserProvider {
               };
               vscode.postMessage({ command: 'insertComponent', component });
             }
-          }
-
-          function buildTemplateFileUrl(versionData, componentName, version) {
-            if (!versionData || !versionData.sourcePath || !versionData.gitlabInstance) {
-              return '';
-            }
-            const ref = version || 'main';
-            return 'https://' + versionData.gitlabInstance + '/' + versionData.sourcePath + '/-/blob/' + ref + '/templates/' + componentName + '.yml';
           }
 
           function filterComponents() {
@@ -1386,7 +1492,61 @@ export class ComponentBrowserProvider {
     `;
   }
 
-  public getComponentDetailsHtml(component: any): string {
+  /**
+   * Enrich a webview-supplied component from the cache for the details panel. The object posted from the browser
+   * carries only the selected version and none of the source-level settings, so here we recover:
+   *  - the full `availableVersions` list (so the version dropdown isn't limited to the one selected version), and
+   *  - the source's `tagPattern` (for monorepo prefix-stripped labels).
+   *
+   * Best-effort: returns an empty object if the component isn't found or the cache read fails.
+   *
+   * @param component  Identity of the component to look up. Matched against the cache by `name` plus its location —
+   *                   the flat `sourcePath`/`gitlabInstance` fields (browser components) or `context` (hover-detected
+   *                   components).
+   * @returns          The recovered `availableVersions` and `tagPattern`, each omitted when the cache has no value
+   *                   for it; an empty object if no matching component is cached or the read fails.
+   */
+  public async lookupComponentDetails(
+    component: {
+      name: string;
+      sourcePath?: string;
+      gitlabInstance?: string;
+      context?: { gitlabInstance: string; path: string };
+    },
+  ): Promise<{ availableVersions?: string[]; tagPattern?: string }> {
+    try {
+      // Hover-detected components carry their location under `context`; browser components use the flat fields.
+      const sourcePath = component.sourcePath || component.context?.path;
+      const gitlabInstance = component.gitlabInstance || component.context?.gitlabInstance;
+
+      const cached = await this.cacheManager.getComponents();
+      const match = cached.find(c =>
+        c.name === component.name &&
+        c.sourcePath === sourcePath &&
+        c.gitlabInstance === gitlabInstance
+      );
+      if (!match) return {};
+
+      const enriched: { availableVersions?: string[]; tagPattern?: string } = {};
+      if (match.availableVersions && match.availableVersions.length > 0) {
+        enriched.availableVersions = match.availableVersions;
+      }
+      if (match.tagPattern) {
+        enriched.tagPattern = match.tagPattern;
+      }
+      return enriched;
+    } catch {
+      // Best-effort enrichment — fall through to no enrichment.
+      return {};
+    }
+  }
+
+  public getComponentDetailsHtml(
+    component: Component & {
+      availableVersions?: string[];
+      tagPattern?: string;
+    },
+  ): string {
     const parameters = component.parameters || [];
     const availableVersions = component.availableVersions || [component.version || 'main'];
     const headerSummary = component.summary;
@@ -1585,16 +1745,24 @@ export class ComponentBrowserProvider {
           <div class="version-control">
             <strong>Version:</strong>
             <select id="versionSelect" onchange="onVersionChange()">
-              ${availableVersions.map((version: string) =>
-                `<option value="${version}" ${version === component.version ? 'selected' : ''}>${version}</option>`
-              ).join('')}
+              ${(() => {
+                // For monorepo tags show the template's {version} capture as the label, keeping the full tag as the
+                // option value (the ref used to fetch and insert the version).
+                const matcher = component.tagPattern
+                  ? compileTagTemplate(component.tagPattern, component.name)
+                  : null;
+                return availableVersions.map((version: string) => {
+                  const label = matcher?.extractVersion(version) ?? version;
+                  return `<option value="${this.escapeHtml(version)}" ${version === component.version ? 'selected' : ''}>${this.escapeHtml(label)}</option>`;
+                }).join('');
+              })()}
             </select>
             <span class="version-loading" id="versionLoading" style="display: none;">Loading version details...</span>
           </div>
           ${component.documentationUrl ?
             `<div><strong>Project URL:</strong> <a href="${component.documentationUrl}" target="_blank" id="componentDocUrl">${component.documentationUrl}</a></div>` : ''}
           ${component.url ?
-            `<div><strong>Component URL:</strong> <a href="${component.url}" target="_blank" id="componentUrl">${component.url}</a></div>` : ''}
+            `<div><strong>Component URL:</strong> <code id="componentUrl">${component.url}</code></div>` : ''}
           ${templateFileUrl ?
             `<div><strong>Template File:</strong> <a href="${templateFileUrl}" target="_blank" id="templateFileUrl">${templateFileUrl}</a></div>` : ''}
         </div>
@@ -1745,14 +1913,6 @@ export class ComponentBrowserProvider {
             toggleButton.textContent = isHidden ? 'Hide' : 'Show';
           }
 
-          function buildTemplateFileUrlFromComponent(component) {
-            if (!component || !component.gitlabInstance || !component.sourcePath || !component.name) {
-              return '';
-            }
-            const ref = component.version || 'main';
-            return 'https://' + component.gitlabInstance + '/' + component.sourcePath + '/-/blob/' + ref + '/templates/' + component.name + '.yml';
-          }
-
           function updateComponentDetails(component) {
             console.log('Updating component details:', component);
 
@@ -1833,17 +1993,16 @@ export class ComponentBrowserProvider {
             // Update component URL
             const componentUrlElement = document.getElementById('componentUrl');
             if (component.url && componentUrlElement) {
-              componentUrlElement.href = component.url;
               componentUrlElement.textContent = component.url;
             }
 
-            // Update template file URL
+            // Update template file URL. The server precomputes templateFileUrl and includes it in the
+            // payload; if it's absent (no resolved templatePath), the row is hidden.
             const templateFileUrlElement = document.getElementById('templateFileUrl');
             if (templateFileUrlElement) {
-              const computedTemplateUrl = component.templateFileUrl || buildTemplateFileUrlFromComponent(component);
-              if (computedTemplateUrl) {
-                templateFileUrlElement.href = computedTemplateUrl;
-                templateFileUrlElement.textContent = computedTemplateUrl;
+              if (component.templateFileUrl) {
+                templateFileUrlElement.href = component.templateFileUrl;
+                templateFileUrlElement.textContent = component.templateFileUrl;
                 templateFileUrlElement.style.display = 'inline';
               } else {
                 templateFileUrlElement.style.display = 'none';
@@ -1912,7 +2071,7 @@ export class ComponentBrowserProvider {
 
             switch (message.command) {
               case 'versionsLoaded':
-                updateVersionDropdown(message.versions, message.currentVersion);
+                updateVersionDropdown(message.versions, message.currentVersion, message.versionLabels);
                 break;
               case 'versionsError':
                 document.getElementById('versionLoading').style.display = 'none';
@@ -1930,18 +2089,20 @@ export class ComponentBrowserProvider {
             }
           });
 
-          function updateVersionDropdown(versions, currentVersion) {
+          function updateVersionDropdown(versions, currentVersion, versionLabels) {
             const select = document.getElementById('versionSelect');
             const loading = document.getElementById('versionLoading');
+            const labels = versionLabels || {};
 
             // Clear existing options
             select.innerHTML = '';
 
-            // Add new options
+            // Add new options. The option value is the full tag (the inserted ref); the label is the stripped
+            // {version} for monorepo sources (falls back to the full tag when no label is provided).
             versions.forEach(version => {
               const option = document.createElement('option');
               option.value = version;
-              option.textContent = version;
+              option.textContent = labels[version] || version;
               if (version === currentVersion) {
                 option.selected = true;
               }
@@ -1975,12 +2136,16 @@ export class ComponentBrowserProvider {
       .replace(/'/g, '&#39;');
   }
 
-  private buildTemplateFileUrl(component: any): string | undefined {
-    if (!component || !component.gitlabInstance || !component.sourcePath || !component.name) {
+  private buildTemplateFileUrl(component: Component): string | undefined {
+    if (!component || !component.gitlabInstance || !component.sourcePath || !component.templatePath) {
       return undefined;
     }
-    const ref = component.version || 'main';
-    return `https://${component.gitlabInstance}/${component.sourcePath}/-/blob/${ref}/templates/${component.name}.yml`;
+    return templateFileUrlForResolved({
+      gitlabInstance: component.gitlabInstance,
+      projectPath: component.sourcePath,
+      version: component.version,
+      templatePath: component.templatePath,
+    });
   }
 
   private getNoSourcesHtml(): string {
@@ -2232,197 +2397,9 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     }
   }
 
-  private transformCachedComponentsToGroups(cachedComponents: any[]): any[] {
-    // Create a hierarchical structure: Source -> Project -> Components (with versions)
-    const hierarchy = new Map<string, any>();
 
-    for (const comp of cachedComponents) {
-      // Skip components with missing essential data
-      if (!comp.source || !comp.sourcePath || !comp.name) {
-        this.logger.warn(`[ComponentBrowser] Skipping component with missing data: ${JSON.stringify(comp)}`, 'ComponentBrowser');
-        continue;
-      }
-
-      // Extract source (main source name, like "GitLab Components Group")
-      const mainSource = comp.source.split('/')[0]; // Get the main source before any '/'
-
-      // Get project name (either the full source for simple sources, or the project part for groups)
-      let projectName = comp.source;
-      let projectPath = comp.sourcePath;
-
-      // For group sources, parse out the individual project
-      if (comp.source.includes('/')) {
-        const parts = comp.source.split('/');
-        projectName = parts[parts.length - 1]; // Get the project name
-        projectPath = comp.sourcePath;
-      }
-
-      // Initialize main source if not exists
-      if (!hierarchy.has(mainSource)) {
-        hierarchy.set(mainSource, {
-          source: mainSource,
-          type: 'source',
-          isExpanded: true, // Sources start expanded
-          projects: new Map<string, any>(),
-          totalComponents: 0,
-          totalVersions: 0
-        });
-      }
-
-      const sourceGroup = hierarchy.get(mainSource)!;
-
-      // Initialize project if not exists
-      const projectKey = `${projectPath}@${comp.gitlabInstance}`;
-      if (!sourceGroup.projects.has(projectKey)) {
-        sourceGroup.projects.set(projectKey, {
-          name: projectName,
-          path: projectPath,
-          gitlabInstance: comp.gitlabInstance,
-          type: 'project',
-          isExpanded: false, // Projects start collapsed
-          components: new Map<string, any>() // Map by component name to group versions
-        });
-      }
-
-      const projectGroup = sourceGroup.projects.get(projectKey)!;
-
-      // Group components by name to handle multiple versions
-      if (!projectGroup.components.has(comp.name)) {
-        projectGroup.components.set(comp.name, {
-          name: comp.name,
-          description: comp.description || 'No description available',
-          summary: comp.summary,
-          usage: comp.usage,
-          notes: comp.notes,
-          rawYaml: comp.rawYaml,
-          parameters: comp.parameters || [],
-          source: comp.source,
-          sourcePath: comp.sourcePath,
-          gitlabInstance: comp.gitlabInstance || 'gitlab.com',
-          documentationUrl: comp.url ? this.extractProjectUrl(comp.url) : '',
-          versions: new Map<string, any>(),
-          defaultVersion: comp.version || 'latest',
-          availableVersions: comp.availableVersions || []
-        });
-        sourceGroup.totalComponents++;
-      } else if (comp.availableVersions) {
-        // Merge availableVersions from subsequent cache entries
-        const existing = projectGroup.components.get(comp.name)!;
-        const merged = new Set([...existing.availableVersions, ...comp.availableVersions]);
-        existing.availableVersions = Array.from(merged);
-      }
-
-      const componentGroup = projectGroup.components.get(comp.name)!;
-
-      // Add this version to the component
-      componentGroup.versions.set(comp.version || 'latest', {
-        version: comp.version || 'latest',
-        description: comp.description || 'No description available',
-        summary: comp.summary,
-        usage: comp.usage,
-        notes: comp.notes,
-        rawYaml: comp.rawYaml,
-        parameters: comp.parameters || [],
-        documentationUrl: comp.url ? this.extractProjectUrl(comp.url) : '',
-        source: comp.source,
-        sourcePath: comp.sourcePath,
-        gitlabInstance: comp.gitlabInstance || 'gitlab.com'
-      });
-
-      sourceGroup.totalVersions++;
-    }
-
-    // Convert to array format with nested structure
-    return Array.from(hierarchy.values()).map(source => ({
-      ...source,
-      projectCount: source.projects.size,
-      componentCount: source.totalComponents,
-      projects: Array.from(source.projects.values()).map((project: any) => ({
-        ...project,
-        components: Array.from(project.components.values()).map((component: any) => {
-          // Use cached availableVersions, fall back to versions Map keys, then default
-          const availableVersions = component.availableVersions && component.availableVersions.length > 0
-            ? component.availableVersions
-            : component.versions.size > 0
-              ? Array.from(component.versions.keys())
-              : [component.defaultVersion || 'latest'];
-          const versions: any[] = availableVersions.filter(Boolean).map((version: string) => {
-            const versionData = component.versions.get(version) || {};
-            return {
-              version: version,
-              description: versionData.description || component.description || 'No description available',
-              summary: versionData.summary || component.summary,
-              usage: versionData.usage || component.usage,
-              notes: versionData.notes || component.notes,
-              rawYaml: versionData.rawYaml || component.rawYaml,
-              parameters: versionData.parameters || component.parameters || [],
-              documentationUrl: versionData.documentationUrl || component.documentationUrl || '',
-              source: versionData.source || component.source,
-              sourcePath: versionData.sourcePath || component.sourcePath,
-              gitlabInstance: versionData.gitlabInstance || component.gitlabInstance || 'gitlab.com'
-            };
-          });
-
-          let defaultVersion = component.version || 'latest';
-
-          // Find the best version to use as default
-          const versionPriority = (version: string | undefined) => {
-            if (!version) return 0; // Handle undefined/null versions
-            if (version === 'latest') return 1000; // Highest priority
-            if (version === 'main') return 900;
-            if (version === 'master') return 800;
-
-            // Semantic versions get priority based on version number
-            const semanticMatch = version.match(/^v?(\d+)\.(\d+)\.(\d+)/);
-            if (semanticMatch) {
-              const major = parseInt(semanticMatch[1]);
-              const minor = parseInt(semanticMatch[2]);
-              const patch = parseInt(semanticMatch[3]);
-              return major * 1000000 + minor * 1000 + patch;
-            }
-
-            return 0; // Lowest priority for other versions
-          };
-
-          if (availableVersions.length > 0) {
-            const validVersions = availableVersions.filter(Boolean); // Filter out null/undefined versions
-            if (validVersions.length > 0) {
-              const bestVersionString = validVersions.reduce((best: string, current: string) => {
-                return versionPriority(current) > versionPriority(best) ? current : best;
-              }, validVersions[0]);
-
-              defaultVersion = bestVersionString;
-
-              // Resolve 'latest' to the actual latest tag version
-              if (defaultVersion === 'latest') {
-                // Filter out 'latest' and find the best actual version
-                const nonLatestVersions = validVersions.filter((v: string) => v !== 'latest');
-                if (nonLatestVersions.length > 0) {
-                  const resolvedLatestVersion = nonLatestVersions.reduce((latest: string, current: string) => {
-                    return versionPriority(current) > versionPriority(latest) ? current : latest;
-                  }, nonLatestVersions[0]);
-                  defaultVersion = resolvedLatestVersion;
-                }
-              }
-            }
-          }
-
-          return {
-            ...component,
-            versions: versions,
-            versionCount: availableVersions.filter(Boolean).length,
-            defaultVersion: defaultVersion,
-            availableVersions: availableVersions.filter(Boolean),
-            description: component.description || 'No description available',
-            parameters: component.parameters || [],
-            gitlabInstance: component.gitlabInstance || 'gitlab.com'
-          };
-        })
-      }))
-    }));
-  }
-
-  private getErrorHtml(error: any): string {
+  private getErrorHtml(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
     return `
       <!DOCTYPE html>
       <html lang="en">
@@ -2460,7 +2437,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
         <h1>Component Loading Error</h1>
 
         <div class="error">
-          <strong>Error:</strong> ${error}
+          <strong>Error:</strong> ${message}
         </div>
 
         <div>
@@ -2484,36 +2461,6 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     `;
   }
 
-  /**
-   * Extract project URL from component URL
-   * Converts: https://gitlab.example.com/group/project/component@version
-   * To: https://gitlab.example.com/group/project
-   */
-  private extractProjectUrl(componentUrl: string | undefined): string {
-    try {
-      if (!componentUrl) {
-        return '';
-      }
-
-      // Remove version suffix if present
-      const urlWithoutVersion = componentUrl.includes('@') ?
-        componentUrl.split('@')[0] : componentUrl;
-
-      const url = new URL(urlWithoutVersion);
-      const pathParts = url.pathname.substring(1).split('/');
-
-      // Remove the component name (last part)
-      if (pathParts.length > 0) {
-        pathParts.pop();
-      }
-
-      // Construct project URL
-      return `${url.protocol}//${url.host}/${pathParts.join('/')}`;
-    } catch (error) {
-      this.logger.warn(`[ComponentBrowser] Error extracting project URL from ${componentUrl}: ${error}`, 'ComponentBrowser');
-      return componentUrl || '';
-    }
-  }
 
   private async fetchAndCacheVersion(componentName: string, sourcePath: string, gitlabInstance: string, version: string) {
     try {
@@ -2543,7 +2490,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     }
   }
 
-  private async setDefaultVersion(componentName: string, version: string, projectId: string) {
+  private async setDefaultVersion(componentName: string, version: string) {
     try {
       // Store user preference for this component's default version
       const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
@@ -2560,7 +2507,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     }
   }
 
-  private async setAlwaysUseLatest(componentName: string, projectId: string) {
+  private async setAlwaysUseLatest(componentName: string) {
     try {
       // Store user preference to always use latest for this component
       const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
@@ -2654,19 +2601,26 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
       this.versionsFetched.add(componentKey);
       this.versionsLoading.delete(componentKey);
 
-      // Calculate default version (prefer latest, main, master, or highest semantic version)
+      // Pick the default version. `availableVersions` is already sorted highest-priority-first (semantic versions
+      // before branches), so the first entry is the best default — except `latest`, the catalog floating tag, which
+      // wins when present.
       const availableVersions = updatedComponent.availableVersions || [];
       let defaultVersion = updatedComponent.version || 'latest';
 
       if (availableVersions.length > 0) {
-        if (availableVersions.includes('latest')) {
-          defaultVersion = 'latest';
-        } else if (availableVersions.includes('main')) {
-          defaultVersion = 'main';
-        } else if (availableVersions.includes('master')) {
-          defaultVersion = 'master';
-        } else {
-          defaultVersion = availableVersions[0];
+        defaultVersion = availableVersions.includes('latest') ? 'latest' : availableVersions[0];
+      }
+
+      // For a monorepo source, precompute display labels (full tag → stripped {version}) server-side, since the
+      // webview can't reach the template matcher. Non-monorepo sources send no labels (value == label).
+      let versionLabels: Record<string, string> | undefined;
+      if (updatedComponent.tagPattern) {
+        const matcher = compileTagTemplate(updatedComponent.tagPattern, componentName);
+        if (matcher) {
+          versionLabels = {};
+          for (const v of availableVersions) {
+            versionLabels[v] = matcher.extractVersion(v) ?? v;
+          }
         }
       }
 
@@ -2677,6 +2631,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
           componentName,
           sourcePath,
           versions: availableVersions,
+          versionLabels,
           defaultVersion
         });
       }
@@ -2701,28 +2656,9 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     }
   }
 
-  private async fetchSpecificVersion(component: any, version: string): Promise<any | null> {
-    try {
-      this.logger.debug(`[ComponentBrowser] Fetching version ${version} of ${component.name}`, 'ComponentBrowser');
-
-      // Use the cache manager to fetch the specific version
-      const specificComponent = await this.cacheManager.fetchSpecificVersion(
-        component.name,
-        component.sourcePath,
-        component.gitlabInstance,
-        version
-      );
-
-      return specificComponent;
-    } catch (error) {
-      this.logger.error(`[ComponentBrowser] Error fetching version ${version}: ${error}`, 'ComponentBrowser');
-      return null;
-    }
-  }
-
   // Public method to edit an existing component from detached view (called from extension.ts)
   public async editExistingComponentFromDetached(
-    component: any,
+    component: Component,
     documentUri: string,
     position: { line: number; character: number },
     includeInputs: boolean = false,
@@ -2750,10 +2686,11 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     }
 
     // Parse the existing component to see what inputs it already has
-    const existingComponent = await this.parseExistingComponent(document, componentRange);
+    const parsedExisting = await this.parseExistingComponent(document, componentRange);
+    const existingComponent = isExistingComponentShape(parsedExisting) ? parsedExisting : null;
 
     // Generate the new component text with updated inputs
-    const newComponentText = this.generateComponentText(
+    const newComponentText = generateComponentText(
       component,
       includeInputs,
       selectedInputs,
@@ -2779,282 +2716,22 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     position: vscode.Position,
     componentName: string
   ): Promise<vscode.Range | null> {
-    const text = document.getText();
-    const lines = text.split('\n');
-
-    // Find the line with the component declaration
-    let componentLineIndex = -1;
-    for (let i = position.line; i >= Math.max(0, position.line - 10); i--) {
-      if (lines[i] && lines[i].includes('component:') && lines[i].includes(componentName)) {
-        componentLineIndex = i;
-        break;
-      }
-    }
-
-    // Also search forward a few lines
-    if (componentLineIndex === -1) {
-      for (let i = position.line; i < Math.min(lines.length, position.line + 10); i++) {
-        if (lines[i] && lines[i].includes('component:') && lines[i].includes(componentName)) {
-          componentLineIndex = i;
-          break;
-        }
-      }
-    }
-
-    if (componentLineIndex === -1) {
+    const range = findComponentLineRange(document.getText(), position.line, componentName);
+    if (!range) {
       this.logger.warn(`[ComponentBrowser] Could not find component line for ${componentName}`, 'ComponentBrowser');
       return null;
     }
-
-    // Find the start of the component block (look for the '- component:' line)
-    let startLine = componentLineIndex;
-    const componentLine = lines[componentLineIndex];
-    const indentMatch = componentLine.match(/^(\s*)/);
-    const componentIndent = indentMatch ? indentMatch[1].length : 0;
-
-    // Look backwards to find the start of this list item
-    for (let i = componentLineIndex; i >= 0; i--) {
-      const line = lines[i];
-      const lineIndentMatch = line.match(/^(\s*)/);
-      const lineIndent = lineIndentMatch ? lineIndentMatch[1].length : 0;
-
-      // If we find a line that starts with '- ' at the same or lesser indent, that's our start
-      if (line.trim().startsWith('- ') && lineIndent <= componentIndent) {
-        startLine = i;
-        break;
-      }
-    }
-
-    // Find the end of the component block
-    let endLine = componentLineIndex;
-    for (let i = componentLineIndex + 1; i < lines.length; i++) {
-      const line = lines[i];
-      const lineIndentMatch = line.match(/^(\s*)/);
-      const lineIndent = lineIndentMatch ? lineIndentMatch[1].length : 0;
-
-      // If we find a line at the same or lesser indent that's not just whitespace, that's where we stop
-      if (line.trim() && lineIndent <= componentIndent && line.trim().startsWith('-')) {
-        endLine = i - 1;
-        break;
-      }
-
-      // If we find any content at lesser indent, stop there
-      if (line.trim() && lineIndent < componentIndent) {
-        endLine = i - 1;
-        break;
-      }
-
-      endLine = i;
-    }
-
-    // Make sure we don't include trailing empty lines
-    while (endLine > componentLineIndex && !lines[endLine].trim()) {
-      endLine--;
-    }
-
-    const startPos = new vscode.Position(startLine, 0);
-    const endPos = new vscode.Position(endLine, lines[endLine].length);
-
-    this.logger.debug(`[ComponentBrowser] Found component range: ${startLine}:0 to ${endLine}:${lines[endLine].length}`, 'ComponentBrowser');
-
-    return new vscode.Range(startPos, endPos);
+    this.logger.debug(
+      `[ComponentBrowser] Found component range: ${range.startLine}:0 to ${range.endLine}:${range.endColumn}`,
+      'ComponentBrowser',
+    );
+    return new vscode.Range(
+      new vscode.Position(range.startLine, 0),
+      new vscode.Position(range.endLine, range.endColumn),
+    );
   }
 
-  // Helper method to parse an existing component to extract its current inputs
-  private async parseExistingComponent(document: vscode.TextDocument, range: vscode.Range): Promise<any> {
-    const componentText = document.getText(range);
-
-    try {
-      // Use the YAML parser to parse just this component block
-      const { parseYaml } = await import('../utils/yamlParser');
-
-      // Wrap the component in a temporary YAML structure for parsing
-      const wrappedYaml = `include:\n${componentText}`;
-      const parsed = parseYaml(wrappedYaml);
-
-      if (parsed && parsed.include && Array.isArray(parsed.include) && parsed.include[0]) {
-        return parsed.include[0];
-      } else if (parsed && parsed.include) {
-        return parsed.include;
-      }
-    } catch (error) {
-      this.logger.warn(`[ComponentBrowser] Could not parse existing component: ${error}`, 'ComponentBrowser');
-    }
-
-    return null;
+  private async parseExistingComponent(document: vscode.TextDocument, range: vscode.Range): Promise<unknown> {
+    return parseExistingComponentText(document.getText(range));
   }
-
-  // Helper method to generate the component text with updated inputs
-  private generateComponentText(
-    component: any,
-    includeInputs: boolean,
-    selectedInputs: string[] = [],
-    existingComponent: any = null
-  ): string {
-    const gitlabInstance = component.gitlabInstance || 'gitlab.com';
-
-    // Create the component reference
-    let componentUrl: string;
-
-    // If the component has a preserved URL with variables, use that
-    if (component.originalUrl && containsGitLabVariables(component.originalUrl)) {
-      componentUrl = component.originalUrl;
-      // Update version if different
-      if (component.version && !component.originalUrl.includes('@')) {
-        componentUrl += `@${component.version}`;
-      } else if (component.version && component.originalUrl.includes('@')) {
-        componentUrl = component.originalUrl.replace(/@[^@]*$/, `@${component.version}`);
-      }
-    } else {
-      // Create standard URL
-      componentUrl = `https://${gitlabInstance}/${component.sourcePath}/${component.name}@${component.version}`;
-    }
-
-    let insertion = `  - component: ${componentUrl}`;
-
-    // Handle inputs
-    if (includeInputs || (selectedInputs && selectedInputs.length > 0)) {
-      insertion += '\n    inputs:';
-
-      // Start with existing inputs if we're editing
-      const finalInputs = new Map<string, any>();
-
-      // Add existing inputs first
-      if (existingComponent && existingComponent.inputs) {
-        for (const [key, value] of Object.entries(existingComponent.inputs)) {
-          finalInputs.set(key, value);
-        }
-      }
-
-      // If selectedInputs is specified, only include those (removing unselected ones)
-      if (selectedInputs && selectedInputs.length > 0) {
-        // Keep only the selected inputs from existing ones
-        const filteredInputs = new Map<string, any>();
-        for (const inputName of selectedInputs) {
-          if (finalInputs.has(inputName)) {
-            filteredInputs.set(inputName, finalInputs.get(inputName));
-          }
-        }
-        finalInputs.clear();
-        for (const [key, value] of filteredInputs) {
-          finalInputs.set(key, value);
-        }
-
-        // Add new selected inputs with default values
-        if (component.parameters) {
-          for (const param of component.parameters) {
-            if (selectedInputs.includes(param.name) && !finalInputs.has(param.name)) {
-              let defaultValue = param.default;
-
-              // Format default value based on type
-              if (defaultValue !== undefined) {
-                if (typeof defaultValue === 'string') {
-                  // Check if it contains GitLab variables and preserve them
-                  if (containsGitLabVariables(defaultValue)) {
-                    defaultValue = `"${defaultValue}"`; // Keep variables as-is in quotes
-                  } else {
-                    defaultValue = `"${defaultValue}"`;
-                  }
-                } else if (typeof defaultValue === 'boolean') {
-                  defaultValue = defaultValue.toString();
-                } else if (typeof defaultValue === 'number') {
-                  defaultValue = defaultValue.toString();
-                } else {
-                  defaultValue = JSON.stringify(defaultValue);
-                }
-              } else {
-                // Provide placeholder based on type and required status
-                if (param.required) {
-                  switch (param.type) {
-                    case 'boolean':
-                      defaultValue = 'true';
-                      break;
-                    case 'number':
-                      defaultValue = '0';
-                      break;
-                    default:
-                      defaultValue = '"TODO: set value"';
-                  }
-                } else {
-                  switch (param.type) {
-                    case 'boolean':
-                      defaultValue = 'false';
-                      break;
-                    case 'number':
-                      defaultValue = '0';
-                      break;
-                    default:
-                      defaultValue = '""';
-                  }
-                }
-              }
-
-              finalInputs.set(param.name, defaultValue);
-            }
-          }
-        }
-      } else if (includeInputs && component.parameters) {
-        // Add all parameters if includeInputs is true and no specific selection
-        for (const param of component.parameters) {
-          if (!finalInputs.has(param.name)) {
-            let defaultValue = param.default;
-
-            // Format default value (same logic as above)
-            if (defaultValue !== undefined) {
-              if (typeof defaultValue === 'string') {
-                if (containsGitLabVariables(defaultValue)) {
-                  defaultValue = `"${defaultValue}"`;
-                } else {
-                  defaultValue = `"${defaultValue}"`;
-                }
-              } else if (typeof defaultValue === 'boolean') {
-                defaultValue = defaultValue.toString();
-              } else if (typeof defaultValue === 'number') {
-                defaultValue = defaultValue.toString();
-              } else {
-                defaultValue = JSON.stringify(defaultValue);
-              }
-            } else {
-              if (param.required) {
-                switch (param.type) {
-                  case 'boolean':
-                    defaultValue = 'true';
-                    break;
-                  case 'number':
-                    defaultValue = '0';
-                    break;
-                  default:
-                    defaultValue = '"TODO: set value"';
-                }
-              } else {
-                switch (param.type) {
-                  case 'boolean':
-                    defaultValue = 'false';
-                    break;
-                  case 'number':
-                    defaultValue = '0';
-                    break;
-                  default:
-                    defaultValue = '""';
-                }
-              }
-            }
-
-            finalInputs.set(param.name, defaultValue);
-          }
-        }
-      }
-
-      // Generate the inputs section
-      for (const [inputName, inputValue] of finalInputs) {
-        const param = component.parameters?.find((p: any) => p.name === inputName);
-        const comment = param?.required ? ' # required' : ' # optional';
-        insertion += `\n      ${inputName}: ${inputValue}${comment}`;
-      }
-    }
-
-    return insertion;
-  }
-
-  // ...existing code...
 }

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ComponentService } from './componentService';
+import type { ComponentSource } from '../../types/api';
 
 /**
  * Register the command to add a GitLab project token
@@ -27,7 +28,7 @@ export function registerAddProjectTokenCommand(
         // Remove leading/trailing slashes and join path
         projectPath = parsed.pathname.replace(/^\/+|\/+$/g, '');
         if (!gitlabInstance || !projectPath) throw new Error('Invalid URL');
-      } catch (e) {
+      } catch {
         vscode.window.showErrorMessage('Invalid GitLab URL. Please enter a valid project or group URL.');
         return;
       }
@@ -42,7 +43,7 @@ export function registerAddProjectTokenCommand(
 
       // Add to component sources as a proper object
       const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-      const componentSources: any[] = config.get('componentSources', []);
+      const componentSources: ComponentSource[] = config.get('componentSources', []);
 
       // Check if this source already exists
       const existingSource = componentSources.find(
@@ -106,7 +107,7 @@ export function registerAddProjectTokenCommand(
           if (!service['tokenManager']) {
             service.setSecretStorage(context.secrets);
           }
-          await service.setTokenForProject(gitlabInstance, projectPath, token.trim());
+          await service.setTokenForProject(gitlabInstance, token.trim());
           vscode.window.showInformationMessage(
             `Component source "${displayName}" added successfully with token for ${gitlabInstance}!`
           );

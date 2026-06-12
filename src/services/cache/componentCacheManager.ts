@@ -13,6 +13,10 @@ import {
   DEFAULT_COMPONENT_TYPE_PROJECT,
 } from '../../constants/cache';
 
+// Bump when the on-disk CachedComponent shape changes. Mismatched caches are discarded on load so the new fields can be
+// populated by re-fetching.
+const CURRENT_CACHE_VERSION = '1.3.0';
+
 /**
  * ComponentCacheManager - Main orchestrator for component caching
  *
@@ -109,22 +113,7 @@ export class ComponentCacheManager {
   /**
    * Add a dynamically fetched component to the cache
    */
-  public addDynamicComponent(component: {
-    name: string;
-    description: string;
-    parameters: Array<{
-      name: string;
-      description: string;
-      required: boolean;
-      type: string;
-      default?: any;
-    }>;
-    source: string;
-    sourcePath: string;
-    gitlabInstance: string;
-    version: string;
-    url: string;
-  }): void {
+  public addDynamicComponent(component: CachedComponent): void {
     try {
       // Check if component already exists (avoid duplicates)
       const existingIndex = this.components.findIndex(
@@ -150,12 +139,27 @@ export class ComponentCacheManager {
           'ComponentCache'
         );
       }
+
+      // Persist so dynamically fetched entries (and their freshness fields) survive across sessions instead of being
+      // re-resolved on next launch. Fire-and-forget — a failed save only costs a re-fetch, never correctness.
+      this.persistComponentState();
     } catch (error) {
       this.logger.debug(
         `[ComponentCache] Error adding dynamic component: ${error}`,
         'ComponentCache'
       );
     }
+  }
+
+  /**
+   * Persist the current in-memory component list to disk. Use after mutating a cached entry on a read path (e.g. the
+   * hover provider recording a branch's `refType`/`cachedAt`/`resolvedSha`) so the update survives the session. No-op
+   * when no extension context is set. Fire-and-forget — failure only costs a re-fetch, never correctness.
+   */
+  public persistComponentState(): void {
+    this.saveCacheToDisk().catch(error => {
+      this.logger.debug(`[ComponentCache] Failed to persist component state: ${error}`, 'ComponentCache');
+    });
   }
 
   public getSourceErrors(): Map<string, string> {
@@ -201,6 +205,7 @@ export class ComponentCacheManager {
           path: string;
           gitlabInstance?: string;
           type?: 'project' | 'group';
+          tagPattern?: string;
         }>
       >('componentSources', []);
 
@@ -238,21 +243,22 @@ export class ComponentCacheManager {
               'ComponentCache'
             );
 
-            if (sourceType === 'group') {
-              // Fetch all projects from the group and then get components from each
-              return await this.groupCache.fetchComponentsFromGroup(
-                gitlabInstance,
-                source.path,
-                source.name
-              );
-            } else {
-              // Original project-based fetching
-              return await this.projectCache.fetchComponentsFromProject(
-                gitlabInstance,
-                source.path,
-                source.name
-              );
+            const fetched =
+              sourceType === 'group'
+                ? // Fetch all projects from the group and then get components from each
+                  await this.groupCache.fetchComponentsFromGroup(gitlabInstance, source.path, source.name)
+                : // Original project-based fetching
+                  await this.projectCache.fetchComponentsFromProject(gitlabInstance, source.path, source.name);
+
+            // For a tag-per-component monorepo source, stamp its tag-version template onto each component so version
+            // discovery can scope tags to the component. Absent template = ordinary single-component repo.
+            if (source.tagPattern) {
+              for (const component of fetched) {
+                component.tagPattern = source.tagPattern;
+              }
             }
+
+            return fetched;
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             this.logger.error(
@@ -525,6 +531,19 @@ export class ComponentCacheManager {
 
       const cacheData = this.context.globalState.get<PersistentCacheData>('componentCache');
 
+      if (cacheData && cacheData.version !== CURRENT_CACHE_VERSION) {
+        const fromVersion = cacheData.version || 'unversioned';
+        this.logger.info(
+          `[ComponentCache] Cache schema upgrade (${fromVersion} -> ${CURRENT_CACHE_VERSION}); ` +
+            `discarding existing cache so it can be repopulated with the new schema`,
+          'ComponentCache'
+        );
+        this.components = [];
+        this.lastRefreshTime = 0;
+        this.versionCache.clearCache();
+        return;
+      }
+
       if (cacheData && cacheData.components && Array.isArray(cacheData.components)) {
         this.components = cacheData.components;
         this.lastRefreshTime = cacheData.lastRefreshTime || 0;
@@ -585,7 +604,7 @@ export class ComponentCacheManager {
         components: this.components,
         lastRefreshTime: this.lastRefreshTime,
         projectVersionsCache: this.versionCache.serializeCache(),
-        version: '1.0.0', // For future cache format migrations
+        version: CURRENT_CACHE_VERSION,
       };
 
       await this.context.globalState.update('componentCache', cacheData);

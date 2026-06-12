@@ -48,8 +48,7 @@ common_tasks:
   compile: npm run compile
   watch: npm run watch
   test: npm test
-  test_unit: npm run test:unit
-  test_integration: npm run test:integration
+  test_extension_host: npm run test:extension-host
   package: npm run package
 build_system:
   bundler: esbuild
@@ -58,18 +57,15 @@ build_system:
   target: ES2020
 testing:
   framework: mocha
-  runner: tests/run-tests.js
+  runner: mocha (.mocharc.cjs)
   types:
   - unit: tests/unit/
-  - integration: tests/integration/
   - extension_host: tests/extension-host/ (real VS Code via @vscode/test-electron,
       compiled via tsconfig.test.json)
   scripts:
-    test: node tests/run-tests.js
-    test_unit: node tests/run-tests.js unit
-    test_integration: node tests/run-tests.js integration
+    test: mocha
     test_extension_host: node out-test/runTest.js (after npm run pretest:extension-host)
-    test_all: node tests/run-tests.js && npm run test:extension-host
+    test_all: npm test && npm run test:extension-host
 release:
   automation: release-it
   configs:

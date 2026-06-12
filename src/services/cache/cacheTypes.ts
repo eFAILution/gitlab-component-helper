@@ -45,7 +45,7 @@ export interface SerializedCacheData {
   entries: Array<{
     type: CacheType;
     key: string;
-    data: any;
+    data: unknown;
     timestamp: number;
     ttl: number;
   }>;

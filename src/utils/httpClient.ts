@@ -5,12 +5,63 @@ import { Logger } from './logger';
 import { getRequestDeduplicator, RequestDeduplicator } from './requestDeduplicator';
 import { getPerformanceMonitor } from './performanceMonitor';
 import { NetworkError, getErrorHandler } from '../errors';
+import { API_PER_PAGE_LIMIT, MAX_PAGINATION_PAGES } from '../constants/timing';
 
 interface RequestOptions {
   timeout?: number;
   retryAttempts?: number;
   headers?: Record<string, string>;
   retryDelay?: number;
+}
+
+/**
+ * Extract an HTTP status code from an unknown thrown value.
+ *
+ * Prefers the typed `NetworkError.details.statusCode`, then falls back to a `statusCode` property on
+ * the value itself (some Node networking errors expose one ad hoc). Anything else returns `undefined`
+ * so callers can treat the failure as a non-HTTP error and route through the retry/backoff path.
+ *
+ * @param error  The value caught in a `try`/`catch` block. Accepted as `unknown` so callers don't
+ *               need to narrow before passing it in.
+ * @returns      The HTTP status code if one can be safely extracted, otherwise `undefined`.
+ */
+function extractStatusCode(error: unknown): number | undefined {
+  if (error instanceof NetworkError && error.details?.statusCode) {
+    return error.details.statusCode;
+  }
+  if (typeof error === 'object' && error !== null && 'statusCode' in error) {
+    const candidate = (error as { statusCode: unknown }).statusCode;
+    return typeof candidate === 'number' ? candidate : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Extract a log-friendly message from an unknown thrown value.
+ *
+ * @param error  The value caught in a `try`/`catch` block.
+ * @returns      `Error.message` when `error` is an `Error`, otherwise `String(error)`.
+ */
+function extractMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+/**
+ * Coerce an unknown thrown value to a real `Error`, preserving the original (and its stack) when
+ * possible. Use this at API boundaries that require an `Error` (e.g. `NetworkError`'s `cause` option)
+ * instead of an `as Error` assertion, which would lie about non-Error throws like strings or numbers.
+ *
+ * @param error  The value caught in a `try`/`catch` block.
+ * @returns      The original `Error` if `error` already is one, otherwise a new `Error` wrapping `String(error)`.
+ */
+function toError(error: unknown): Error {
+  if (error instanceof Error) {
+    return error;
+  }
+  return new Error(String(error));
 }
 
 export class HttpClient {
@@ -45,17 +96,17 @@ export class HttpClient {
     return `${url}|${authToken}`;
   }
 
-  async fetchJson(url: string, options: RequestOptions = {}): Promise<any> {
+  async fetchJson<T = unknown>(url: string, options: RequestOptions = {}): Promise<T> {
     return this.performanceMonitor.track(
       'httpClient.fetchJson',
       async () => {
-        return this.fetchJsonInternal(url, options);
+        return this.fetchJsonInternal<T>(url, options);
       },
       { url: new URL(url).hostname + new URL(url).pathname }
     );
   }
 
-  private async fetchJsonInternal(url: string, options: RequestOptions = {}): Promise<any> {
+  private async fetchJsonInternal<T = unknown>(url: string, options: RequestOptions = {}): Promise<T> {
     const config = this.getConfig();
     const timeout = options.timeout || config.timeout;
     const retryAttempts = options.retryAttempts || config.retryAttempts;
@@ -66,7 +117,7 @@ export class HttpClient {
 
     const cacheKey = this.buildCacheKey(url, headers);
 
-    return this.deduplicator.fetch(cacheKey, async () => {
+    return this.deduplicator.fetch<T>(cacheKey, async () => {
       for (let attempt = 0; attempt <= retryAttempts; attempt++) {
         try {
           this.logger.debug(`HTTP Request attempt ${attempt + 1}/${retryAttempts + 1}: ${url}`);
@@ -74,23 +125,21 @@ export class HttpClient {
           const data = await this.makeRequest(url, { timeout, headers });
 
           try {
-            const jsonData = JSON.parse(data);
+            const jsonData = JSON.parse(data) as T;
             this.logger.debug(`HTTP Request successful: ${url} (${data.length} chars)`);
             return jsonData;
           } catch (parseError) {
             // JSON parse error - don't retry
             throw new NetworkError(
               `Invalid JSON response from ${url}`,
-              { statusCode: 0, cause: parseError as Error }
+              { statusCode: 0, cause: toError(parseError) }
             );
           }
-        } catch (error: any) {
+        } catch (error: unknown) {
           const isLastAttempt = attempt === retryAttempts;
 
-          // Check if error is NetworkError with statusCode
-          const statusCode = error instanceof NetworkError && error.details?.statusCode
-            ? error.details.statusCode
-            : error.statusCode;
+          const statusCode = extractStatusCode(error);
+          const message = extractMessage(error);
 
           if (statusCode && !this.shouldRetry(statusCode)) {
             this.logger.warn(`HTTP Request failed with client error ${statusCode}: ${url}`);
@@ -98,7 +147,7 @@ export class HttpClient {
           }
 
           if (isLastAttempt) {
-            this.logger.error(`HTTP Request failed after ${retryAttempts + 1} attempts: ${url} - ${error.message}`);
+            this.logger.error(`HTTP Request failed after ${retryAttempts + 1} attempts: ${url} - ${message}`);
             throw error;
           }
 
@@ -106,7 +155,7 @@ export class HttpClient {
           const baseDelay = options.retryDelay || 1000;
           const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
 
-          this.logger.warn(`HTTP Request failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${url} - ${error.message}`);
+          this.logger.warn(`HTTP Request failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${url} - ${message}`);
           await this.delay(delay);
         }
       }
@@ -145,13 +194,11 @@ export class HttpClient {
 
           this.logger.debug(`HTTP Text Request successful: ${url} (${data.length} chars)`);
           return data;
-        } catch (error: any) {
+        } catch (error: unknown) {
           const isLastAttempt = attempt === retryAttempts;
 
-          // Check if error is NetworkError with statusCode
-          const statusCode = error instanceof NetworkError && error.details?.statusCode
-            ? error.details.statusCode
-            : error.statusCode;
+          const statusCode = extractStatusCode(error);
+          const message = extractMessage(error);
 
           if (statusCode && !this.shouldRetry(statusCode)) {
             this.logger.warn(`HTTP Text Request failed with client error ${statusCode}: ${url}`);
@@ -159,7 +206,7 @@ export class HttpClient {
           }
 
           if (isLastAttempt) {
-            this.logger.error(`HTTP Text Request failed after ${retryAttempts + 1} attempts: ${url} - ${error.message}`);
+            this.logger.error(`HTTP Text Request failed after ${retryAttempts + 1} attempts: ${url} - ${message}`);
             throw error;
           }
 
@@ -167,7 +214,7 @@ export class HttpClient {
           const baseDelay = options.retryDelay || 1000;
           const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
 
-          this.logger.warn(`HTTP Text Request failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${url} - ${error.message}`);
+          this.logger.warn(`HTTP Text Request failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${url} - ${message}`);
           await this.delay(delay);
         }
       }
@@ -176,7 +223,37 @@ export class HttpClient {
     });
   }
 
-  private makeRequest(url: string, options: { timeout: number; headers: Record<string, string> }): Promise<string> {
+  /**
+   * Perform a GET request and resolve with the response body only.
+   *
+   * A thin wrapper over {@link makeRequestWithHeaders} for the common case where callers don't need response headers.
+   *
+   * @param url The fully-qualified request URL.
+   * @param options Request timeout (ms) and headers to send.
+   * @returns The response body as a string.
+   */
+  private async makeRequest(
+    url: string,
+    options: { timeout: number; headers: Record<string, string> }
+  ): Promise<string> {
+    const { body } = await this.makeRequestWithHeaders(url, options);
+    return body;
+  }
+
+  /**
+   * Perform a GET request and resolve with both the response body and headers.
+   *
+   * `makeRequest` discards headers; this sibling preserves them so callers that need pagination metadata (GitLab's
+   * `x-next-page` / `x-total-pages`) can read it. Header names are lower-cased by Node's HTTP layer.
+   *
+   * @param url The fully-qualified request URL.
+   * @param options Request timeout (ms) and headers to send.
+   * @returns The response body string and a lower-cased header map.
+   */
+  private makeRequestWithHeaders(
+    url: string,
+    options: { timeout: number; headers: Record<string, string> }
+  ): Promise<{ body: string; headers: Record<string, string> }> {
     return new Promise((resolve, reject) => {
       try {
         const urlObj = new URL(url);
@@ -201,7 +278,15 @@ export class HttpClient {
 
           res.on('end', () => {
             if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-              resolve(data);
+              const headers: Record<string, string> = {};
+              for (const [key, value] of Object.entries(res.headers)) {
+                if (typeof value === 'string') {
+                  headers[key] = value;
+                } else if (Array.isArray(value)) {
+                  headers[key] = value.join(', ');
+                }
+              }
+              resolve({ body: data, headers });
             } else {
               const message = `HTTP ${res.statusCode}: ${data.substring(0, 200)}`;
               reject(new NetworkError(message, { statusCode: res.statusCode }));
@@ -221,12 +306,75 @@ export class HttpClient {
 
         req.end();
       } catch (error) {
-        reject(new NetworkError(
-          error instanceof Error ? error.message : String(error),
-          { cause: error as Error }
-        ));
+        reject(new NetworkError(extractMessage(error), { cause: toError(error) }));
       }
     });
+  }
+
+  /**
+   * Fetch every page of a paginated GitLab collection endpoint, following the `x-next-page` response header until it
+   * is empty. Each request appends `per_page`/`page` query parameters (preserving any already present on `url`).
+   *
+   * Use this for list endpoints that can exceed one page (tags, branches, project listings).
+   *
+   * A safety cap prevents an unbounded loop if a server misreports
+   * pagination headers; hitting it is logged.
+   *
+   * @param url The collection endpoint URL (without `page`; `per_page` is appended).
+   * @param options Standard request options (headers, timeout, retry).
+   * @param perPage Items per page (defaults to {@link API_PER_PAGE_LIMIT}; GitLab caps at 100).
+   * @param maxPages Hard cap on pages fetched, as a runaway-loop backstop (defaults to {@link MAX_PAGINATION_PAGES}).
+   * @returns A flat array of all items across every page.
+   */
+  async fetchAllPages<T = unknown>(
+    url: string,
+    options: RequestOptions = {},
+    perPage: number = API_PER_PAGE_LIMIT,
+    maxPages: number = MAX_PAGINATION_PAGES
+  ): Promise<T[]> {
+    const headers = {
+      'User-Agent': 'VSCode-GitLabComponentHelper',
+      ...options.headers
+    };
+    const timeout = options.timeout || this.getConfig().timeout;
+
+    const all: T[] = [];
+    let page = 1;
+
+    while (page <= maxPages) {
+      const pageUrl = new URL(url);
+      pageUrl.searchParams.set('per_page', String(perPage));
+      pageUrl.searchParams.set('page', String(page));
+
+      const { body, headers: responseHeaders } = await this.makeRequestWithHeaders(pageUrl.toString(), {
+        timeout,
+        headers
+      });
+
+      let items: T[];
+      try {
+        const parsed = JSON.parse(body);
+        items = Array.isArray(parsed) ? parsed : [];
+      } catch (parseError) {
+        throw new NetworkError(
+          `Invalid JSON response from ${pageUrl.toString()}`,
+          { statusCode: 0, cause: toError(parseError) }
+        );
+      }
+
+      all.push(...items);
+
+      const nextPage = responseHeaders['x-next-page'];
+      if (!nextPage || nextPage.trim() === '') {
+        return all;
+      }
+      page += 1;
+    }
+
+    this.logger.warn(
+      `fetchAllPages hit the ${maxPages}-page safety cap for ${url}; results may be truncated (${all.length} items)`
+    );
+    return all;
   }
 
   // Parallel request utility
@@ -246,7 +394,7 @@ export class HttpClient {
         const result = parser(data, url);
         return { result, url };
       } catch (error) {
-        return { error: error as Error, url };
+        return { error: toError(error), url };
       }
     });
 

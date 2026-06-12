@@ -1,4 +1,3 @@
-import * as vscode from 'vscode';
 import { getComponentService } from '../component';
 import { Logger } from '../../utils/logger';
 import { CachedComponent } from '../../types/cache';
@@ -43,7 +42,7 @@ export class ProjectCache {
           'ProjectCache'
         );
 
-        const sourceComponents: CachedComponent[] = catalogData.components.map((c: any) => {
+        const sourceComponents: CachedComponent[] = catalogData.components.map(c => {
           const componentUrl = `https://${gitlabInstance}/${projectPath}/${c.name}@${
             c.latest_version || 'main'
           }`;
@@ -51,18 +50,20 @@ export class ProjectCache {
           return {
             name: c.name,
             description: c.description || `Component from ${sourceName}`,
-            parameters: (c.variables || []).map((v: any) => ({
+            parameters: (c.variables || []).map(v => ({
               name: v.name,
               description: v.description || `Parameter: ${v.name}`,
               required: v.required || false,
               type: v.type || 'string',
               default: v.default,
+              options: v.options,
             })),
             source: sourceName,
             sourcePath: projectPath,
             gitlabInstance: gitlabInstance,
             version: c.latest_version || 'main',
             url: componentUrl,
+            templatePath: c.templatePath,
           };
         });
 
@@ -140,7 +141,7 @@ export class ProjectCache {
       }
 
       // Find the matching component in the catalog
-      const catalogComponent = catalogData.components.find((c: any) => c.name === componentName);
+      const catalogComponent = catalogData.components.find(c => c.name === componentName);
       if (!catalogComponent) {
         this.logger.warn(
           `[ProjectCache] Component ${componentName} not found in version ${version}`,
@@ -153,18 +154,20 @@ export class ProjectCache {
       const cachedComponent: CachedComponent = {
         name: catalogComponent.name,
         description: catalogComponent.description || `Component from ${sourcePath}`,
-        parameters: (catalogComponent.variables || []).map((v: any) => ({
+        parameters: (catalogComponent.variables || []).map(v => ({
           name: v.name,
           description: v.description || `Parameter: ${v.name}`,
           required: v.required || false,
           type: v.type || 'string',
           default: v.default,
+          options: v.options,
         })),
         source: `${SOURCE_COMPONENTS_PREFIX} ${sourcePath}`,
         sourcePath: sourcePath,
         gitlabInstance: gitlabInstance,
         version: version,
         url: `https://${gitlabInstance}/${sourcePath}/${catalogComponent.name}@${version}`,
+        templatePath: catalogComponent.templatePath,
       };
 
       this.logger.info(

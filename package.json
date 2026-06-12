@@ -2,7 +2,7 @@
   "name": "gitlab-component-helper",
   "displayName": "GitLab Component Helper",
   "description": "Provides intellisense for GitLab CI components",
-  "version": "0.10.4",
+  "version": "0.11.20",
   "icon": "images/icon.png",
   "engines": {
     "node": ">=22.0.0",
@@ -17,8 +17,10 @@
   "activationEvents": [
     "onLanguage:yaml",
     "onLanguage:shellscript",
-    "workspaceContains:.gitlab-ci.yml",
-    "workspaceContains:.gitlab-ci.yaml"
+    "workspaceContains:**/.gitlab-ci.yml",
+    "workspaceContains:**/.gitlab-ci.yaml",
+    "workspaceContains:**/.gitlab/**/*.yml",
+    "workspaceContains:**/.gitlab/**/*.yaml"
   ],
   "contributes": {
     "languages": [
@@ -48,42 +50,12 @@
     "configuration": {
       "title": "GitLab Component Helper",
       "properties": {
-        "gitlabComponentHelper.componentSource": {
-          "type": "string",
-          "enum": [
-            "local",
-            "gitlab",
-            "url"
-          ],
-          "default": "local",
-          "description": "Source for component definitions"
-        },
-        "gitlabComponentHelper.gitlabUrl": {
-          "type": "string",
-          "default": "https://gitlab.com",
-          "description": "GitLab instance URL"
-        },
-        "gitlabComponentHelper.gitlabProjectId": {
-          "type": "string",
-          "default": "",
-          "description": "GitLab project ID containing component definitions"
-        },
         "gitlabComponentHelper.gitlabToken": {
           "type": "string",
           "default": "",
           "description": "GitLab API access token (DEPRECATED - stored in plain text). Use the 'GitLab CI: Add Component Project/Group' command instead, which stores tokens encrypted via VS Code SecretStorage.",
           "deprecationMessage": "Tokens stored here live in plain text in settings.json. Run the 'GitLab CI: Add Component Project/Group' command to migrate to encrypted SecretStorage, then clear this field.",
           "markdownDescription": "**Deprecated:** Tokens stored here live in plain text in `settings.json`. Run the **GitLab CI: Add Component Project/Group** command instead - it stores tokens encrypted via VS Code SecretStorage. Once migrated, clear this field."
-        },
-        "gitlabComponentHelper.gitlabComponentsFilePath": {
-          "type": "string",
-          "default": "components.json",
-          "description": "Path to components JSON file in GitLab repository"
-        },
-        "gitlabComponentHelper.componentsUrl": {
-          "type": "string",
-          "default": "",
-          "description": "URL to a JSON file containing component definitions"
         },
         "gitlabComponentHelper.cacheTime": {
           "type": "number",
@@ -161,6 +133,10 @@
                 "default": "gitlab.com",
                 "description": "GitLab instance hostname"
               },
+              "tagPattern": {
+                "type": "string",
+                "description": "Tag pattern for a tag-per-component monorepo, describing how tags embed the component name and version. Use the tokens {name} (the component/directory name) and {version} (the version shown in the dropdown); {version} matches anything starting with a digit. Examples: '{name}-{version}', 'apps/{name}/v{version}', '{name}_{version}'. When set, each component's versions are scoped to its own tags; leave unset for ordinary single-component repositories."
+              },
               "discovery": {
                 "type": "object",
                 "description": "Per-source discovery overrides (uses gitlabComponentHelper.discovery.* defaults if omitted)",
@@ -236,6 +212,14 @@
             "template.yaml"
           ],
           "description": "Filenames recognised inside per-component subfolders, e.g. 'templates/foo/template.yml'."
+        },
+        "gitlabComponentHelper.additionalFileGlobs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra GitLab CI file globs, merged with the built-in defaults. Patterns match at any directory depth (e.g. 'ci/*.yml' is treated as '**/ci/*.yml')."
         }
       }
     },
@@ -280,7 +264,7 @@
     "menus": {
       "editor/context": [
         {
-          "when": "resourceFilename =~ /gitlab-ci\\.yml$/",
+          "when": "gitlabComponentHelper.isCiFile",
           "command": "gitlab-component-helper.browseComponents",
           "group": "navigation"
         }
@@ -294,15 +278,13 @@
     "watch:esbuild": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
     "package": "npm run check-types && node esbuild.js --production",
-    "check-types": "tsc --noEmit",
-    "lint": "eslint src",
+    "check-types": "tsc --noEmit && tsc --noEmit --project tsconfig.tests.json",
+    "lint": "eslint --max-warnings 0",
     "pretest": "npm run compile",
     "prepare": "husky",
-    "test": "node tests/run-tests.js",
-    "test:unit": "node tests/run-tests.js unit",
-    "test:integration": "node tests/run-tests.js integration",
-    "test:all": "node tests/run-tests.js && npm run test:extension-host",
-    "pretest:extension-host": "npm run compile && tsc --project tsconfig.test.json",
+    "test": "mocha",
+    "test:all": "npm test && npm run test:extension-host",
+    "pretest:extension-host": "rm -rf out-test && npm run compile && tsc --project tsconfig.test.json",
     "test:extension-host": "node out-test/runTest.js",
     "release": "release-it",
     "release:beta": "release-it --config .release-it.beta.json",
@@ -320,20 +302,20 @@
     "commitizen": "commitizen init cz-conventional-changelog --save-dev --save-exact --force"
   },
   "devDependencies": {
-    "@commitlint/cli": "^21.0.1",
-    "@commitlint/config-conventional": "^21.0.0",
+    "@commitlint/cli": "^21.0.2",
+    "@commitlint/config-conventional": "^21.0.2",
     "@digitalroute/cz-conventional-changelog-for-jira": "^8.0.1",
     "@eslint/js": "^10.0.1",
     "@octokit/core": "^7.0.6",
     "@octokit/plugin-paginate-rest": "^14.0.0",
-    "@release-it/conventional-changelog": "^10.0.4",
+    "@release-it/conventional-changelog": "^11.0.1",
     "@types/glob": "^9.0.0",
     "@types/js-yaml": "^4.0.9",
     "@types/mocha": "^10.0.10",
     "@types/node": "^25.9.1",
     "@types/vscode": "^1.120.0",
-    "@typescript-eslint/eslint-plugin": "^8.60.0",
-    "@typescript-eslint/parser": "^8.60.0",
+    "@typescript-eslint/eslint-plugin": "^8.60.1",
+    "@typescript-eslint/parser": "^8.60.1",
     "@vscode/test-electron": "^2.3.9",
     "commitizen": "^4.3.1",
     "conventional-changelog-conventionalcommits": "^9.3.1",
@@ -342,16 +324,19 @@
     "dateformat": "^5.0.3",
     "dotenv": "^17.4.2",
     "esbuild": "^0.28.0",
-    "eslint": "^10.4.0",
+    "eslint": "^10.4.1",
+    "globals": "^17.6.0",
     "husky": "^9.1.6",
     "is-ci": "^4.0.0",
-    "js-yaml": "^4.1.1",
+    "js-yaml": "^4.2.0",
+    "minimatch": "^10.2.5",
     "mocha": "^11.7.6",
     "npm-run-all": "^4.1.5",
-    "release-it": "^19.2.4",
+    "release-it": "^20.2.0",
     "semver": "^7.8.1",
+    "tsx": "^4.22.3",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.60.0"
+    "typescript-eslint": "^8.60.1"
   },
   "keywords": [],
   "author": "eFAILution",

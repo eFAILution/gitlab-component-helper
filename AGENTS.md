@@ -44,8 +44,8 @@ This project uses **AI Context as Code (AICaC)** - structured YAML documentation
 ```bash
 npm run compile          # Compile TypeScript
 npm run watch            # Watch mode for development
-npm test                 # Run all tests
-npm run test:unit        # Run unit tests only
+npm test                 # Run the Mocha unit suite
+npm run test:extension-host  # Run real-VS-Code tests
 npm run package          # Build production bundle
 ```
 
@@ -102,9 +102,8 @@ gitlab-component-helper/
 
 ## Testing
 
-- **Unit tests:** `npm run test:unit` (fast, isolated)
-- **Integration tests:** `npm run test:integration` (slower, real VS Code APIs)
-- **Performance tests:** `npm run test:performance`
+- **Unit tests:** `npm test` (Mocha, fast, isolated)
+- **Extension-host tests:** `npm run test:extension-host` (slower, real VS Code APIs)
 
 All tests must pass before merging. CI runs tests automatically.
 

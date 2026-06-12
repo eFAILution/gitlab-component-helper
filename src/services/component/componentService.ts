@@ -21,7 +21,6 @@ interface CacheEntry {
 }
 
 const sourceCache = new Map<string, CacheEntry>();
-const backgroundUpdateInProgress = false;
 
 /**
  * Main component service that orchestrates fetching and managing GitLab components
@@ -55,19 +54,12 @@ export class ComponentService implements ComponentSource {
     this.tokenManager.setSecretStorage(secretStorage);
   }
 
-  public async getTokenForProject(
-    gitlabInstance: string,
-    projectPath: string
-  ): Promise<string | undefined> {
-    return this.tokenManager.getTokenForProject(gitlabInstance, projectPath);
+  public async getTokenForProject(gitlabInstance: string): Promise<string | undefined> {
+    return this.tokenManager.getTokenForProject(gitlabInstance);
   }
 
-  public async setTokenForProject(
-    gitlabInstance: string,
-    projectPath: string,
-    token: string
-  ): Promise<void> {
-    return this.tokenManager.setTokenForProject(gitlabInstance, projectPath, token);
+  public async setTokenForProject(gitlabInstance: string, token: string): Promise<void> {
+    return this.tokenManager.setTokenForProject(gitlabInstance, token);
   }
 
   public async getTokenForInstance(gitlabInstance: string): Promise<string | undefined> {
@@ -114,6 +106,13 @@ export class ComponentService implements ComponentSource {
   }
 
   // Version management delegation
+  /**
+   * Fetch all tags/versions for a GitLab project.
+   *
+   * @param gitlabInstance The GitLab instance hostname.
+   * @param projectPath The project path.
+   * @returns Array of version strings (tags and important branches).
+   */
   public async fetchProjectVersions(
     gitlabInstance: string,
     projectPath: string
@@ -125,6 +124,49 @@ export class ComponentService implements ComponentSource {
     return this.versionManager.fetchProjectTags(gitlabInstance, projectPath);
   }
 
+  /**
+   * Fetch a project's default branch name (e.g. `main`) from its project info.
+   *
+   * @param gitlabInstance The GitLab instance hostname.
+   * @param projectPath The project path; URL-encoded internally.
+   * @returns The default branch name, or null if it can't be resolved (network error, no access).
+   */
+  public async fetchProjectDefaultBranch(gitlabInstance: string, projectPath: string) {
+    return this.versionManager.fetchProjectDefaultBranch(gitlabInstance, projectPath);
+  }
+
+  /**
+   * Resolve the HEAD commit SHA of a branch, used to detect when a branch ref has moved.
+   *
+   * @param gitlabInstance The GitLab instance hostname (e.g. `gitlab.com`).
+   * @param projectPath The project path (e.g. `my-group/shared-ci`).
+   * @param branch The branch name to resolve.
+   * @returns The commit SHA, or null if the branch can't be resolved (network error, missing branch, no access).
+   */
+  public async resolveBranchSha(
+    gitlabInstance: string,
+    projectPath: string,
+    branch: string
+  ): Promise<string | null> {
+    return this.versionManager.resolveBranchSha(gitlabInstance, projectPath, branch);
+  }
+
+  /**
+   * Authoritatively determine whether a ref is a tag (taken as fixed, skips freshness checks) versus a branch.
+   *
+   * @param gitlabInstance The GitLab instance hostname (e.g. `gitlab.com`).
+   * @param projectPath The project path (e.g. `my-group/shared-ci`).
+   * @param ref The ref name to classify.
+   * @returns `true` if a tag, `false` if definitively not a tag, or `null` when it can't be determined.
+   */
+  public async isRefATag(
+    gitlabInstance: string,
+    projectPath: string,
+    ref: string
+  ): Promise<boolean | null> {
+    return this.versionManager.isRefATag(gitlabInstance, projectPath, ref);
+  }
+
   // Catalog data delegation
   public async fetchCatalogData(
     gitlabInstance: string,
@@ -132,7 +174,7 @@ export class ComponentService implements ComponentSource {
     forceRefresh: boolean = false,
     version?: string,
     context?: vscode.ExtensionContext
-  ): Promise<any> {
+  ): Promise<Awaited<ReturnType<ComponentFetcher['fetchCatalogData']>>> {
     return this.componentFetcher.fetchCatalogData(
       gitlabInstance,
       projectPath,
@@ -143,8 +185,8 @@ export class ComponentService implements ComponentSource {
   }
 
   // HTTP client delegation
-  public async fetchJson(url: string, options?: any): Promise<any> {
-    return this.httpClient.fetchJson(url, options);
+  public async fetchJson<T = unknown>(url: string, options?: { headers?: Record<string, string> }): Promise<T> {
+    return this.httpClient.fetchJson<T>(url, options);
   }
 
   private async fetchText(url: string): Promise<string> {
@@ -193,88 +235,6 @@ export class ComponentService implements ComponentSource {
         ]
       }
     ];
-  }
-
-  // Legacy methods for backward compatibility
-  private legacyTokenWarningLogged = false;
-
-  private async resolveLegacyGitlabToken(gitlabHost: string): Promise<string> {
-    const secretToken = await this.tokenManager.getTokenForInstance(gitlabHost);
-    if (secretToken) {
-      return secretToken;
-    }
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-    const settingToken = config.get<string>('gitlabToken', '');
-    if (settingToken && !this.legacyTokenWarningLogged) {
-      this.logger.warn(
-        '[ComponentService] Using gitlabComponentHelper.gitlabToken from settings.json (plain text). ' +
-        'Run the "GitLab CI: Add Component Project/Group" command to migrate this token to encrypted SecretStorage, then clear the setting.'
-      );
-      this.legacyTokenWarningLogged = true;
-    }
-    return settingToken;
-  }
-
-  private async fetchFromGitLab(): Promise<Component[]> {
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-    const gitlabUrl = config.get<string>('gitlabUrl', '');
-    const projectId = config.get<string>('gitlabProjectId', '');
-    const filePath = config.get<string>('gitlabComponentsFilePath', 'components.json');
-
-    if (!gitlabUrl || !projectId) {
-      throw new Error('GitLab URL or project ID not configured');
-    }
-
-    const gitlabHost = (() => {
-      try {
-        return new URL(gitlabUrl).hostname;
-      } catch {
-        return gitlabUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
-      }
-    })();
-
-    const token = await this.resolveLegacyGitlabToken(gitlabHost);
-    if (!token) {
-      throw new Error(
-        `No GitLab token configured for ${gitlabHost}. Run the "GitLab CI: Add Component Project/Group" command to add one.`
-      );
-    }
-
-    const apiUrl = `${gitlabUrl}/api/v4/projects/${encodeURIComponent(
-      projectId
-    )}/repository/files/${encodeURIComponent(filePath)}/raw`;
-
-    try {
-      const components = await this.httpClient.fetchJson(apiUrl, {
-        headers: {
-          'PRIVATE-TOKEN': token
-        }
-      });
-
-      this.logger.info(`Successfully fetched ${components.length} components from GitLab`);
-      return components;
-    } catch (error) {
-      this.logger.error(`GitLab fetch failed: ${error}`);
-      throw error;
-    }
-  }
-
-  private async fetchFromUrl(): Promise<Component[]> {
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-    const url = config.get<string>('componentsUrl', '');
-
-    if (!url) {
-      throw new Error('Components URL not configured');
-    }
-
-    try {
-      const components = await this.httpClient.fetchJson(url);
-      this.logger.info(`Successfully fetched ${components.length} components from URL`);
-      return components;
-    } catch (error) {
-      this.logger.error(`URL fetch failed: ${error}`);
-      throw error;
-    }
   }
 
   // Cache management

@@ -15,7 +15,6 @@ function runCommand(command, description) {
     return output;
   } catch (error) {
     console.error(`❌ ${description} failed:`, error.message);
-    // eslint-disable-next-line no-process-exit
     process.exit(1);
   }
 }
@@ -27,12 +26,10 @@ function checkGitStatus() {
       console.log('❌ Working directory is not clean. Please commit your changes first.');
       console.log('Uncommitted changes:');
       console.log(status);
-      // eslint-disable-next-line no-process-exit
       process.exit(1);
     }
   } catch (error) {
     console.error('❌ Failed to check git status:', error.message);
-    // eslint-disable-next-line no-process-exit
     process.exit(1);
   }
 }
@@ -42,7 +39,6 @@ function getCurrentBranch() {
     return execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8' }).trim();
   } catch (error) {
     console.error('❌ Failed to get current branch:', error.message);
-    // eslint-disable-next-line no-process-exit
     process.exit(1);
   }
 }

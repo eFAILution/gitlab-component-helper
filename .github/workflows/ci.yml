@@ -32,8 +32,19 @@ jobs:
       - name: Run compile
         run: node esbuild.js
 
-      - name: Run tests
-        run: npm run test
+      - name: Run Mocha unit tests
+        # Writes junit.xml via Mocha's built-in xunit reporter (configured in .mocharc.cjs).
+        # The test-reporter step below parses that file for annotations + check-run summary.
+        run: npm test
+
+      - name: Publish Mocha test report
+        if: always()
+        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2  # v3.0.0
+        with:
+          name: Mocha unit tests
+          path: junit.xml
+          reporter: java-junit
+          fail-on-error: 'true'
 
       - name: Upload test artifacts on failure
         if: failure()

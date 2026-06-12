@@ -1,15 +1,8 @@
 import { Logger } from '../../utils/logger';
 import { HttpClient } from '../../utils/httpClient';
 import { TokenManager } from './tokenManager';
-
-interface GitLabTag {
-  name: string;
-  commit: any;
-}
-
-interface GitLabBranch {
-  name: string;
-}
+import type { GitLabProjectInfo, GitLabTag, GitLabBranch } from '../../types/api';
+import { NetworkError } from '../../errors';
 
 /**
  * Manages fetching and sorting versions (tags and branches) for GitLab projects
@@ -43,13 +36,13 @@ export class VersionManager {
       this.logger.info(`Fetching versions for ${gitlabInstance}/${projectPath}`);
 
       // Try to get a token for this project/instance
-      const token = await this.tokenManager.getTokenForProject(gitlabInstance, projectPath);
+      const token = await this.tokenManager.getTokenForProject(gitlabInstance);
       const fetchOptions = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
 
       this.logger.debug(`Using token for versions fetch: ${token ? 'YES' : 'NO'}`);
 
       // First, get project info to get the project ID
-      const projectInfo = await this.httpClient.fetchJson(
+      const projectInfo = await this.httpClient.fetchJson<GitLabProjectInfo>(
         `${apiBaseUrl}/projects/${encodedPath}`,
         fetchOptions
       );
@@ -59,14 +52,15 @@ export class VersionManager {
         return ['main'];
       }
 
-      // Fetch tags and branches in parallel
+      // Fetch tags and branches in parallel. Both are fully paginated so neither is silently truncated on projects
+      // with many tags/branches.
       const [tagsResult, branchesResult] = await Promise.allSettled([
-        this.httpClient.fetchJson(
-          `${apiBaseUrl}/projects/${projectInfo.id}/repository/tags?per_page=100&sort=desc`,
+        this.httpClient.fetchAllPages<GitLabTag>(
+          `${apiBaseUrl}/projects/${projectInfo.id}/repository/tags?sort=desc`,
           fetchOptions
         ),
-        this.httpClient.fetchJson(
-          `${apiBaseUrl}/projects/${projectInfo.id}/repository/branches?per_page=20`,
+        this.httpClient.fetchAllPages<GitLabBranch>(
+          `${apiBaseUrl}/projects/${projectInfo.id}/repository/branches`,
           fetchOptions
         )
       ]);
@@ -76,8 +70,8 @@ export class VersionManager {
       // Process tags
       if (tagsResult.status === 'fulfilled' && Array.isArray(tagsResult.value)) {
         const tagVersions = tagsResult.value
-          .map((tag: any) => tag.name)
-          .filter((name: string) => name);
+          .map(tag => tag.name)
+          .filter(name => name);
         versions.push(...tagVersions);
         this.logger.debug(`Found ${tagVersions.length} tags`);
       } else {
@@ -91,8 +85,8 @@ export class VersionManager {
       // Process branches
       if (branchesResult.status === 'fulfilled' && Array.isArray(branchesResult.value)) {
         const importantBranches = branchesResult.value
-          .map((branch: any) => branch.name)
-          .filter((name: string) => ['main', 'master', 'develop', 'dev'].includes(name));
+          .map(branch => branch.name)
+          .filter(name => ['main', 'master', 'develop', 'dev'].includes(name));
         versions.push(...importantBranches);
         this.logger.debug(`Found ${importantBranches.length} important branches`);
       } else {
@@ -142,11 +136,11 @@ export class VersionManager {
     try {
       const apiUrl = `https://${gitlabInstance}/api/v4/projects/${encodeURIComponent(
         projectPath
-      )}/repository/tags?per_page=100&order_by=updated&sort=desc`;
+      )}/repository/tags?order_by=updated&sort=desc`;
 
-      const token = await this.tokenManager.getTokenForProject(gitlabInstance, projectPath);
+      const token = await this.tokenManager.getTokenForProject(gitlabInstance);
       const options = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
-      const tags = await this.httpClient.fetchJson(apiUrl, options);
+      const tags = await this.httpClient.fetchAllPages<GitLabTag>(apiUrl, options);
 
       this.logger.info(`Found ${tags.length} tags for ${projectPath}`);
       this.logger.logPerformance('fetchProjectTags', Date.now() - startTime, {
@@ -158,6 +152,119 @@ export class VersionManager {
     } catch (error) {
       this.logger.warn(`Error fetching tags: ${error}`);
       return [];
+    }
+  }
+
+  /**
+   * Fetch a project's default branch name (e.g. `main`) from its project info.
+   *
+   * @param gitlabInstance The GitLab instance hostname.
+   * @param projectPath The project path; URL-encoded internally.
+   * @returns The default branch name, or null if it can't be resolved (network error, no access).
+   */
+  public async fetchProjectDefaultBranch(
+    gitlabInstance: string,
+    projectPath: string
+  ): Promise<string | null> {
+    try {
+      const apiUrl = `https://${gitlabInstance}/api/v4/projects/${encodeURIComponent(projectPath)}`;
+      const token = await this.tokenManager.getTokenForProject(gitlabInstance);
+      const options = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+      const projectInfo = await this.httpClient.fetchJson<GitLabProjectInfo>(apiUrl, options);
+      return projectInfo?.default_branch || null;
+    } catch (error) {
+      this.logger.debug(
+        `[VersionManager] Could not resolve default branch for ${projectPath}: ${error}`
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Resolve the HEAD commit SHA of a branch in a single cheap API call.
+   *
+   * Used to revalidate cached components that are pinned to a (mutable) branch: if the branch HEAD still matches the
+   * SHA stored alongside the cache entry, the cached data is still current and a full re-fetch can be skipped.
+   *
+   * @param gitlabInstance The GitLab instance hostname (e.g. `gitlab.com`).
+   * @param projectPath The project path (e.g. `my-group/shared-ci`); URL-encoded internally.
+   * @param branch The branch name to resolve; URL-encoded internally (supports `/`-containing names).
+   * @returns The commit SHA, or null if the branch can't be resolved (network error, missing branch, no access) —
+   *          callers should treat null as "unknown, keep serving cache" rather than "unchanged" or "changed".
+   */
+  public async resolveBranchSha(
+    gitlabInstance: string,
+    projectPath: string,
+    branch: string
+  ): Promise<string | null> {
+    try {
+      const apiBaseUrl = `https://${gitlabInstance}/api/v4`;
+      const encodedPath = encodeURIComponent(projectPath);
+      const encodedBranch = encodeURIComponent(branch);
+      const url = `${apiBaseUrl}/projects/${encodedPath}/repository/branches/${encodedBranch}`;
+
+      const token = await this.tokenManager.getTokenForProject(gitlabInstance);
+      const options = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+
+      const branchInfo = await this.httpClient.fetchJson<GitLabBranch>(url, options);
+      const sha = branchInfo?.commit?.id;
+
+      if (!sha) {
+        this.logger.debug(
+          `[VersionManager] No commit SHA returned for ${projectPath}@${branch}`
+        );
+        return null;
+      }
+
+      this.logger.debug(
+        `[VersionManager] Resolved ${projectPath}@${branch} to ${sha.slice(0, 8)}`
+      );
+      return sha;
+    } catch (error) {
+      this.logger.debug(
+        `[VersionManager] Could not resolve branch SHA for ${projectPath}@${branch}: ${error}`
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Determine whether a ref is a tag
+   *
+   * @param gitlabInstance The GitLab instance hostname (e.g. `gitlab.com`).
+   * @param projectPath The project path (e.g. `my-group/shared-ci`);
+   * @param ref The ref name to classify;
+   * @returns `true` if the ref is a tag, `false` if it is definitively not a tag, or`null` when the answer can't be
+   *          determined.
+   */
+  public async isRefATag(
+    gitlabInstance: string,
+    projectPath: string,
+    ref: string
+  ): Promise<boolean | null> {
+    const apiBaseUrl = `https://${gitlabInstance}/api/v4`;
+    const encodedPath = encodeURIComponent(projectPath);
+    const encodedRef = encodeURIComponent(ref);
+    const url = `${apiBaseUrl}/projects/${encodedPath}/repository/tags/${encodedRef}`;
+
+    try {
+      const token = await this.tokenManager.getTokenForProject(gitlabInstance);
+      const options = token ? { headers: { 'PRIVATE-TOKEN': token } } : undefined;
+
+      await this.httpClient.fetchJson<GitLabTag>(url, options);
+      this.logger.debug(`[VersionManager] ${projectPath}@${ref} is a tag`);
+      return true;
+    } catch (error) {
+      if (error instanceof NetworkError && error.details?.statusCode === 404) {
+        // Definitive: no tag by this name exists, so the ref is a branch (or doesn't exist).
+        this.logger.debug(`[VersionManager] ${projectPath}@${ref} is not a tag (404)`);
+        return false;
+      }
+      // Anything else (offline, 401/403, 5xx) — we genuinely don't know.
+      this.logger.debug(
+        `[VersionManager] Could not determine tag status for ${projectPath}@${ref}: ${error}`
+      );
+      return null;
     }
   }
 

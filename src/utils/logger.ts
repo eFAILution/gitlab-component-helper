@@ -1,5 +1,24 @@
-import * as vscode from 'vscode';
+import { createRequire } from 'node:module';
 import { outputChannel } from './outputChannel';
+import type * as VsCodeNS from 'vscode';
+
+type VsCode = typeof VsCodeNS;
+
+const requireFn = createRequire(__filename);
+
+/**
+ * Resolves the `vscode` module at call time.
+ *
+ * @returns the live `vscode` API when running inside the extension host, or `undefined` when imported from plain
+ *   Node (e.g. unit tests).
+ */
+function getVscode(): VsCode | undefined {
+  try {
+    return requireFn('vscode');
+  } catch {
+    return undefined;
+  }
+}
 
 export enum LogLevel {
   DEBUG = 0,
@@ -15,8 +34,15 @@ export class Logger {
   private isDevelopmentMode: boolean = false;
 
   private constructor() {
+    const vscode = getVscode();
+    if (!vscode) {
+      // No vscode at module load e.g. running unit tests.
+      this.isInitialized = true;
+      return;
+    }
+
     // Detect if we're in development mode (extension debugging)
-    this.isDevelopmentMode = this.isInDevelopmentMode();
+    this.isDevelopmentMode = this.isInDevelopmentMode(vscode);
 
     this.updateLogLevel(false); // Don't show output channel during initialization
 
@@ -29,7 +55,7 @@ export class Logger {
     });
 
     this.isInitialized = true;
-  }  private isInDevelopmentMode(): boolean {
+  }  private isInDevelopmentMode(vscode: VsCode): boolean {
     try {
       // Check if we're running in extension development mode
       // In development, the extension runs from source and has different characteristics
@@ -55,6 +81,11 @@ export class Logger {
   }
 
   private updateLogLevel(showOutput: boolean = false): void {
+
+    // early return if no vscode, e.g. running unit tests
+    const vscode = getVscode();
+    if (!vscode) return;
+
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
     const levelString = config.get<string>('logLevel', 'ERROR');
     const autoShowOutput = config.get<boolean>('autoShowOutput', false);
@@ -155,7 +186,7 @@ export class Logger {
   }
 
   // Structured logging for performance metrics
-  logPerformance(operation: string, duration: number, details?: Record<string, any>): void {
+  logPerformance(operation: string, duration: number, details?: Record<string, unknown>): void {
     if (this.shouldLog(LogLevel.INFO)) {
       const detailsStr = details ? ` | ${JSON.stringify(details)}` : '';
       this.info(`Performance: ${operation} completed in ${duration}ms${detailsStr}`, 'Performance');

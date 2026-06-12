@@ -6,7 +6,7 @@ export interface ErrorHandlerOptions {
   showNotification?: boolean;
   logError?: boolean;
   throwError?: boolean;
-  fallbackValue?: any;
+  fallbackValue?: unknown;
   context?: string;
 }
 
@@ -56,7 +56,7 @@ export class ErrorHandler {
     }
 
     // Return fallback value
-    return fallbackValue;
+    return fallbackValue as T | undefined;
   }
 
   /**
@@ -85,7 +85,7 @@ export class ErrorHandler {
     } catch (error) {
       // Handle synchronously by not awaiting
       this.handle<T>(error, options);
-      return options.fallbackValue;
+      return options.fallbackValue as T | undefined;
     }
   }
 
@@ -144,12 +144,13 @@ export class ErrorHandler {
    */
   private logError(error: GitLabComponentError, context?: string): void {
     const prefix = context ? `[${context}]` : '';
-    const message = `${prefix} ${error.code}: ${error.message}`;
+    const detailsStr = error.details ? ` ${JSON.stringify(error.details)}` : '';
+    const message = `${prefix} ${error.code}: ${error.message}${detailsStr}`;
 
     if (error.recoverable) {
-      this.logger.warn(message, error.details);
+      this.logger.warn(message);
     } else {
-      this.logger.error(message, error.details);
+      this.logger.error(message);
     }
 
     // Log full stack trace at debug level
@@ -169,13 +170,13 @@ export class ErrorHandler {
         error.userMessage,
         ...actions
       );
-      await this.handleAction(selection, error);
+      await this.handleAction(selection);
     } else {
       const selection = await vscode.window.showErrorMessage(
         error.userMessage,
         ...actions
       );
-      await this.handleAction(selection, error);
+      await this.handleAction(selection);
     }
   }
 
@@ -217,10 +218,7 @@ export class ErrorHandler {
   /**
    * Handle user action selection
    */
-  private async handleAction(
-    action: string | undefined,
-    error: GitLabComponentError
-  ): Promise<void> {
+  private async handleAction(action: string | undefined): Promise<void> {
     if (!action) {
       return;
     }
@@ -322,13 +320,13 @@ export function getErrorHandler(): ErrorHandler {
  */
 export function handleErrors(options: ErrorHandlerOptions = {}) {
   return function (
-    target: any,
+    target: object,
     propertyKey: string,
     descriptor: PropertyDescriptor
   ) {
     const originalMethod = descriptor.value;
 
-    descriptor.value = async function (...args: any[]) {
+    descriptor.value = async function (...args: unknown[]) {
       const handler = getErrorHandler();
       return handler.wrap(
         () => originalMethod.apply(this, args),

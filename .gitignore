@@ -37,6 +37,7 @@ node_modules
 .vscode-test
 out
 out-test
+junit.xml
 
 # Other
 offline-search-index.*

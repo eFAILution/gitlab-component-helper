@@ -2,14 +2,40 @@ import { registerAddProjectTokenCommand, getComponentService } from './services/
 import * as vscode from 'vscode';
 import { HoverProvider } from './providers/hoverProvider';
 import { CompletionProvider } from './providers/completionProvider';
+import { ComponentDocumentLinkProvider } from './providers/documentLinkProvider';
 import { ComponentBrowserProvider } from './providers/componentBrowserProvider';
-import { detectIncludeComponent } from './providers/componentDetector';
+import { detectIncludeComponent, Component } from './providers/componentDetector';
+import { stripTagPrefix } from './services/component/tagScoping';
 import { getComponentCacheManager, ComponentCacheManager } from './services/cache/componentCacheManager';
 import { Logger } from './utils/logger';
 import { ValidationProvider } from './providers/validationProvider';
-import { parseYaml } from './utils/yamlParser';
-import { DetachedComponentTemplate } from './templates';
+import type { CachedComponent } from './types/cache';
+import type { GitLabYamlFragment } from './types/gitlab-catalog';
+import type { HoverContext } from './providers/hoverContentBuilder';
+
+/** Component payload passed to the `detachHover` command. Adds the hover-builder's location context. */
+type DetachableComponent = Component & { _hoverContext?: HoverContext };
+
+/**
+ * Type-guard narrowing a `Component`-shaped value to one that also satisfies `CachedComponent`.
+ *
+ * @param component  A `Component` (typically `activeComponent` in the detach-hover panel) that may
+ *                   or may not have been enriched with cache details.
+ * @returns          `true` if all `CachedComponent` required fields are present and string-typed,
+ *                   narrowing `component` to `Component & CachedComponent` in the truthy branch.
+ *                   `false` if any field is missing.
+ */
+function isCachedComponentShape(component: Component): component is Component & CachedComponent {
+  return typeof component.source === 'string'
+    && typeof component.sourcePath === 'string'
+    && typeof component.gitlabInstance === 'string'
+    && typeof component.version === 'string'
+    && typeof component.url === 'string';
+}
 import { getPerformanceMonitor } from './utils/performanceMonitor';
+import { isGitLabCIFile, invalidateFileGlobsCache } from './utils/gitlabCiFileMatcher';
+
+const CI_FILE_CONTEXT_KEY = 'gitlabComponentHelper.isCiFile';
 
 // Constants for timing delays
 const PANEL_FOCUS_DELAY_MS = 100;
@@ -34,12 +60,10 @@ export function activate(context: vscode.ExtensionContext) {
     const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
     const componentSources = config.get('componentSources', []);
     const cacheTime = config.get('cacheTime', 3600);
-    const componentSource = config.get('componentSource', 'local');
 
     logger.debug(`[Extension] User settings loaded:`, 'Extension');
     logger.debug(`[Extension]   - Component sources: ${JSON.stringify(componentSources, null, 2)}`, 'Extension');
     logger.debug(`[Extension]   - Cache time: ${cacheTime} seconds`, 'Extension');
-    logger.debug(`[Extension]   - Component source type: ${componentSource}`, 'Extension');
 
     // Initialize component cache manager (this will start loading components)
     logger.debug(`[Extension] About to import/initialize component cache manager...`, 'Extension');
@@ -88,6 +112,19 @@ export function activate(context: vscode.ExtensionContext) {
         ],
         new CompletionProvider(),
         ':', ' ', '@'  // Add @ as a trigger character for version completions
+      )
+    );
+
+    // Register document link provider so `component:` URLs (including those using GitLab variables like
+    // $CI_SERVER_FQDN) become clickable and point at the GitLab project tree at the requested ref.
+    logger.debug('[Extension] Registering document link provider...', 'Extension');
+    context.subscriptions.push(
+      vscode.languages.registerDocumentLinkProvider(
+        [
+          { language: 'yaml' },
+          { language: 'gitlab-ci' }
+        ],
+        new ComponentDocumentLinkProvider()
       )
     );
 
@@ -241,19 +278,21 @@ export function activate(context: vscode.ExtensionContext) {
         logger.info(`[Extension] Total source errors: ${errors.size}`, 'Extension');
 
         // Group components by source
-        const componentsBySource = new Map<string, any[]>();
-        components.forEach((comp: any) => {
+        const componentsBySource = new Map<string, CachedComponent[]>();
+        components.forEach(comp => {
           const key = comp.source;
-          if (!componentsBySource.has(key)) {
-            componentsBySource.set(key, []);
+          let bucket = componentsBySource.get(key);
+          if (!bucket) {
+            bucket = [];
+            componentsBySource.set(key, bucket);
           }
-          componentsBySource.get(key)!.push(comp);
+          bucket.push(comp);
         });
 
         logger.info(`[Extension] Components grouped by source:`, 'Extension');
-        componentsBySource.forEach((comps: any[], source: string) => {
+        componentsBySource.forEach((comps, source) => {
           logger.info(`[Extension]   ${source}: ${comps.length} components`, 'Extension');
-          comps.forEach((comp: any) => {
+          comps.forEach(comp => {
             logger.debug(`[Extension]     - ${comp.name} (${comp.gitlabInstance}/${comp.sourcePath})`, 'Extension');
           });
         });
@@ -270,7 +309,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Register command to detach hover window as a dedicated panel
     logger.debug('[Extension] Registering detachHover command...', 'Extension');
     context.subscriptions.push(
-      vscode.commands.registerCommand('gitlab-component-helper.detachHover', async (component: any) => {
+      vscode.commands.registerCommand('gitlab-component-helper.detachHover', async (component: DetachableComponent) => {
         logger.info(`[Extension] Detaching hover for component: ${component?.name}`, 'Extension');
 
         if (!component) {
@@ -337,7 +376,7 @@ export function activate(context: vscode.ExtensionContext) {
                   true,
                   targetVersion
                 );
-                const fragment = catalogData?.fragments?.find((frag: any) => frag.name === resolvedName);
+                const fragment = catalogData?.fragments?.find((frag: GitLabYamlFragment) => frag.name === resolvedName);
                 if (fragment) {
                   activeComponent = {
                     ...component,
@@ -372,6 +411,12 @@ export function activate(context: vscode.ExtensionContext) {
           logger.debug(`[Extension] Failed to enrich detached hover component: ${error}`, 'Extension');
         }
 
+        // Recover the full (and, for monorepos, scoped) version list plus tag-template settings from the cache so the
+        // hover details dropdown matches the browser's — instead of every tag in the repo, unscoped and unstripped.
+        // Stamp the monorepo settings onto activeComponent too, so the panel's later `fetchVersions` round-trip
+        // (cacheManager.fetchComponentVersions) scopes to this component instead of returning every repo tag.
+        const enriched = await componentBrowser.lookupComponentDetails(activeComponent);
+        activeComponent = { ...activeComponent, ...enriched };
         panel.webview.html = componentBrowser.getComponentDetailsHtml(activeComponent);
 
         // Ensure the original editor remains focused after panel creation
@@ -405,6 +450,10 @@ export function activate(context: vscode.ExtensionContext) {
 
                 // Update component version if specified
                 if (version && version !== activeComponent.version) {
+                  if (!activeComponent.sourcePath || !activeComponent.gitlabInstance) {
+                    vscode.window.showErrorMessage(`Cannot fetch version: component is missing source path or GitLab instance.`);
+                    return;
+                  }
                   const updatedComponent = await cacheManager.fetchSpecificVersion(
                     activeComponent.name,
                     activeComponent.sourcePath,
@@ -457,10 +506,23 @@ export function activate(context: vscode.ExtensionContext) {
               break;
             case 'fetchVersions':
               try {
+                if (!isCachedComponentShape(activeComponent)) {
+                  throw new Error('Component is missing required fields (source, sourcePath, gitlabInstance, version) for version lookup.');
+                }
                 const versions = await cacheManager.fetchComponentVersions(activeComponent);
+                // For a monorepo source, map each full tag to its stripped {version} so the dropdown shows short
+                // labels while keeping the full tag as the option value (the inserted ref).
+                let versionLabels: Record<string, string> | undefined;
+                if (activeComponent.tagPattern) {
+                  versionLabels = {};
+                  for (const v of versions) {
+                    versionLabels[v] = stripTagPrefix(v, activeComponent.name, activeComponent.tagPattern);
+                  }
+                }
                 panel.webview.postMessage({
                   command: 'versionsLoaded',
                   versions: versions,
+                  versionLabels,
                   currentVersion: activeComponent.version
                 });
               } catch (error) {
@@ -473,6 +535,10 @@ export function activate(context: vscode.ExtensionContext) {
             case 'versionChanged':
               try {
                 const { selectedVersion } = message;
+                if (!activeComponent.sourcePath || !activeComponent.gitlabInstance) {
+                  vscode.window.showErrorMessage(`Cannot change version: component is missing source path or GitLab instance.`);
+                  return;
+                }
                 const updatedComponent = await cacheManager.fetchSpecificVersion(
                   activeComponent.name,
                   activeComponent.sourcePath,
@@ -550,7 +616,31 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     // Initialize the validation provider
-    new ValidationProvider(context);
+    const validationProvider = new ValidationProvider(context);
+
+    // Keep the `gitlabComponentHelper.isCiFile` context key in sync with `isGitLabCIFile` so the editor context menu
+    // shows the Browse Components command on exactly the same files the providers activate on.
+    const updateCiFileContext = (editor: vscode.TextEditor | undefined): void => {
+      const isCi = editor ? isGitLabCIFile(editor.document) : false;
+      vscode.commands.executeCommand('setContext', CI_FILE_CONTEXT_KEY, isCi);
+    };
+    updateCiFileContext(vscode.window.activeTextEditor);
+    context.subscriptions.push(
+      vscode.window.onDidChangeActiveTextEditor(updateCiFileContext),
+    );
+
+    // Re-validate open documents when the user changes additional file globs so newly-matched files light up (or stop
+    // being treated as GitLab CI) without reloading the window. Also refresh the context key so the menu follows suit.
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration('gitlabComponentHelper.additionalFileGlobs')) {
+          logger.info('[Extension] additionalFileGlobs setting changed, re-validating open documents', 'Extension');
+          invalidateFileGlobsCache();
+          validationProvider.revalidateOpenDocuments();
+          updateCiFileContext(vscode.window.activeTextEditor);
+        }
+      })
+    );
 
     // Register command to show performance statistics
     logger.debug('[Extension] Registering showPerformanceStats command...', 'Extension');
@@ -598,101 +688,5 @@ export function activate(context: vscode.ExtensionContext) {
   }
 }
 
-/**
- * Helper function to generate HTML for detached component details.
- * Detects existing inputs and delegates to the template for rendering.
- */
-async function getDetachedComponentHtml(component: any): Promise<string> {
-  const existingInputs = await detectExistingInputs(component);
-  return DetachedComponentTemplate.render(component, existingInputs);
-}
-
-/**
- * Detects existing input parameters for a component in the active editor.
- * Returns an array of input parameter names already present in the file.
- */
-async function detectExistingInputs(component: any): Promise<string[]> {
-  const parameters = component.parameters || [];
-  const existingInputs: string[] = [];
-  const editor = vscode.window.activeTextEditor;
-
-  if (!editor || parameters.length === 0) {
-    return existingInputs;
-  }
-
-  if (editor && parameters.length > 0) {
-    try {
-      const document = editor.document;
-      const text = document.getText();
-
-      // Parse the YAML to find component includes and their inputs
-      const parsedYaml = parseYaml(text);
-      if (parsedYaml && parsedYaml.include) {
-        const includes = Array.isArray(parsedYaml.include) ? parsedYaml.include : [parsedYaml.include];
-
-        for (const include of includes) {
-          if (include.component && include.inputs) {
-            // Check if this include is for the current component
-            const componentUrl = include.component;
-            if (componentUrl.includes(component.name)) {
-              // Extract input parameter names from this component's inputs
-              for (const inputName in include.inputs) {
-                if (parameters.some((p: any) => p.name === inputName)) {
-                  existingInputs.push(inputName);
-                }
-              }
-            }
-          }
-        }
-      }
-    } catch (error) {
-      // Silently ignore parsing errors and fall back to regex-based detection
-      try {
-        const document = editor.document;
-        const text = document.getText();
-
-        // Simple regex-based detection of component inputs as fallback
-        const componentUrlPattern = component.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const componentRegex = new RegExp(`component:\\s*[^\\n]*${componentUrlPattern}[^\\n]*`, 'g');
-        const match = componentRegex.exec(text);
-
-        if (match) {
-          // Find the inputs section for this component
-          const startIndex = match.index + match[0].length;
-          const remainingText = text.substring(startIndex);
-
-          // Look for inputs: section
-          const inputsMatch = remainingText.match(/^\s*inputs:\s*$/m);
-          if (inputsMatch) {
-            const inputsStartIndex = startIndex + inputsMatch.index! + inputsMatch[0].length;
-            const afterInputsText = text.substring(inputsStartIndex);
-
-            // Extract input parameter names
-            const inputLines = afterInputsText.split('\n');
-            for (const line of inputLines) {
-              // Stop at next job or section
-              if (line.match(/^\S/) && !line.trim().startsWith('#')) {
-                break;
-              }
-
-              // Match input parameter lines (indented with parameter name)
-              const paramMatch = line.match(/^\s{2,}([a-zA-Z][a-zA-Z0-9_-]*)\s*:/);
-              if (paramMatch) {
-                const paramName = paramMatch[1];
-                if (parameters.some((p: any) => p.name === paramName)) {
-                  existingInputs.push(paramName);
-                }
-              }
-            }
-          }
-        }
-      } catch (fallbackError) {
-        // Silently ignore errors
-      }
-    }
-  }
-
-  return existingInputs;
-}
 
 export function deactivate() {}

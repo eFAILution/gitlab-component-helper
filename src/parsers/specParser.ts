@@ -1,9 +1,10 @@
 import { SPEC_INPUTS_SECTION_REGEX } from '../constants/regex';
 import { Logger } from '../utils/logger';
-import { ParseError, ErrorCode, getErrorHandler } from '../errors';
+// Import direct from errors/types (not the barrel) so this module can load from plain Node — the barrel re-exports
+// from errors/handler.ts which imports `vscode` at module load. Required for the Mocha unit suite.
+import { ParseError } from '../errors/types';
 
 const logger = Logger.getInstance();
-const errorHandler = getErrorHandler();
 
 export interface ComponentVariable {
   name: string;
@@ -11,12 +12,35 @@ export interface ComponentVariable {
   required: boolean;
   type: string;
   default?: string;
+  /** Allowed values from the input's `options:` list, in declaration order; absent when no `options:` is given. */
+  options?: string[];
 }
 
 export interface ParsedSpec {
   description?: string;
   variables: ComponentVariable[];
   isValidComponent: boolean;
+}
+
+/**
+ * Parse the inline form of an `options:` value (`options: [a, "b", c]`).
+ *
+ * Returns an empty array for the expanded form (`options:` with the values on following `- item` lines), which the
+ * caller then fills in as it reads those lines. Surrounding brackets and per-entry quotes are stripped; blank entries
+ * (e.g. a trailing comma) are dropped.
+ *
+ * @param rawValue - The text after `options:` on the same line, e.g. `[a, "b", c]` (or empty for the expanded form).
+ * @returns The parsed option values, or an empty array when the value isn't an inline `[...]` list.
+ */
+function parseInlineOptions(rawValue: string): string[] {
+  if (!rawValue.startsWith('[')) {
+    return [];
+  }
+  return rawValue
+    .replace(/^\[|\]$/g, '')
+    .split(',')
+    .map(entry => entry.trim().replace(/^["']|["']$/g, '').trim())
+    .filter(entry => entry.length > 0);
 }
 
 /**
@@ -121,7 +145,7 @@ export class GitLabSpecParser {
     const inputLines = inputsSection.split('\n')
       .filter(line => line.trim() && !line.trim().startsWith('#'));
 
-    let currentInput: any = null;
+    let currentInput: ComponentVariable | null = null;
 
     for (const line of inputLines) {
       const trimmedLine = line.trim();
@@ -162,6 +186,13 @@ export class GitLabSpecParser {
           currentInput.default = trimmedLine.substring(8).replace(/^["']|["']$/g, '').trim();
         } else if (trimmedLine.startsWith('type:')) {
           currentInput.type = trimmedLine.substring(5).replace(/^["']|["']$/g, '').trim();
+        } else if (trimmedLine.startsWith('options:')) {
+          // Open the options list. An inline form (`options: [a, b]`) carries its values on the same line;
+          // the expanded form leaves them for the `- item` lines below.
+          currentInput.options = parseInlineOptions(trimmedLine.substring(8).trim());
+        } else if (trimmedLine.startsWith('- ') && currentInput.options) {
+          // Expanded list item belonging to the open `options:` block.
+          currentInput.options.push(trimmedLine.substring(2).replace(/^["']|["']$/g, '').trim());
         }
       }
     }

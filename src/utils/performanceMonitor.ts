@@ -12,7 +12,7 @@ interface OperationMetric {
   name: string;
   duration: number;
   timestamp: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 interface OperationStats {
@@ -39,7 +39,7 @@ export class PerformanceMonitor {
   async track<T>(
     name: string,
     fn: () => Promise<T>,
-    metadata?: Record<string, any>
+    metadata?: Record<string, unknown>
   ): Promise<T> {
     const startTime = Date.now();
 
@@ -77,7 +77,7 @@ export class PerformanceMonitor {
   trackSync<T>(
     name: string,
     fn: () => T,
-    metadata?: Record<string, any>
+    metadata?: Record<string, unknown>
   ): T {
     const startTime = Date.now();
 
@@ -114,13 +114,14 @@ export class PerformanceMonitor {
   private recordMetric(
     name: string,
     duration: number,
-    metadata?: Record<string, any>
+    metadata?: Record<string, unknown>
   ): void {
-    if (!this.metrics.has(name)) {
-      this.metrics.set(name, []);
+    let metrics = this.metrics.get(name);
+    if (!metrics) {
+      metrics = [];
+      this.metrics.set(name, metrics);
     }
 
-    const metrics = this.metrics.get(name)!;
     metrics.push({
       name,
       duration,

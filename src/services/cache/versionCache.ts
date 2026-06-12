@@ -1,7 +1,7 @@
-import * as vscode from 'vscode';
 import { getComponentService } from '../component';
+import { compileTagTemplate, scopeTagsToComponent } from '../component/tagScoping';
 import { Logger } from '../../utils/logger';
-import { CachedComponent } from '../../types/cache';
+import { CachedComponent, VersionCacheSnapshot } from '../../types/cache';
 
 /**
  * VersionCache - Handles version fetching and caching for components
@@ -14,46 +14,60 @@ import { CachedComponent } from '../../types/cache';
  */
 export class VersionCache {
   private logger = Logger.getInstance();
-  // Cache for project versions: key = `${gitlabInstance}|${sourcePath}`
-  private projectVersionsCache: Map<string, string[]> = new Map();
+  // Cache for a project's raw tag names: key = `${gitlabInstance}|${sourcePath}`. Shared across every component in
+  // the project so the tag list is fetched once, then scoped per component for monorepo sources.
+  private projectTagsCache: Map<string, string[]> = new Map();
+  // Cache for a project's default branch name (e.g. `main`), keyed the same way. `null` means "looked up, none found".
+  private projectDefaultBranchCache: Map<string, string | null> = new Map();
 
   /**
-   * Fetch and cache all available versions for a specific component
+   * Fetch and cache all available versions for a specific component.
+   *
+   * The project's tag list is fetched once and cached per project. For a monorepo source (one carrying a
+   * `tagPattern`), the tags are then scoped to the component using that template so the component only
+   * surfaces its own releases; otherwise the full project tag list is used (single-component behaviour).
    *
    * @param component Component to fetch versions for
-   * @returns Array of sorted version strings
+   * @returns Array of sorted version strings (full prefixed tags for monorepo sources, plus `main`/`master`)
    */
   async fetchComponentVersions(component: CachedComponent): Promise<string[]> {
     try {
       const cacheKey = `${component.gitlabInstance}|${component.sourcePath}`;
-      let sortedVersions: string[] | undefined = this.projectVersionsCache.get(cacheKey);
+      let projectTags: string[] | undefined = this.projectTagsCache.get(cacheKey);
 
-      if (sortedVersions) {
+      if (projectTags) {
         this.logger.info(
-          `[VersionCache] [CACHE HIT] Reusing cached versions for project ${component.gitlabInstance}/${component.sourcePath}`,
+          `[VersionCache] [CACHE HIT] Reusing cached tags for project ${component.gitlabInstance}/${component.sourcePath}`,
           'VersionCache'
         );
       } else {
         const componentService = getComponentService();
-        const tags = await componentService.fetchProjectTags(
-          component.gitlabInstance,
-          component.sourcePath
-        );
-
-        // Extract version names and add common branch names
-        const versions = ['main', 'master', ...tags.map(tag => tag.name)];
-
-        // Remove duplicates and sort by priority
-        const uniqueVersions = Array.from(new Set(versions));
-        sortedVersions = this.sortVersionsByPriority(uniqueVersions);
-
-        this.projectVersionsCache.set(cacheKey, sortedVersions);
+        const [tags, defaultBranch] = await Promise.all([
+          componentService.fetchProjectTags(component.gitlabInstance, component.sourcePath),
+          componentService.fetchProjectDefaultBranch(component.gitlabInstance, component.sourcePath),
+        ]);
+        projectTags = tags.map(tag => tag.name).filter(Boolean);
+        this.projectTagsCache.set(cacheKey, projectTags);
+        this.projectDefaultBranchCache.set(cacheKey, defaultBranch);
 
         this.logger.info(
-          `[VersionCache] [API FETCH] Fetched ${sortedVersions.length} versions for project ${component.gitlabInstance}/${component.sourcePath}`,
+          `[VersionCache] [API FETCH] Fetched ${projectTags.length} tags for project ${component.gitlabInstance}/${component.sourcePath}`,
           'VersionCache'
         );
       }
+
+      const scopedTags = component.tagPattern
+        ? scopeTagsToComponent(projectTags, component.name, component.tagPattern)
+        : projectTags;
+
+      // Add the project's real default branch (if any); remove duplicates and sort by priority.
+      const defaultBranch = this.projectDefaultBranchCache.get(cacheKey);
+      const branches = defaultBranch ? [defaultBranch] : [];
+      const uniqueVersions = Array.from(new Set([...branches, ...scopedTags]));
+      const sortedVersions = this.sortVersionsByPriority(
+        uniqueVersions,
+        component.tagPattern ? component : undefined,
+      );
 
       this.logger.debug(
         `[VersionCache] Available versions for ${component.name}: ${sortedVersions
@@ -73,31 +87,51 @@ export class VersionCache {
   }
 
   /**
-   * Sort versions by priority (latest semantic versions first)
+   * Sort versions by priority (latest semantic versions first, branches last).
    *
    * Priority order:
-   * 1. main branch (priority 1000)
-   * 2. master branch (priority 900)
-   * 3. Semantic versions (vX.Y.Z) sorted by version number descending
-   * 4. Other versions (priority 0)
+   * 1. Semantic versions (vX.Y.Z) sorted by version number descending
+   * 2. main branch
+   * 3. master branch
+   * 4. Other versions
    *
    * @param versions Array of version strings
+   * @param monorepoComponent When set, each version is scored with its tag-version template applied (the `{version}`
+   *                          capture), so monorepo tags (`<name>-1.1.0`, `apps/<name>/v1.1.0`) rank by their
+   *                          underlying semver. The returned strings are the originals (full tags) — only the
+   *                          scoring strips.
    * @returns Sorted array with highest priority first
    */
-  sortVersionsByPriority(versions: string[]): string[] {
-    return versions.sort((a, b) => {
-      // Helper function to determine version priority
-      const versionPriority = (version: string) => {
-        if (version === 'main') return 1000;
-        if (version === 'master') return 900;
+  sortVersionsByPriority(
+    versions: string[],
+    monorepoComponent?: { name: string; tagPattern?: string },
+  ): string[] {
+    const matcher = monorepoComponent
+      ? compileTagTemplate(monorepoComponent.tagPattern, monorepoComponent.name)
+      : null;
+    const strip = (version: string): string => matcher?.extractVersion(version) ?? version;
 
-        // Semantic versions get priority based on version number
-        const semanticMatch = version.match(/^v?(\d+)\.(\d+)\.(\d+)/);
+    return versions.sort((a, b) => {
+      // Branch names sort below all semantic versions; `main`/`master` keep a fixed order above other branches.
+      const versionPriority = (version: string) => {
+        if (version === 'main') return 2;
+        if (version === 'master') return 1;
+
+        const stripped = strip(version);
+
+        // Full semantic versions get priority based on version number, well above the branch fallbacks.
+        const semanticMatch = stripped.match(/^v?(\d+)\.(\d+)\.(\d+)/);
         if (semanticMatch) {
           const major = parseInt(semanticMatch[1]);
           const minor = parseInt(semanticMatch[2]);
           const patch = parseInt(semanticMatch[3]);
-          return major * 1000000 + minor * 1000 + patch;
+          return 1000 + major * 1000000 + minor * 1000 + patch;
+        }
+
+        // A bare `<major>` (the floating monorepo major-alias tag) ranks just below that major's pinned releases.
+        const majorMatch = stripped.match(/^v?(\d+)$/);
+        if (majorMatch) {
+          return 1000 + parseInt(majorMatch[1]) * 1000000;
         }
 
         return 0; // Lowest priority for other versions
@@ -108,43 +142,57 @@ export class VersionCache {
   }
 
   /**
-   * Clear the project versions cache
+   * Clear the project tags and default-branch caches
    */
   clearCache(): void {
-    this.projectVersionsCache.clear();
-    this.logger.debug('[VersionCache] Cleared project versions cache', 'VersionCache');
+    this.projectTagsCache.clear();
+    this.projectDefaultBranchCache.clear();
+    this.logger.debug('[VersionCache] Cleared project tags cache', 'VersionCache');
   }
 
   /**
-   * Get cached project versions (if available)
+   * Get a project's cached raw tag names (if available)
    *
    * @param gitlabInstance GitLab instance hostname
    * @param sourcePath Project path
-   * @returns Cached versions or undefined if not cached
+   * @returns Cached tag names or undefined if not cached
    */
   getCachedVersions(gitlabInstance: string, sourcePath: string): string[] | undefined {
     const cacheKey = `${gitlabInstance}|${sourcePath}`;
-    return this.projectVersionsCache.get(cacheKey);
+    return this.projectTagsCache.get(cacheKey);
   }
 
   /**
-   * Get serializable cache data for persistence
+   * Get serializable cache data for persistence.
    *
-   * @returns Array of [key, versions] tuples
+   * @returns Both per-project maps (tags and default branches) so they round-trip together across a restart.
    */
-  serializeCache(): Array<[string, string[]]> {
-    return Array.from(this.projectVersionsCache.entries());
+  serializeCache(): VersionCacheSnapshot {
+    return {
+      tags: Array.from(this.projectTagsCache.entries()),
+      defaultBranches: Array.from(this.projectDefaultBranchCache.entries()),
+    };
   }
 
   /**
-   * Restore cache from serialized data
+   * Restore the version caches from serialized data.
    *
-   * @param data Array of [key, versions] tuples
+   * Accepts either a {@link VersionCacheSnapshot} object or a bare `Array<[key, tags]>`; the array form carries no
+   * default branches, so those stay empty until the next fetch.
+   *
+   * @param data The serialized snapshot, or a tags-only array.
    */
-  deserializeCache(data: Array<[string, string[]]>): void {
-    this.projectVersionsCache = new Map(data);
+  deserializeCache(data: VersionCacheSnapshot | Array<[string, string[]]>): void {
+    if (Array.isArray(data)) {
+      this.projectTagsCache = new Map(data);
+      this.projectDefaultBranchCache = new Map();
+    } else {
+      this.projectTagsCache = new Map(data.tags);
+      this.projectDefaultBranchCache = new Map(data.defaultBranches);
+    }
     this.logger.debug(
-      `[VersionCache] Restored ${this.projectVersionsCache.size} cached version entries`,
+      `[VersionCache] Restored ${this.projectTagsCache.size} cached tag entries, ` +
+        `${this.projectDefaultBranchCache.size} default-branch entries`,
       'VersionCache'
     );
   }
@@ -159,8 +207,8 @@ export class VersionCache {
     keys: string[];
   } {
     return {
-      count: this.projectVersionsCache.size,
-      keys: Array.from(this.projectVersionsCache.keys()),
+      count: this.projectTagsCache.size,
+      keys: Array.from(this.projectTagsCache.keys()),
     };
   }
 }
