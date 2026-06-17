@@ -11,25 +11,14 @@ import { resolveLocalComponent, isUnsupportedLocalPath } from './localComponentR
 import { attachDiagnosticMetadata, readDiagnosticMetadata } from './validationMetadata';
 import type { MissingRequiredInputMetadata } from './validationMetadata';
 import type { GitApi, GitRepository } from '../types/vscode-git';
-
-/**
- * A `.gitlab-ci.yml` include entry that this provider validates. Either a remote `component:` URL
- * or a `local:` path; both branches carry an optional `inputs` mapping. Built by narrowing a parsed
- * YAML node — fields outside the union (anything else under the include) are intentionally not modelled.
- */
-type ComponentInclude = { component: string; local?: undefined; inputs?: Record<string, unknown> };
-type LocalInclude = { local: string; component?: undefined; inputs?: Record<string, unknown> };
-type IncludeEntry = ComponentInclude | LocalInclude;
-
-/** Narrow a parsed YAML value to an {@link IncludeEntry} (string-typed `component` or `local`). */
-function isIncludeEntry(value: unknown): value is IncludeEntry {
-    if (!isYamlNode(value)) {
-        return false;
-    }
-    const hasComponent = typeof value.component === 'string';
-    const hasLocal = typeof value.local === 'string';
-    return hasComponent !== hasLocal; // exactly one of the two
-}
+import {
+    type IncludeEntry,
+    type LocalInclude,
+    isIncludeEntry,
+    isLocalInclude,
+    includeKeyAndUrl,
+    includeLineMatches,
+} from '../utils/includeMatcher';
 
 export class ValidationProvider implements vscode.CodeActionProvider {
     private diagnosticCollection: vscode.DiagnosticCollection;
@@ -137,8 +126,8 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
         for (let includeIndex = 0; includeIndex < includes.length; includeIndex++) {
             const include = includes[includeIndex];
-            if (include.local && !include.component) {
-                await this.validateLocalInclude(document, include, diagnostics, diagnosticKeys);
+            if (isLocalInclude(include)) {
+                await this.validateLocalInclude(document, include, includes, includeIndex, diagnostics, diagnosticKeys);
                 continue;
             }
             if (include.component) {
@@ -174,7 +163,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                             let diagnosticMessage = `Component URL contains unresolved GitLab variables: '${componentUrl}'. `;
                             diagnosticMessage += `This project is hosted on ${nonGitlabInfo.hostname}, not GitLab. GitLab Component Helper requires a GitLab repository to resolve CI/CD variables like $CI_SERVER_FQDN and $CI_PROJECT_PATH.`;
 
-                            const line = this.findLineForComponent(document, include);
+                            const line = this.findLineForComponent(document, includes, includeIndex);
                             const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
 
                             const diagnostic = new vscode.Diagnostic(
@@ -208,7 +197,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     if (containsGitLabVariables(expandedUrl) || expandedUrl.includes('undefined') || expandedUrl === componentUrl) {
                         this.logger.debug(`[ValidationProvider] URL expansion failed or incomplete: ${expandedUrl}`, 'ValidationProvider');
 
-                        const line = this.findLineForComponent(document, include);
+                        const line = this.findLineForComponent(document, includes, includeIndex);
                         const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
 
                         const diagnostic = new vscode.Diagnostic(
@@ -286,7 +275,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                 // If component fetch failed, add a single diagnostic about the fetch failure
                 // instead of showing "unknown input" warnings for all inputs
                 if (componentFetchFailed) {
-                    const line = this.findLineForComponent(document, include);
+                    const line = this.findLineForComponent(document, includes, includeIndex);
                     const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
 
                     const diagnostic = new vscode.Diagnostic(
@@ -344,7 +333,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
                     for (const providedInput in providedInputs) {
                         if (!componentInputs.some(p => p.name === providedInput)) {
-                            const line = this.findLineForInput(document, include, providedInput);
+                            const line = this.findLineForInput(document, includes, includeIndex, providedInput);
 
                             // Create a unique key to prevent duplicate diagnostics for the same input
                             const diagnosticKey = `unknown-input-${line}-${providedInput}-${componentUrl}`;
@@ -398,7 +387,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
                     for (const componentInput of componentInputs) {
                         if (componentInput.required && !Object.prototype.hasOwnProperty.call(providedInputs, componentInput.name)) {
-                            const line = this.findLineForComponent(document, include);
+                            const line = this.findLineForComponent(document, includes, includeIndex);
                             const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
                             const diagnostic = new vscode.Diagnostic(
                                 range,
@@ -826,22 +815,31 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         return actions;
     }
 
-    private findLineForInput(document: vscode.TextDocument, include: IncludeEntry, inputName: string): number {
-        const text = document.getText();
-        const lines = text.split('\n');
-        const componentLine = this.findLineForComponent(document, include);
+    private findLineForInput(
+        document: vscode.TextDocument,
+        includes: IncludeEntry[],
+        includeIndex: number,
+        inputName: string
+    ): number {
+        const lines = document.getText().split('\n');
+        const componentLine = this.findLineForComponent(document, includes, includeIndex);
+        const nextIncludeLine = this.findLineForNextInclude(document, includes, includeIndex, componentLine);
 
-        this.logger.debug(`[ValidationProvider] Finding line for input '${inputName}', component line: ${componentLine}`, 'ValidationProvider');
+        this.logger.debug(`[ValidationProvider] Finding line for input '${inputName}', component line: ${componentLine}, bounded by next include at ${nextIncludeLine}`, 'ValidationProvider');
 
-        for (let i = componentLine + 1; i < lines.length; i++) {
+        // Two bounds keep the scan inside this include's own inputs block:
+        //  - nextIncludeLine caps it before a sibling that may share input names (two includes of one component).
+        //  - the indent break ends it at the first non-indented line, so it can't bleed into a top-level section
+        //    (a job, `variables:`, etc.) below the last include, where nextIncludeLine is just end-of-file.
+        for (let i = componentLine + 1; i < nextIncludeLine; i++) {
             if (lines[i].includes('inputs:')) {
                 this.logger.debug(`[ValidationProvider] Found inputs section at line ${i}`, 'ValidationProvider');
-                for (let j = i + 1; j < lines.length; j++) {
+                for (let j = i + 1; j < nextIncludeLine; j++) {
                     if (lines[j].includes(`${inputName}:`)) {
                         this.logger.debug(`[ValidationProvider] Found input '${inputName}' at line ${j}`, 'ValidationProvider');
                         return j;
                     }
-                    if (!lines[j].match(/^\s+/)) {
+                    if (!/^\s/.test(lines[j]) && lines[j].trim() !== '') {
                         break;
                     }
                 }
@@ -860,8 +858,10 @@ export class ValidationProvider implements vscode.CodeActionProvider {
      *
      * @param document        The document being validated — used to read line text for diagnostic ranges and to
      *                        anchor workspace-relative path resolution.
-     * @param include         The parsed YAML include node, narrowed to the local-include shape: `local` is the
-     *                        workspace-relative path, `inputs` is the optional user-supplied input map.
+     * @param include         This local include, already narrowed to {@link LocalInclude} by the caller.
+     * @param includes        The full parsed include list, in document order. Passed alongside `includeIndex` so the
+     *                        line-finders can disambiguate this entry from siblings that share its path.
+     * @param includeIndex    This entry's position in `includes` (i.e. `includes[includeIndex] === include`).
      * @param diagnostics     Accumulator array. New diagnostics are pushed onto it; the caller owns publishing
      *                        the final list to the diagnostic collection.
      * @param diagnosticKeys  Dedup set shared across the whole validation pass. Prevents duplicate
@@ -871,7 +871,9 @@ export class ValidationProvider implements vscode.CodeActionProvider {
      */
     private async validateLocalInclude(
         document: vscode.TextDocument,
-        include: { local: string; inputs?: Record<string, unknown> },
+        include: LocalInclude,
+        includes: IncludeEntry[],
+        includeIndex: number,
         diagnostics: vscode.Diagnostic[],
         diagnosticKeys: Set<string>
     ): Promise<void> {
@@ -885,7 +887,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
         const component = await resolveLocalComponent(localPath, document);
         if (!component) {
-            const line = this.findLineForComponent(document, include);
+            const line = this.findLineForComponent(document, includes, includeIndex);
             const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
             const diagnostic = new vscode.Diagnostic(
                 range,
@@ -910,7 +912,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             if (componentInputs.some(p => p.name === providedInput)) {
                 continue;
             }
-            const line = this.findLineForInput(document, include, providedInput);
+            const line = this.findLineForInput(document, includes, includeIndex, providedInput);
             const diagnosticKey = `unknown-input-${line}-${providedInput}-${localPath}`;
             if (diagnosticKeys.has(diagnosticKey)) continue;
             diagnosticKeys.add(diagnosticKey);
@@ -941,7 +943,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
         for (const componentInput of componentInputs) {
             if (componentInput.required && !Object.prototype.hasOwnProperty.call(providedInputs, componentInput.name)) {
-                const line = this.findLineForComponent(document, include);
+                const line = this.findLineForComponent(document, includes, includeIndex);
                 const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
                 const diagnostic = new vscode.Diagnostic(
                     range,
@@ -964,23 +966,80 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         }
     }
 
-    private findLineForComponent(document: vscode.TextDocument, include: IncludeEntry): number {
-        const text = document.getText();
-        const lines = text.split('\n');
-        const componentUrl = include.component ?? include.local;
-        const includeKey = include.component ? 'component:' : 'local:';
+    /**
+     * Locate the document line of the include entry at {@link includeIndex}.
+     *
+     * Two include entries can share an identical key+URL (e.g. the same component included twice with different
+     * inputs). Matching on key+URL alone returns the first occurrence for both, mis-anchoring the second entry's
+     * diagnostics onto the first. To disambiguate, this counts how many earlier entries in the parsed `includes`
+     * array carry the same key+URL and returns the correspondingly-numbered occurrence in the document — relying
+     * on the array being built in document order.
+     *
+     * @param document     The document being validated; its text is scanned line by line for the include.
+     * @param includes     The full parsed include list, in document order.
+     * @param includeIndex The position in `includes` of the entry to locate.
+     * @returns The 0-based line number of the matching include declaration, or `0` when no matching line is found
+     *          (e.g. the URL doesn't appear literally on a single line — folded scalar, alias). Callers use the
+     *          returned line as the anchor for a diagnostic range.
+     */
+    private findLineForComponent(document: vscode.TextDocument, includes: IncludeEntry[], includeIndex: number): number {
+        const { key, url } = includeKeyAndUrl(includes[includeIndex]);
 
-        this.logger.debug(`[ValidationProvider] Looking for include URL: ${componentUrl}`, 'ValidationProvider');
+        // The occurrence ordinal: how many entries at-or-before includeIndex share this exact key+URL.
+        let targetOccurrence = 0;
+        for (let k = 0; k <= includeIndex; k++) {
+            const prior = includeKeyAndUrl(includes[k]);
+            if (prior.key === key && prior.url === url) {
+                targetOccurrence++;
+            }
+        }
 
+        this.logger.debug(`[ValidationProvider] Looking for include URL: ${url} (occurrence ${targetOccurrence})`, 'ValidationProvider');
+
+        const lines = document.getText().split('\n');
+        let seen = 0;
         for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            if (line.includes(includeKey) && line.includes(componentUrl)) {
-                this.logger.debug(`[ValidationProvider] Found include at line ${i}: ${line.trim()}`, 'ValidationProvider');
-                return i;
+            if (includeLineMatches(lines[i], key, url)) {
+                seen++;
+                if (seen === targetOccurrence) {
+                    this.logger.debug(`[ValidationProvider] Found include at line ${i}: ${lines[i].trim()}`, 'ValidationProvider');
+                    return i;
+                }
             }
         }
         this.logger.debug(`[ValidationProvider] Include URL not found, returning 0`, 'ValidationProvider');
         return 0;
+    }
+
+    /**
+     * The line where the include entry *after* {@link includeIndex} begins, used as an exclusive upper bound when
+     * scanning an include's inputs. Returns `document.lineCount` when this is the last include, so the scan runs to
+     * end-of-file. `searchFrom` is the current include's own line — the next entry is found by scanning past it.
+     *
+     * @param document     The document being validated; its text is scanned line by line for the next include.
+     * @param includes     The full parsed include list, in document order.
+     * @param includeIndex The position in `includes` of the *current* entry; the next entry is `includeIndex + 1`.
+     * @param searchFrom   The current include's own line; scanning starts at the line after it.
+     * @returns The 0-based line number where the next include begins, or `document.lineCount` when there is no next
+     *          include or its line can't be found — either way an exclusive upper bound that runs to end-of-file.
+     */
+    private findLineForNextInclude(
+        document: vscode.TextDocument,
+        includes: IncludeEntry[],
+        includeIndex: number,
+        searchFrom: number
+    ): number {
+        if (includeIndex + 1 >= includes.length) {
+            return document.lineCount;
+        }
+        const { key, url } = includeKeyAndUrl(includes[includeIndex + 1]);
+        const lines = document.getText().split('\n');
+        for (let i = searchFrom + 1; i < lines.length; i++) {
+            if (includeLineMatches(lines[i], key, url)) {
+                return i;
+            }
+        }
+        return document.lineCount;
     }
 
     /**
