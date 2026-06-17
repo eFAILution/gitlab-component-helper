@@ -1,0 +1,13 @@
+include:
+  # First include of the deploy template — all inputs correct.
+  - local: "duplicate-include/templates/deploy.yml"
+    inputs:
+      job_name: deploy:first
+      cluster: first-cluster
+
+  # Second include of the SAME template — `target_cluster` is a wrong name
+  # (the input is `cluster`), and the required `cluster` is therefore missing.
+  - local: "duplicate-include/templates/deploy.yml"
+    inputs:
+      job_name: deploy:second
+      target_cluster: second-cluster
