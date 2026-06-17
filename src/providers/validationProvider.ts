@@ -92,8 +92,27 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         });
     }
 
+    /**
+     * Only the working-tree copy of a file should carry diagnostics. In a diff view the source (left) panel is a
+     * read-only document under a VCS scheme (`git`, `gitlens`, `pr`, …) sharing the same `fsPath` as the working-tree
+     * document, so validating both makes the squiggles appear on both panels. Restricting to the `file` scheme keeps
+     * diagnostics on the editable (right) panel only.
+     *
+     * @param document - The text document a provider is about to validate.
+     * @returns `true` if the document is the editable working-tree copy (`file` scheme); `false` for diff-source and
+     *   other non-`file` documents that should not receive diagnostics.
+     */
+    private isDiagnosableDocument(document: vscode.TextDocument): boolean {
+        return document.uri.scheme === 'file';
+    }
+
     private async validate(document: vscode.TextDocument) {
         this.logger.debug(`[ValidationProvider] validate() called for: ${document.fileName}, languageId: ${document.languageId}`, 'ValidationProvider');
+
+        if (!this.isDiagnosableDocument(document)) {
+            this.logger.debug(`[ValidationProvider] Skipping validation - non-file URI scheme: ${document.uri.scheme}`, 'ValidationProvider');
+            return;
+        }
 
         if (!isGitLabCIFile(document)) {
             this.logger.debug(`[ValidationProvider] Skipping validation - not a supported file type`, 'ValidationProvider');
@@ -440,7 +459,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
      * CI files or carry no `include`, and the 300ms throttle keeps typing responsive.
      */
     private scheduleValidation(document: vscode.TextDocument): void {
-        if (!isGitLabCIFile(document)) {
+        if (!this.isDiagnosableDocument(document) || !isGitLabCIFile(document)) {
             return;
         }
 
