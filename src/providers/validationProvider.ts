@@ -58,8 +58,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         context.subscriptions.push(
             vscode.workspace.onDidOpenTextDocument(doc => this.validate(doc)),
             vscode.workspace.onDidChangeTextDocument(e => {
-                // Only validate if the change affects component inputs
-                this.validateIfInputsChanged(e);
+                this.scheduleValidation(e.document);
             }),
             vscode.workspace.onDidCloseTextDocument(doc => {
                 const documentId = doc.uri.toString();
@@ -433,35 +432,19 @@ export class ValidationProvider implements vscode.CodeActionProvider {
     }
 
     /**
-     * Smart validation that only triggers when inputs are actually changed
+     * Re-validate a document after an edit, throttled to coalesce rapid keystrokes.
+     *
+     * Every edit to a GitLab CI file schedules a full pass: diagnostics depend on the whole document (an input edit
+     * can resolve or raise a component-level error several lines away), so the change must be re-checked as a whole
+     * rather than judged "relevant" by its surrounding lines. {@link validate} cheaply skips files that aren't GitLab
+     * CI files or carry no `include`, and the 300ms throttle keeps typing responsive.
      */
-    private validateIfInputsChanged(e: vscode.TextDocumentChangeEvent): void {
-        const document = e.document;
-        const documentId = document.uri.toString();
-
+    private scheduleValidation(document: vscode.TextDocument): void {
         if (!isGitLabCIFile(document)) {
             return;
         }
 
-        // Check if the changes affect component inputs
-        let shouldValidate = false;
-        for (const change of e.contentChanges) {
-            const changedText = change.text;
-            const rangeText = document.getText(change.range);
-
-            // Check if the change is in an inputs section or affects component/include declarations
-            if (this.isInputRelatedChange(document, change.range, changedText, rangeText)) {
-                shouldValidate = true;
-                break;
-            }
-        }
-
-        if (!shouldValidate) {
-            this.logger.debug(`[ValidationProvider] Skipping validation - changes don't affect component inputs`, 'ValidationProvider');
-            return;
-        }
-
-        // Throttle validation to avoid excessive calls
+        const documentId = document.uri.toString();
         const existingTimeout = this.validationTimeouts.get(documentId);
         if (existingTimeout) {
             clearTimeout(existingTimeout);
@@ -472,41 +455,6 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             this.validate(document);
             this.validationTimeouts.delete(documentId);
         }, 300)); // 300ms delay to allow user to finish typing
-    }
-
-    /**
-     * Check if a change affects component inputs
-     */
-    private isInputRelatedChange(document: vscode.TextDocument, range: vscode.Range, newText: string, oldText: string): boolean {
-        const startLine = range.start.line;
-        const endLine = range.end.line;
-
-        // Check lines around the change for component/inputs context
-        const contextStart = Math.max(0, startLine - 5);
-        const contextEnd = Math.min(document.lineCount - 1, endLine + 5);
-
-        let hasComponentContext = false;
-        let hasInputsContext = false;
-
-        for (let i = contextStart; i <= contextEnd; i++) {
-            const lineText = document.lineAt(i).text;
-            if (lineText.includes('component:') || lineText.includes('include:')) {
-                hasComponentContext = true;
-            }
-            if (lineText.includes('inputs:')) {
-                hasInputsContext = true;
-            }
-        }
-
-        // If we're in a component context and either:
-        // 1. We're in an inputs section, or
-        // 2. The change involves input-like text (contains ':' which is common in YAML key-value pairs)
-        if (hasComponentContext && (hasInputsContext || newText.includes(':') || oldText.includes(':'))) {
-            this.logger.debug(`[ValidationProvider] Input-related change detected at line ${startLine}`, 'ValidationProvider');
-            return true;
-        }
-
-        return false;
     }
 
     /**

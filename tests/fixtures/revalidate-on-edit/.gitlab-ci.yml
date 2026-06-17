@@ -1,0 +1,13 @@
+include:
+  # The edited input below sits well more than 5 lines under this `local:` line, so a
+  # proximity-gated change detector would deem an edit to it "unrelated" and skip
+  # re-validation — leaving stale diagnostics. The test edits `target_input` and asserts
+  # the diagnostics track the current text.
+  - local: "revalidate-on-edit/templates/deploy.yml"
+    inputs:
+      a_input: a
+      b_input: b
+      c_input: c
+      d_input: d
+      e_input: e
+      target_input: ok

@@ -1,0 +1,12 @@
+spec:
+  inputs:
+    a_input: { type: string }
+    b_input: { type: string }
+    c_input: { type: string }
+    d_input: { type: string }
+    e_input: { type: string }
+    target_input: { type: string }
+---
+job:
+  script:
+    - echo "$[[ inputs.target_input ]]"
