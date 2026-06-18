@@ -50,6 +50,79 @@ suite('findCompletionInputContextAtLine', () => {
     });
   });
 
+  test('returns null when the cursor sits left of the slot indent, even though the line is indented correctly', () => {
+    // The slot line has the right 6-space indent, but the cursor has been moved left to column 3 — it is no
+    // longer in the name slot, so no completions should be offered.
+    const text = `include:
+  - component: ${FULL_PIPELINE_URL}
+    inputs:
+      environment: "dev"
+      `;
+    assert.strictEqual(findCompletionInputContextAtLine(text, 4, 3), null);
+  });
+
+  test('detects the slot when the cursor sits at the slot indent', () => {
+    const text = `include:
+  - component: ${FULL_PIPELINE_URL}
+    inputs:
+      environment: "dev"
+      `;
+    assert.deepStrictEqual(findCompletionInputContextAtLine(text, 4, 6)?.existingInputNames, ['environment']);
+  });
+
+  test('returns null inside a multi-line array input, where a `- item` line is a value not a name slot', () => {
+    // An array item nested under an input is deeper-indented than `inputs:` and has no `:`, but it is part of a
+    // parameter value — completing input names there would interrupt the array.
+    const text = `include:
+  - component: ${FULL_PIPELINE_URL}
+    inputs:
+      tags:
+        - one
+        - two
+      environment: "dev"`;
+    const ctx = findCompletionInputContextAtLine(text, 5); // the `- two` array item line
+    assert.strictEqual(ctx, null);
+  });
+
+  test('returns null when the slot is one column shallower than the existing input keys', () => {
+    // Existing keys sit at 6 spaces; a 5-space slot is misaligned (a sibling of `inputs:`), not a name slot.
+    const text =
+      'include:\n' +
+      `  - component: ${FULL_PIPELINE_URL}\n` +
+      '    inputs:\n' +
+      '      environment: "dev"\n' +
+      '     ';
+    const ctx = findCompletionInputContextAtLine(text, 4);
+    assert.strictEqual(ctx, null);
+  });
+
+  test('returns null when the slot is deeper than the existing input keys (a nested value position)', () => {
+    // Existing keys sit at 6 spaces; an 8-space slot is nested under a value, not a name slot.
+    const text =
+      'include:\n' +
+      `  - component: ${FULL_PIPELINE_URL}\n` +
+      '    inputs:\n' +
+      '      environment: "dev"\n' +
+      '        ';
+    const ctx = findCompletionInputContextAtLine(text, 4);
+    assert.strictEqual(ctx, null);
+  });
+
+  test('detects a slot aligned with the existing input keys', () => {
+    const text =
+      'include:\n' +
+      `  - component: ${FULL_PIPELINE_URL}\n` +
+      '    inputs:\n' +
+      '      environment: "dev"\n' +
+      '      ';
+    const ctx = findCompletionInputContextAtLine(text, 4);
+    assert.deepStrictEqual(ctx, {
+      componentUrl: FULL_PIPELINE_URL,
+      includeKind: 'component',
+      existingInputNames: ['environment'],
+    });
+  });
+
   test('reports existing inputs so the caller can filter them out', () => {
     const text = `include:
   - component: ${FULL_PIPELINE_URL}

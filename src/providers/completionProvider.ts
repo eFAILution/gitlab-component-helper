@@ -363,7 +363,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
     try {
       const text = document.getText();
 
-      const context = findCompletionInputContextAtLine(text, position.line);
+      const context = findCompletionInputContextAtLine(text, position.line, position.character);
       if (!context) {
         this.logger.debug(`[CompletionProvider] No inputs parameter-name slot at cursor`, 'CompletionProvider');
         return null;
