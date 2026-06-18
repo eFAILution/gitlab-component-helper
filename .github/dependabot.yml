@@ -1,3 +1,11 @@
+# Dependabot version updates.
+#
+# Security-alert policy (handled OUTSIDE this file): dev-scoped npm vulnerabilities are not gated.
+# They are auto-dismissed by a Dependabot auto-triage rule (repo Settings -> Code security ->
+# Dependabot -> Auto-triage rules: scope = development -> dismiss), mirroring the dev-group override
+# in osv-scanner.toml that the Argus scan honors. Do NOT add a dev-dep `ignore:` here to suppress
+# those alerts -- `ignore:` also stops the version-update PRs below, which are how dev tools stay
+# current and how a transitive fix (e.g. serialize-javascript >= 7.0.5) actually lands.
 version: 2
 updates:
   # Maintain npm dependencies
