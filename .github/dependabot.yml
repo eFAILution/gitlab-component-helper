@@ -39,10 +39,15 @@ updates:
         update-types:
           - "minor"
           - "patch"
-    # Ignore specific packages if needed
-    # ignore:
-    #   - dependency-name: "package-name"
-    #     versions: ["x.x.x"]
+    # @types/vscode is pinned to the engines.vscode floor (>=1.120.0): `vsce package`
+    # fails when @types/vscode > engines.vscode. Allow only patch bumps (which stay
+    # within the floor); a minor/major bump must be a deliberate engines.vscode raise,
+    # not an automatic dependency update. This stops the bump, not any security alert.
+    ignore:
+      - dependency-name: "@types/vscode"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
 
   # Maintain GitHub Actions
   - package-ecosystem: "github-actions"
