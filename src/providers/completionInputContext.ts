@@ -37,10 +37,17 @@ function indentOf(line: string): number {
  *
  * @param text - The full YAML document text.
  * @param lineIndex - 0-based line index where the cursor sits.
+ * @param column - 0-based cursor column. When given, the cursor must actually sit at the slot's indent column —
+ *   typing the right indentation then moving the cursor left leaves the spaces in place but no longer offers
+ *   completions. Omit to check the line's text alone (the cursor-agnostic form used by tests).
  * @returns A populated {@link CompletionInputContext} when the cursor is in a parameter-name slot inside the
  *   `inputs:` block of the closest preceding `component:`/`local:` include; `null` otherwise.
  */
-export function findCompletionInputContextAtLine(text: string, lineIndex: number): CompletionInputContext | null {
+export function findCompletionInputContextAtLine(
+  text: string,
+  lineIndex: number,
+  column?: number
+): CompletionInputContext | null {
   const parsed = parseYaml(text);
   if (!isYamlNode(parsed) || !parsed.include) return null;
 
@@ -55,12 +62,26 @@ export function findCompletionInputContextAtLine(text: string, lineIndex: number
   if (!section) return null;
 
   // Containment in the inputs block is already established above; here we only check the line looks like a
-  // parameter-name slot: indented deeper than the `inputs:` key (i.e. a child of it, not a sibling) and not
-  // already a complete `key: value`.
+  // parameter-name slot. A name slot must line up at the same column as the existing input keys
+  // (`section.childIndent`) — one column shallower is a sibling of `inputs:`, deeper is a value nested under
+  // another input. When the block has no keys yet, fall back to "deeper than `inputs:`". It must also not be an
+  // array-item line (`- value`, part of a parameter value) nor an already-complete `key: value`.
   const currentLine = lines[lineIndex];
   const currentLineText = currentLine.trim();
+  const currentIndent = indentOf(currentLine);
+  const indentMatches =
+    section.childIndent !== null ? currentIndent === section.childIndent : currentIndent > section.inputsIndent;
+  // When a cursor column is supplied, the cursor must sit at the slot's indent column or within the name being
+  // typed after it — never left of the indent. Typing the right indentation then moving the cursor left leaves
+  // the line's whitespace intact, so the indent check above still matches; but the cursor is no longer in the
+  // name slot, so we must not offer completions there.
+  const cursorAtSlot = column === undefined || column >= currentIndent;
   const isParameterContext =
-    indentOf(currentLine) > section.inputsIndent && (!currentLineText.includes(':') || currentLineText.endsWith(':'));
+    indentMatches &&
+    cursorAtSlot &&
+    !currentLineText.startsWith('- ') &&
+    currentLineText !== '-' &&
+    (!currentLineText.includes(':') || currentLineText.endsWith(':'));
   if (!isParameterContext) return null;
 
   return {
@@ -126,15 +147,21 @@ function findClosestInclude(includes: unknown[], lines: string[], lineIndex: num
  * boundary test, so the mapping form (where `inputs:` sits at the same indent as the include's `component:` key)
  * isn't mistaken for the section end.
  *
- * @returns the `inputs:` line's indentation when `lineIndex` is inside the block, so the caller can decide what
- *   counts as a parameter-name slot relative to it; `null` when the cursor isn't inside an inputs block.
+ * @returns when `lineIndex` is inside the block: the `inputs:` line's indentation, and `childIndent` — the
+ *   indentation of the first parameter key under it (the column input names line up at), or `null` when the block
+ *   has no keys yet. `null` (the whole result) when the cursor isn't inside an inputs block.
  */
-function findInputsSection(lines: string[], componentLineIndex: number, lineIndex: number): { inputsIndent: number } | null {
+function findInputsSection(
+  lines: string[],
+  componentLineIndex: number,
+  lineIndex: number
+): { inputsIndent: number; childIndent: number | null } | null {
   const componentIndent = indentOf(lines[componentLineIndex]);
 
   let inputsSectionStart = -1;
   let inputsIndent = -1;
   let inputsSectionEnd = -1;
+  let childIndent: number | null = null;
 
   for (let i = componentLineIndex + 1; i < lines.length; i++) {
     const trimmedLine = lines[i].trim();
@@ -152,13 +179,25 @@ function findInputsSection(lines: string[], componentLineIndex: number, lineInde
       inputsSectionEnd = i;
       break;
     }
+
+    // The first key directly under `inputs:` (not an array item, deeper than `inputs:` itself) fixes the column
+    // that input names line up at. Lines nested deeper than this belong to a parameter's value, not a name slot.
+    if (
+      inputsSectionStart !== -1 &&
+      childIndent === null &&
+      indentOf(lines[i]) > inputsIndent &&
+      !trimmedLine.startsWith('- ') &&
+      trimmedLine.includes(':')
+    ) {
+      childIndent = indentOf(lines[i]);
+    }
   }
 
   if (inputsSectionStart === -1) return null;
   if (inputsSectionEnd === -1) inputsSectionEnd = lines.length;
 
   if (lineIndex > inputsSectionStart && lineIndex < inputsSectionEnd) {
-    return { inputsIndent };
+    return { inputsIndent, childIndent };
   }
   return null;
 }
