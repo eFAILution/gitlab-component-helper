@@ -121,7 +121,7 @@ export function findComponentLineRange(
 export function parseExistingComponentText(componentText: string): unknown {
   try {
     const wrappedYaml = `include:\n${componentText}`;
-    const parsed = parseYaml(wrappedYaml) as { include?: unknown } | null;
+    const parsed = parseYaml(wrappedYaml, true) as { include?: unknown } | null;
     if (!parsed || parsed.include === undefined) return null;
     if (Array.isArray(parsed.include)) {
       return parsed.include[0] ?? null;
