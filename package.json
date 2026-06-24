@@ -220,6 +220,20 @@
           },
           "default": [],
           "description": "Extra GitLab CI file globs, merged with the built-in defaults. Patterns match at any directory depth (e.g. 'ci/*.yml' is treated as '**/ci/*.yml')."
+        },
+        "gitlabComponentHelper.versionCheck.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Warn when a component pinned to a semantic version (X.Y.Z) has a newer stable release available. Checked when a GitLab CI file is opened or saved."
+        },
+        "gitlabComponentHelper.versionCheck.severity": {
+          "type": "string",
+          "enum": [
+            "warning",
+            "information"
+          ],
+          "default": "warning",
+          "description": "Severity of the 'newer component version available' diagnostic."
         }
       }
     },
@@ -259,6 +273,10 @@
       {
         "command": "gitlab-component-helper.showPerformanceStats",
         "title": "GitLab CI: Show Performance Statistics"
+      },
+      {
+        "command": "gitlab-component-helper.updateAllComponentVersions",
+        "title": "GitLab CI: Update All Component Versions to Latest"
       }
     ],
     "menus": {
@@ -266,6 +284,11 @@
         {
           "when": "gitlabComponentHelper.isCiFile",
           "command": "gitlab-component-helper.browseComponents",
+          "group": "navigation"
+        },
+        {
+          "when": "gitlabComponentHelper.isCiFile",
+          "command": "gitlab-component-helper.updateAllComponentVersions",
           "group": "navigation"
         }
       ]
