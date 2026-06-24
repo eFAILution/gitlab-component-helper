@@ -11,6 +11,12 @@ import { resolveLocalComponent, isUnsupportedLocalPath } from './localComponentR
 import { attachDiagnosticMetadata, readDiagnosticMetadata } from './validationMetadata';
 import type { MissingRequiredInputMetadata } from './validationMetadata';
 import type { GitApi, GitRepository } from '../types/vscode-git';
+import type { CachedComponent } from '../types/cache';
+import {
+    collectSemverComponentBases,
+    findOutdatedComponentRefs,
+    type OutdatedComponentRef,
+} from './componentVersionCheck';
 import {
     type IncludeEntry,
     type LocalInclude,
@@ -22,6 +28,10 @@ import {
 
 export class ValidationProvider implements vscode.CodeActionProvider {
     private diagnosticCollection: vscode.DiagnosticCollection;
+    // Separate collection for "newer component version available" warnings. Kept apart from input/structure
+    // diagnostics so the on-save version check and the on-edit input validation never clobber each other's
+    // squiggles (VS Code merges diagnostics across collections natively).
+    private versionDiagnostics: vscode.DiagnosticCollection;
     private logger = Logger.getInstance();
     private cacheManager = getComponentCacheManager();
     private validationTimeouts = new Map<string, NodeJS.Timeout>(); // Throttle validation per document
@@ -37,6 +47,9 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
         this.diagnosticCollection = vscode.languages.createDiagnosticCollection('gitlab-component-helper');
         context.subscriptions.push(this.diagnosticCollection);
+
+        this.versionDiagnostics = vscode.languages.createDiagnosticCollection('gitlab-component-versions');
+        context.subscriptions.push(this.versionDiagnostics);
 
         // Register code action provider for the languages the providers run against.
         this.logger.debug('[ValidationProvider] Registering code action provider for yaml, gitlab-ci, and shellscript', 'ValidationProvider');
@@ -56,10 +69,15 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
         this.logger.debug('[ValidationProvider] Registering document event listeners', 'ValidationProvider');
         context.subscriptions.push(
-            vscode.workspace.onDidOpenTextDocument(doc => this.validate(doc)),
+            vscode.workspace.onDidOpenTextDocument(doc => {
+                this.validate(doc);
+                // Version checks hit the GitLab tags API, so they run on open/save rather than on every keystroke.
+                this.checkComponentVersions(doc);
+            }),
             vscode.workspace.onDidChangeTextDocument(e => {
                 this.scheduleValidation(e.document);
             }),
+            vscode.workspace.onDidSaveTextDocument(doc => this.checkComponentVersions(doc)),
             vscode.workspace.onDidCloseTextDocument(doc => {
                 const documentId = doc.uri.toString();
                 // Clear any pending validation timeouts
@@ -69,6 +87,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     this.validationTimeouts.delete(documentId);
                 }
                 this.diagnosticCollection.delete(doc.uri);
+                this.versionDiagnostics.delete(doc.uri);
             })
         );
 
@@ -89,6 +108,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         vscode.workspace.textDocuments.forEach(doc => {
             this.logger.debug(`[ValidationProvider] Found open document: ${doc.fileName} (${doc.languageId})`, 'ValidationProvider');
             this.validate(doc);
+            this.checkComponentVersions(doc);
         });
     }
 
@@ -776,6 +796,21 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                             actions.push(showAllMissingAction);
                         }
                     }
+                }
+            }
+            else if (diagnosticMetadata?.code === 'outdated-component-version') {
+                const metadata = diagnosticMetadata;
+                const updateTitle = `Update to ${metadata.latestVersion}`;
+                if (!actionTitles.has(updateTitle)) {
+                    actionTitles.add(updateTitle);
+
+                    const updateAction = new vscode.CodeAction(updateTitle, vscode.CodeActionKind.QuickFix);
+                    updateAction.edit = new vscode.WorkspaceEdit();
+                    // diagnostic.range covers exactly the version ref, so replacing it bumps only the pinned version.
+                    updateAction.edit.replace(document.uri, diagnostic.range, metadata.latestVersion);
+                    updateAction.diagnostics = [diagnostic];
+                    updateAction.isPreferred = true;
+                    actions.push(updateAction);
                 }
             }
         }
@@ -1762,5 +1797,139 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             this.logger.debug(`[ValidationProvider] Error parsing remote URL for detection: ${error}`, 'ValidationProvider');
             return null;
         }
+    }
+
+    /**
+     * Recompute the "newer version available" diagnostics for a document and publish them to the dedicated version
+     * diagnostic collection. Runs on open/save (not on every keystroke) since it queries the GitLab tags API; the
+     * per-project tag cache keeps repeated runs cheap. No-op — and clears existing markers — when the feature is
+     * disabled or the document isn't a GitLab CI file.
+     *
+     * @param document The document to check.
+     */
+    private async checkComponentVersions(document: vscode.TextDocument): Promise<void> {
+        if (!this.isDiagnosableDocument(document) || !isGitLabCIFile(document)) {
+            return;
+        }
+
+        const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+        if (!config.get<boolean>('versionCheck.enabled', true)) {
+            this.versionDiagnostics.delete(document.uri);
+            return;
+        }
+
+        const findings = await this.computeOutdatedRefs(document);
+
+        const severity = config.get<string>('versionCheck.severity', 'warning') === 'information'
+            ? vscode.DiagnosticSeverity.Information
+            : vscode.DiagnosticSeverity.Warning;
+
+        const diagnostics = findings.map(finding => {
+            const range = new vscode.Range(finding.line, finding.refStart, finding.line, finding.refEnd);
+            const diagnostic = new vscode.Diagnostic(
+                range,
+                `A newer version of '${finding.componentName}' is available: ${finding.latestVersion} (current: ${finding.currentVersion}).`,
+                severity,
+            );
+            diagnostic.code = 'outdated-component-version';
+            diagnostic.source = 'gitlab-component-helper';
+            attachDiagnosticMetadata(diagnostic, {
+                code: 'outdated-component-version',
+                componentUrl: finding.componentUrl,
+                currentVersion: finding.currentVersion,
+                latestVersion: finding.latestVersion,
+            });
+            return diagnostic;
+        });
+
+        this.versionDiagnostics.set(document.uri, diagnostics);
+        this.logger.debug(`[ValidationProvider] ${diagnostics.length} outdated-version diagnostics for ${document.fileName}`, 'ValidationProvider');
+    }
+
+    /**
+     * Resolve the outdated component refs in a document: collect each clean-semver component's project, fetch its
+     * available versions once (deduped, via the shared per-project cache), then run the pure detection pass.
+     *
+     * @param document The document to scan.
+     * @returns The outdated refs with their precise document locations; empty when nothing is behind.
+     */
+    private async computeOutdatedRefs(document: vscode.TextDocument): Promise<OutdatedComponentRef[]> {
+        const text = document.getText();
+        const bases = collectSemverComponentBases(text);
+        if (bases.length === 0) {
+            return [];
+        }
+
+        const versionsByBase = new Map<string, readonly string[] | undefined>();
+        await Promise.all(
+            bases.map(async baseUrl => {
+                versionsByBase.set(baseUrl, await this.fetchVersionsForBaseUrl(baseUrl));
+            }),
+        );
+
+        return findOutdatedComponentRefs(text, baseUrl => versionsByBase.get(baseUrl));
+    }
+
+    /**
+     * Fetch the available version refs (tags + branches) for a component's base URL via the shared per-project
+     * version cache. Reuses a cached component when one is known (so monorepo tag-pattern scoping applies),
+     * otherwise builds a minimal lookup from the parsed URL.
+     *
+     * @param baseUrl The component base URL (no `@version`).
+     * @returns The available refs, or `undefined` when the URL can't be parsed or the fetch fails.
+     */
+    private async fetchVersionsForBaseUrl(baseUrl: string): Promise<string[] | undefined> {
+        const parsed = this.parseComponentUrl(baseUrl);
+        if (!parsed) {
+            return undefined;
+        }
+
+        try {
+            const cached = (await this.cacheManager.getComponents()).find(
+                component =>
+                    component.gitlabInstance === parsed.gitlabInstance &&
+                    component.sourcePath === parsed.projectPath &&
+                    component.name === parsed.componentName,
+            );
+            const lookup: CachedComponent = cached ?? {
+                name: parsed.componentName,
+                description: '',
+                parameters: [],
+                source: `${parsed.gitlabInstance}/${parsed.projectPath}`,
+                sourcePath: parsed.projectPath,
+                gitlabInstance: parsed.gitlabInstance,
+                version: parsed.version,
+                url: baseUrl,
+            };
+            return await this.cacheManager.fetchComponentVersions(lookup);
+        } catch (error) {
+            this.logger.debug(`[ValidationProvider] Could not fetch versions for ${baseUrl}: ${error}`, 'ValidationProvider');
+            return undefined;
+        }
+    }
+
+    /**
+     * Bump every outdated component in `document` to its latest stable version in a single edit. Backs the
+     * "Update all component versions to latest" command.
+     *
+     * @param document The document to update.
+     * @returns The number of component refs updated (0 when everything is already current).
+     */
+    public async updateAllComponentVersions(document: vscode.TextDocument): Promise<number> {
+        const findings = await this.computeOutdatedRefs(document);
+        if (findings.length === 0) {
+            return 0;
+        }
+
+        const edit = new vscode.WorkspaceEdit();
+        for (const finding of findings) {
+            const range = new vscode.Range(finding.line, finding.refStart, finding.line, finding.refEnd);
+            edit.replace(document.uri, range, finding.latestVersion);
+        }
+        await vscode.workspace.applyEdit(edit);
+
+        // Refresh markers so the just-fixed squiggles clear immediately.
+        await this.checkComponentVersions(document);
+        return findings.length;
     }
 }

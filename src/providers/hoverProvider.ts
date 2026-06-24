@@ -1,10 +1,13 @@
 import * as vscode from 'vscode';
-import { detectIncludeComponent } from './componentDetector';
+import { detectIncludeComponent, Component } from './componentDetector';
 import { Logger } from '../utils/logger';
 import { getVariableInfo } from '../utils/gitlabVariables';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { findInputContextAtLine } from './hoverInputContext';
 import { buildComponentHoverMarkdown } from './hoverContentBuilder';
+import { getComponentCacheManager } from '../services/cache/componentCacheManager';
+import { isCleanSemver, getLatestStableSemver } from '../utils/semver';
+import type { CachedComponent } from '../types/cache';
 
 export class HoverProvider implements vscode.HoverProvider {
   private logger = Logger.getInstance();
@@ -75,11 +78,13 @@ export class HoverProvider implements vscode.HoverProvider {
       this.logger.debug(`[HoverProvider] Component source: ${component.context?.gitlabInstance || component.source || 'unknown'}`, 'HoverProvider');
       this.logger.debug(`[HoverProvider] Component has ${component.parameters?.length || 0} parameters`, 'HoverProvider');
 
+      const latestVersion = await this.getLatestStableVersion(component);
+
       const hoverContent = new vscode.MarkdownString(
         buildComponentHoverMarkdown(component, {
           documentUri: document.uri.toString(),
           position: { line: position.line, character: position.character },
-        }),
+        }, latestVersion),
       );
       hoverContent.isTrusted = true;
       hoverContent.supportThemeIcons = true;
@@ -89,6 +94,48 @@ export class HoverProvider implements vscode.HoverProvider {
 
     this.logger.debug(`[HoverProvider] No component found at cursor position`, 'HoverProvider');
     return null;
+  }
+
+  /**
+   * Resolve the latest stable semver available for a hovered component, for the hover's "Latest" line.
+   *
+   * Only runs for components pinned to a clean semver ref — floating refs (`main`, `latest`, …) are deliberately
+   * left without an upgrade hint. Reuses the per-project version cache (so repeated hovers are cheap) and fails
+   * soft to `undefined` on any lookup error, so a hover never breaks because versions couldn't be fetched.
+   *
+   * @param component The resolved component under the cursor.
+   * @returns The latest stable semver ref, or `undefined` when the ref isn't semver or versions can't be resolved.
+   */
+  private async getLatestStableVersion(component: Component): Promise<string | undefined> {
+    if (!component.version || !isCleanSemver(component.version) || !component.context) {
+      return undefined;
+    }
+    // Hoist the narrowed context into a local so the closure below sees it as non-null without a `!` assertion.
+    const { context } = component;
+    try {
+      const cacheManager = getComponentCacheManager();
+      const cached = (await cacheManager.getComponents()).find(
+        c =>
+          c.gitlabInstance === context.gitlabInstance &&
+          c.sourcePath === context.path &&
+          c.name === component.name,
+      );
+      const lookup: CachedComponent = cached ?? {
+        name: component.name,
+        description: component.description ?? '',
+        parameters: [],
+        source: component.source ?? `${context.gitlabInstance}/${context.path}`,
+        sourcePath: context.path,
+        gitlabInstance: context.gitlabInstance,
+        version: component.version,
+        url: '',
+      };
+      const versions = await cacheManager.fetchComponentVersions(lookup);
+      return getLatestStableSemver(versions) ?? undefined;
+    } catch (error) {
+      this.logger.debug(`[HoverProvider] Could not resolve latest version for ${component.name}: ${error}`, 'HoverProvider');
+      return undefined;
+    }
   }
 
   /**

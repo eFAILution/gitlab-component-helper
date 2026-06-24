@@ -6,6 +6,7 @@
 
 import type { Component } from './componentDetector';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
+import { isOutdated } from '../utils/semver';
 
 /**
  * The position context the "Open in Detailed View" command needs to round-trip the cursor location back to the
@@ -28,12 +29,21 @@ export interface HoverContext {
  *     `<gitlabInstance>/<path>` plain text, otherwise the bare `component.source` string. Skipped entirely if
  *     none of those are present.
  *  5. `**Version:** <version>` when set.
- *  6. Parameters table (header + separator + one row per `parameters[]`), or omitted when there are no parameters.
+ *  6. `**Latest:** <latestVersion>` when `latestVersion` is provided — annotated with whether an update is
+ *     available (current ref behind latest) or the pin is already current. Omitted when `latestVersion` is absent
+ *     (non-semver refs, or versions couldn't be resolved).
+ *  7. Parameters table (header + separator + one row per `parameters[]`), or omitted when there are no parameters.
  *
- * @param component The resolved component to render.
- * @param context   Cursor + document location used to build the detach-command URL.
+ * @param component     The resolved component to render.
+ * @param context       Cursor + document location used to build the detach-command URL.
+ * @param latestVersion The latest stable semver available for the component, when known. Compared against
+ *                      `component.version` to label the line as an available update or as up-to-date.
  */
-export function buildComponentHoverMarkdown(component: Component, context: HoverContext): string {
+export function buildComponentHoverMarkdown(
+  component: Component,
+  context: HoverContext,
+  latestVersion?: string,
+): string {
   let md = '';
 
   md += `## ${component.name}\n\n`;
@@ -67,6 +77,14 @@ export function buildComponentHoverMarkdown(component: Component, context: Hover
 
   if (component.version) {
     md += `**Version:** ${component.version}\n\n`;
+  }
+
+  if (latestVersion) {
+    const annotation =
+      component.version && isOutdated(component.version, latestVersion)
+        ? ' — ⚠️ update available'
+        : ' — ✓ up to date';
+    md += `**Latest:** ${latestVersion}${annotation}\n\n`;
   }
 
   if (component.parameters && component.parameters.length > 0) {
