@@ -131,7 +131,9 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
         const diagnostics: vscode.Diagnostic[] = [];
         const diagnosticKeys = new Set<string>(); // Track unique diagnostics to prevent duplicates
-        const parsedYaml = parseYaml(text);
+        // Silent: validation runs on every edit against the live, often mid-edit document; a parse failure is
+        // expected and handled below (diagnostics cleared), so it should not log to the debug console.
+        const parsedYaml = parseYaml(text, true);
 
         if (!isYamlNode(parsedYaml) || !parsedYaml.include) {
             this.diagnosticCollection.set(document.uri, diagnostics);

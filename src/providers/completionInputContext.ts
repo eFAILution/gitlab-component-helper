@@ -48,12 +48,17 @@ export function findCompletionInputContextAtLine(
   lineIndex: number,
   column?: number
 ): CompletionInputContext | null {
-  const parsed = parseYaml(text);
+  const lines = text.split('\n');
+  if (lines[lineIndex] === undefined) return null;
+
+  // A half-typed input name on the cursor line — `env` with no `:` yet — is a bare scalar where its sibling input
+  // keys are mappings, which makes the whole document invalid YAML. That would parse to `null` and offer nothing
+  // exactly while the user is typing the name. Blank the cursor line before parsing: it contributes nothing to the
+  // existing-input set (it *is* the slot being typed), and the positional scans below read `lines`, not the parse.
+  const parsed = parseInputDocument(text, lines, lineIndex);
   if (!isYamlNode(parsed) || !parsed.include) return null;
 
   const includes = Array.isArray(parsed.include) ? parsed.include : [parsed.include];
-  const lines = text.split('\n');
-  if (lines[lineIndex] === undefined) return null;
 
   const closest = findClosestInclude(includes, lines, lineIndex);
   if (!closest) return null;
@@ -89,6 +94,33 @@ export function findCompletionInputContextAtLine(
     includeKind: closest.includeKind,
     existingInputNames: closest.existingInputNames,
   };
+}
+
+/**
+ * Parse `text` as a YAML mapping, tolerating an in-progress input name on the cursor line.
+ *
+ * The document parses normally first. If that fails (or yields a non-mapping), and the cursor line looks like a
+ * partially-typed name — leading whitespace then a bare token with no `:` — the line is blanked and the document
+ * re-parsed. That token is the slot being typed; as a bare scalar beside its mapping siblings it makes the whole
+ * document invalid, so blanking it lets the surrounding structure parse while the user types.
+ *
+ * @param text - The full YAML document text to parse.
+ * @param lines - `text` split into lines, so the cursor line can be blanked without re-splitting.
+ * @param lineIndex - 0-based index of the cursor line, the one blanked on the retry.
+ * @returns the parsed value (from the original text where valid, otherwise the cursor-line-blanked retry), or the
+ *   original parse result when the cursor line isn't an in-progress name.
+ */
+function parseInputDocument(text: string, lines: string[], lineIndex: number): unknown {
+  const parsed = parseYaml(text, true);
+  if (isYamlNode(parsed) && parsed.include) return parsed;
+
+  const cursorLine = lines[lineIndex];
+  const isInProgressName = /^\s*[^\s:#-][^:]*$/.test(cursorLine);
+  if (!isInProgressName) return parsed;
+
+  const blanked = [...lines];
+  blanked[lineIndex] = '';
+  return parseYaml(blanked.join('\n'), true);
 }
 
 /**
@@ -230,7 +262,7 @@ function quoteYamlIfUnsafe(value: string, flow = false): string {
     return asDoubleQuoted(value);
   }
   try {
-    const parsed = parseYaml(`probe: ${value}`);
+    const parsed = parseYaml(`probe: ${value}`, true);
     if (isYamlNode(parsed) && parsed.probe === value) {
       return value;
     }

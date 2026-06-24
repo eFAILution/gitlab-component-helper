@@ -70,6 +70,48 @@ suite('findCompletionInputContextAtLine', () => {
     assert.deepStrictEqual(findCompletionInputContextAtLine(text, 4, 6)?.existingInputNames, ['environment']);
   });
 
+  test('detects the slot while a new input name is being typed (bare token would otherwise break the parse)', () => {
+    // `env` with no `:` yet is a bare scalar beside the `environment` mapping, so the raw document is invalid YAML.
+    // Slot detection tolerates the in-progress name and still reports the already-present inputs.
+    const text = `include:
+  - component: ${FULL_PIPELINE_URL}
+    inputs:
+      environment: "dev"
+      env`;
+    const ctx = findCompletionInputContextAtLine(text, 4, 9);
+    assert.deepStrictEqual(ctx, {
+      componentUrl: FULL_PIPELINE_URL,
+      includeKind: 'component',
+      existingInputNames: ['environment'],
+    });
+  });
+
+  test('detects the slot for the first input while its name is being typed', () => {
+    // The in-progress name is the only thing under `inputs:`, so there are no existing inputs yet.
+    const text = `include:
+  - component: ${FULL_PIPELINE_URL}
+    inputs:
+      env`;
+    const ctx = findCompletionInputContextAtLine(text, 3, 9);
+    assert.deepStrictEqual(ctx, {
+      componentUrl: FULL_PIPELINE_URL,
+      includeKind: 'component',
+      existingInputNames: [],
+    });
+  });
+
+  test('detects the in-progress name slot when it is not at end of document', () => {
+    const text = `include:
+  - component: ${FULL_PIPELINE_URL}
+    inputs:
+      environment: "dev"
+      env
+stages:
+  - build`;
+    const ctx = findCompletionInputContextAtLine(text, 4, 9);
+    assert.deepStrictEqual(ctx?.existingInputNames, ['environment']);
+  });
+
   test('returns null inside a multi-line array input, where a `- item` line is a value not a name slot', () => {
     // An array item nested under an input is deeper-indented than `inputs:` and has no `:`, but it is part of a
     // parameter value — completing input names there would interrupt the array.
