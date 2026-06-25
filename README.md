@@ -18,6 +18,7 @@
 - **Input Validation**: Real-time validation of component inputs with intelligent Quick Fix suggestions
 - **Local Includes**: Same hover, completion, and validation for `include: - local:` entries that declare a `spec.inputs` block
 - **Version/Tag Picker**: Always use the right version—no more guessing
+- **Upgrade Hints**: Flags components pinned to an out-of-date semantic version, with one-click updates—single component or the whole file
 - **Variable Expansion**: Full support for GitLab CI/CD variables in URLs and parameters
 - **Lightning Fast**: Caching, batch API calls, and performance optimizations for huge catalogs
 - **Private Access**: 🔑 Add private projects/groups with a token (per GitLab instance)
@@ -57,7 +58,7 @@ Add any private project or group with a personal access token—just once per Gi
 ```yaml
 include:
   - component: https://gitlab.com/components/terraform@v1.0.0
-    with:
+    inputs:
       terraform_version: "1.5.0"
       workspace: "default"
       apply: true
@@ -114,6 +115,20 @@ Notes:
 ## 📄 Raw YAML Toggle
 
 Component details include a **Raw YAML** toggle so you can inspect the original template when needed. This is available regardless of whether header comments are present.
+
+---
+
+## 🆙 Stay on the Latest Version
+
+When a component is pinned to a semantic version (`X.Y.Z`), the extension checks whether a newer stable release exists and helps you upgrade:
+
+- **Hover** shows the latest available version next to the one you're on — `✓ up to date` or `⚠️ update available`.
+- An **outdated pin gets a warning squiggle** on the version ref, with an **Update to `X.Y.Z`** quick fix (`Ctrl+.`) that bumps just that component.
+- **GitLab CI: Update All Component Versions to Latest** rewrites every out-of-date pin in the active file in one step.
+
+The check runs when a CI file is opened or saved (not on every keystroke) and reuses the per-project tag cache, so it stays light on the GitLab API. Components referenced via variables like `$CI_SERVER_FQDN/...@1.2.3` are resolved the same way the rest of the extension resolves them — no extra configuration needed.
+
+**Scope:** only clean `X.Y.Z` pins (optionally `v`-prefixed) are checked. Floating refs (`main`, `latest`, `~latest`), partial pins (`1`, `1.2`), and commit SHAs are left untouched, and pre-release tags are never suggested as the target. Toggle the whole feature with `gitlabComponentHelper.versionCheck.enabled`, or drop the squiggle to an informational underline with `gitlabComponentHelper.versionCheck.severity`.
 
 ---
 
@@ -247,8 +262,12 @@ Leave `tagPattern` unset for ordinary single-component repos — their tags are 
 #### Use the Command Palette (`Ctrl+Shift+P`) to access:
 - **GitLab CI: Browse Components** — Explore and insert from all your sources
 - **GitLab CI: Add Component Project/Group** — Add any project/group (with optional token for private access)
-- **GitLab CI: Refresh Component Cache** — Refreshes cached data
+- **GitLab CI: Update All Component Versions to Latest** — Bump every out-of-date semver-pinned component in the active file
+- **GitLab CI: Refresh Components Cache** — Refresh cached data
+- **GitLab CI: Update Cache** / **Reset Cache** — Force a full re-fetch, or clear all cached data
 - **GitLab CI: Show Cache Status** — See cache info and stats
+
+> Also available (for debugging): **Debug Cache (Detailed)**, **Show Performance Statistics**, and **Test Providers**.
 
 ---
 
@@ -308,7 +327,7 @@ interface ComponentParameter {
 Access through:
 
 ```typescript
-const api = await vscode.extensions.getExtension('username.gitlab-component-helper')?.activate();
+const api = await vscode.extensions.getExtension('eFAILution.gitlab-component-helper')?.activate();
 if (api) {
     const components = await api.getComponentList();
     // Use components...
@@ -320,20 +339,20 @@ if (api) {
 ## 🧑‍💻 Development
 
 **Prerequisites:**
-- VSCode 1.102.0 or higher
+- VS Code 1.120.0 or higher
 - Node.js 22.x or higher
-- Yarn or npm
+- npm
 
 **Setup:**
 ```bash
-git clone https://github.com/username/gitlab-component-helper.git
+git clone https://github.com/eFAILution/gitlab-component-helper.git
 cd gitlab-component-helper
-yarn install # or npm install
+npm install
 ```
 
 **Build:**
 ```bash
-yarn compile # or npm run compile
+npm run compile
 ```
 
 **Debug:**
@@ -392,6 +411,9 @@ The following settings are available for the GitLab Component Helper extension. 
 | `gitlabComponentHelper.discovery.maxDepth` | number | `1` | Subdirectory depth to recurse under each root. Range `0`–`3`. |
 | `gitlabComponentHelper.discovery.filePatterns` | array | `["*.yml", "*.yaml"]` | Filename globs identifying component template files. Filename only — no path globs. |
 | `gitlabComponentHelper.discovery.templateFileNames` | array | `["template.yml", "template.yaml"]` | Filenames recognised inside per-component subfolders (e.g. `templates/foo/template.yml`). |
+| `gitlabComponentHelper.additionalFileGlobs` | array | `[]` | Extra GitLab CI file globs, merged with the built-in defaults, so the extension activates on non-canonical CI files. Patterns match at any depth (e.g. `ci/*.yml` → `**/ci/*.yml`). |
+| `gitlabComponentHelper.versionCheck.enabled` | boolean | `true` | Warn when a component pinned to a semantic version has a newer stable release. Checked on open/save. |
+| `gitlabComponentHelper.versionCheck.severity` | string | `warning` | Severity of the "newer version available" diagnostic. One of: `warning`, `information`. |
 
 ### Example `componentSources` value:
 ```json
