@@ -1850,6 +1850,12 @@ export class ValidationProvider implements vscode.CodeActionProvider {
      * Resolve the outdated component refs in a document: collect each clean-semver component's project, fetch its
      * available versions once (deduped, via the shared per-project cache), then run the pure detection pass.
      *
+     * Component URLs that use GitLab variables (e.g. `$CI_SERVER_FQDN/group/comp@1.2.3`) are expanded the same way
+     * {@link validate} expands them — resolving the instance/project from the file's repo context — before their
+     * versions are fetched. The version map is keyed by the *raw* base URL (as written in the document), because
+     * the pure finder matches against the document text and places ranges there; only the lookup uses the expanded
+     * URL.
+     *
      * @param document The document to scan.
      * @returns The outdated refs with their precise document locations; empty when nothing is behind.
      */
@@ -1860,10 +1866,26 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             return [];
         }
 
+        // Resolve workspace context once (git remote of the file's repo, or configured sources) only when some base
+        // URL actually uses variables — it can involve git lookups we don't want to pay for otherwise.
+        const workspaceContext = bases.some(base => containsGitLabVariables(base))
+            ? await this.getWorkspaceContext(document.uri)
+            : undefined;
+
         const versionsByBase = new Map<string, readonly string[] | undefined>();
         await Promise.all(
-            bases.map(async baseUrl => {
-                versionsByBase.set(baseUrl, await this.fetchVersionsForBaseUrl(baseUrl));
+            bases.map(async rawBase => {
+                let lookupUrl = rawBase;
+                if (containsGitLabVariables(rawBase)) {
+                    if (!workspaceContext?.gitlabInstance) {
+                        return; // can't resolve the instance for this file — leave the component unchecked
+                    }
+                    lookupUrl = expandComponentUrl(rawBase, workspaceContext);
+                    if (containsGitLabVariables(lookupUrl) || lookupUrl.includes('undefined')) {
+                        return; // expansion was incomplete — don't guess
+                    }
+                }
+                versionsByBase.set(rawBase, await this.fetchVersionsForBaseUrl(lookupUrl));
             }),
         );
 
