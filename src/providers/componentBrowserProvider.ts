@@ -130,6 +130,10 @@ export class ComponentBrowserProvider {
               'gitlabComponentHelper.componentSources'
             );
             return;
+          case 'updateToken':
+            await vscode.commands.executeCommand('gitlabComponentHelper.addProjectToken');
+            await this.loadComponents(true);
+            return;
           case 'fetchVersion':
             await this.fetchAndCacheVersion(message.componentName, message.sourcePath, message.gitlabInstance, message.version);
             return;
@@ -320,10 +324,7 @@ export class ComponentBrowserProvider {
 
       // If no components found but we have cache errors, show errors
       if (allComponents.length === 0 && Object.keys(cacheErrors).length > 0) {
-        const errorMessages = Object.entries(cacheErrors).map(([source, error]) =>
-          `${source}: ${error}`
-        );
-        this.panel.webview.html = this.getErrorsHtml(errorMessages);
+        this.panel.webview.html = this.getErrorsHtml(cacheErrors);
         return;
       }
 
@@ -706,16 +707,22 @@ export class ComponentBrowserProvider {
     const versionDataJson = JSON.stringify(versionData);
 
     // Build error section HTML
+    const hasAuthError = Object.values(cacheErrors).some(error => this.classifySourceError(error).isAuth);
     const errorSectionHtml = hasErrors ? `
       <div class="error-section">
         <div class="error-header">⚠️ Cache Errors</div>
-        ${Object.entries(cacheErrors).map(([source, error], index) => `
+        ${Object.entries(cacheErrors).map(([source, error], index) => {
+          const { summary } = this.classifySourceError(error);
+          return `
           <div class="error-item">
-            <div class="error-source">${source}</div>
+            <div class="error-source">${this.escapeHtml(source)}</div>
+            <div class="error-summary">${this.escapeHtml(summary)}</div>
             <button class="error-toggle" onclick="toggleError('error-${index}')">Show Details</button>
-            <div class="error-details" id="error-${index}" style="display: none;">${error}</div>
+            <div class="error-details" id="error-${index}" style="display: none;">${this.escapeHtml(error)}</div>
           </div>
-        `).join('')}
+          `;
+        }).join('')}
+        ${hasAuthError ? '<button class="update-token-btn" onclick="updateToken()">Update Token</button>' : ''}
       </div>
     ` : '';
 
@@ -881,6 +888,19 @@ export class ComponentBrowserProvider {
           .error-source {
             font-weight: bold;
             color: var(--vscode-errorForeground);
+          }
+          .error-summary {
+            color: var(--vscode-errorForeground);
+            margin: 4px 0;
+          }
+          .update-token-btn {
+            background-color: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            padding: 6px 14px;
+            border-radius: 2px;
+            cursor: pointer;
+            margin-top: 6px;
           }
           .error-toggle {
             background: none;
@@ -1128,6 +1148,10 @@ export class ComponentBrowserProvider {
             } else {
               errorDiv.style.display = 'none';
             }
+          }
+
+          function updateToken() {
+            vscode.postMessage({ command: 'updateToken' });
           }
 
           function toggleSource(sourceId) {
@@ -2127,6 +2151,35 @@ export class ComponentBrowserProvider {
     `;
   }
 
+  /**
+   * Classify a per-source error message so the error views can tell an expired/invalid token apart
+   * from a generic failure. Auth errors get a plain-language summary and an "Update Token" action;
+   * everything else falls back to the raw message. The raw text is always preserved for the details
+   * disclosure so we never hide what GitLab actually returned.
+   *
+   * @param rawError  The error message stored for a source (e.g. `HTTP 401: {"error":"invalid_token",…}`).
+   * @returns         `isAuth` — whether the message looks like a 401/403/token failure; `summary` — a
+   *                  plain-language message for auth errors, or the unchanged `rawError` otherwise.
+   */
+  private classifySourceError(rawError: string): { isAuth: boolean; summary: string } {
+    const lower = rawError.toLowerCase();
+    const isAuth =
+      /\bhttp\s*40[13]\b/.test(lower) ||
+      lower.includes('invalid_token') ||
+      lower.includes('token is expired') ||
+      lower.includes('unauthorized') ||
+      lower.includes('forbidden');
+
+    if (!isAuth) {
+      return { isAuth: false, summary: rawError };
+    }
+
+    const summary = lower.includes('expired')
+      ? 'Your GitLab access token has expired. Update it to reload these components.'
+      : 'GitLab rejected the access token for this source. Update it to reload these components.';
+    return { isAuth: true, summary };
+  }
+
   private escapeHtml(value: string): string {
     return value
       .replace(/&/g, '&amp;')
@@ -2229,7 +2282,32 @@ export class ComponentBrowserProvider {
     `;
   }
 
-  private getErrorsHtml(errors: string[]): string {
+  /**
+   * Build the full-screen error view shown when no components could be loaded but sources reported
+   * errors. Each source is rendered with a plain-language summary (auth errors are humanised via
+   * {@link classifySourceError}) and its raw message behind a "Show details" toggle. An "Update Token"
+   * button is added when any source failed with an auth error.
+   *
+   * @param errors  Map of source name to its error message (as stored by the cache manager).
+   * @returns       A complete HTML document string for the webview panel.
+   */
+  private getErrorsHtml(errors: Record<string, string>): string {
+    const entries = Object.entries(errors);
+    const hasAuthError = entries.some(([, error]) => this.classifySourceError(error).isAuth);
+
+    const errorItemsHtml = entries.map(([source, error], index) => {
+      const { summary } = this.classifySourceError(error);
+      const detailsId = `error-details-${index}`;
+      return `
+        <div class="error-item">
+          <div class="error-source">${this.escapeHtml(source)}</div>
+          <div class="error-summary">${this.escapeHtml(summary)}</div>
+          <button class="link-button" onclick="toggleDetails('${detailsId}', this)">Show details</button>
+          <pre class="error-raw" id="${detailsId}" style="display: none;">${this.escapeHtml(error)}</pre>
+        </div>
+      `;
+    }).join('');
+
     return `
       <!DOCTYPE html>
       <html lang="en">
@@ -2245,7 +2323,6 @@ export class ComponentBrowserProvider {
             background-color: var(--vscode-editor-background);
           }
           .errors {
-            color: var(--vscode-errorForeground);
             background-color: var(--vscode-inputValidation-errorBackground);
             border: 1px solid var(--vscode-inputValidation-errorBorder);
             padding: 10px;
@@ -2253,7 +2330,27 @@ export class ComponentBrowserProvider {
             margin: 20px 0;
           }
           .error-item {
-            margin: 8px 0;
+            margin: 12px 0;
+          }
+          .error-item:not(:last-child) {
+            border-bottom: 1px solid var(--vscode-inputValidation-errorBorder);
+            padding-bottom: 12px;
+          }
+          .error-source {
+            font-weight: 600;
+            margin-bottom: 4px;
+          }
+          .error-summary {
+            color: var(--vscode-errorForeground);
+          }
+          .error-raw {
+            margin: 8px 0 0;
+            padding: 8px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 0.85em;
+            background-color: var(--vscode-textCodeBlock-background);
+            border-radius: 3px;
           }
           button {
             background-color: var(--vscode-button-background);
@@ -2264,6 +2361,13 @@ export class ComponentBrowserProvider {
             cursor: pointer;
             margin-right: 8px;
           }
+          .link-button {
+            background: none;
+            color: var(--vscode-textLink-foreground);
+            padding: 0;
+            margin: 4px 0 0;
+            text-decoration: underline;
+          }
         </style>
       </head>
       <body>
@@ -2272,10 +2376,11 @@ export class ComponentBrowserProvider {
         <p>There were errors loading components from the configured sources:</p>
 
         <div class="errors">
-          ${errors.map((error: string) => `<div class="error-item">• ${error}</div>`).join('')}
+          ${errorItemsHtml}
         </div>
 
         <div>
+          ${hasAuthError ? '<button onclick="updateToken()">Update Token</button>' : ''}
           <button onclick="refresh()">Try Again</button>
           <button onclick="openSettings()">Open Settings</button>
         </div>
@@ -2289,6 +2394,17 @@ export class ComponentBrowserProvider {
 
           function openSettings() {
             vscode.postMessage({ command: 'openSettings' });
+          }
+
+          function updateToken() {
+            vscode.postMessage({ command: 'updateToken' });
+          }
+
+          function toggleDetails(id, btn) {
+            const el = document.getElementById(id);
+            const showing = el.style.display !== 'none';
+            el.style.display = showing ? 'none' : 'block';
+            btn.textContent = showing ? 'Show details' : 'Hide details';
           }
         </script>
       </body>
@@ -2398,8 +2514,18 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
   }
 
 
+  /**
+   * Build the catch-all error view shown when loading the component browser throws (as opposed to a
+   * per-source failure). Auth errors are humanised via {@link classifySourceError} and get an "Update
+   * Token" button with the raw message behind a "Show details" toggle; other errors show the message
+   * directly. Both keep "Try Again" and "Open Settings".
+   *
+   * @param error  The thrown value caught while loading components (typed `unknown` at the catch site).
+   * @returns      A complete HTML document string for the webview panel.
+   */
   private getErrorHtml(error: unknown): string {
     const message = error instanceof Error ? error.message : String(error);
+    const { isAuth, summary } = this.classifySourceError(message);
     return `
       <!DOCTYPE html>
       <html lang="en">
@@ -2422,6 +2548,15 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
             border-radius: 5px;
             margin: 20px 0;
           }
+          .error-raw {
+            margin: 8px 0 0;
+            padding: 8px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 0.85em;
+            background-color: var(--vscode-textCodeBlock-background);
+            border-radius: 3px;
+          }
           button {
             background-color: var(--vscode-button-background);
             color: var(--vscode-button-foreground);
@@ -2431,16 +2566,28 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
             cursor: pointer;
             margin-right: 8px;
           }
+          .link-button {
+            background: none;
+            color: var(--vscode-textLink-foreground);
+            padding: 0;
+            margin: 4px 0 0;
+            text-decoration: underline;
+          }
         </style>
       </head>
       <body>
         <h1>Component Loading Error</h1>
 
         <div class="error">
-          <strong>Error:</strong> ${message}
+          ${isAuth
+            ? `${this.escapeHtml(summary)}
+               <button class="link-button" onclick="toggleDetails('error-raw', this)">Show details</button>
+               <pre class="error-raw" id="error-raw" style="display: none;">${this.escapeHtml(message)}</pre>`
+            : `<strong>Error:</strong> ${this.escapeHtml(message)}`}
         </div>
 
         <div>
+          ${isAuth ? '<button onclick="updateToken()">Update Token</button>' : ''}
           <button onclick="refresh()">Try Again</button>
           <button onclick="openSettings()">Open Settings</button>
         </div>
@@ -2454,6 +2601,17 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
 
           function openSettings() {
             vscode.postMessage({ command: 'openSettings' });
+          }
+
+          function updateToken() {
+            vscode.postMessage({ command: 'updateToken' });
+          }
+
+          function toggleDetails(id, btn) {
+            const el = document.getElementById(id);
+            const showing = el.style.display !== 'none';
+            el.style.display = showing ? 'none' : 'block';
+            btn.textContent = showing ? 'Show details' : 'Hide details';
           }
         </script>
       </body>

@@ -40,6 +40,11 @@ export interface ComponentFetchFailedMetadata extends ComponentRefBase {
   code: 'component-fetch-failed';
 }
 
+/** Metadata attached to `code: 'component-auth-failed'` diagnostics (401/403 — token expired/invalid). */
+export interface ComponentAuthFailedMetadata extends ComponentRefBase {
+  code: 'component-auth-failed';
+}
+
 /** Metadata attached to `code: 'unknown-input'` diagnostics (input name not in the component's spec). */
 export interface UnknownInputMetadata {
   code: 'unknown-input';
@@ -87,6 +92,7 @@ export interface OutdatedComponentVersionMetadata {
 export type DiagnosticMetadata =
   | UnresolvedVariablesMetadata
   | ComponentFetchFailedMetadata
+  | ComponentAuthFailedMetadata
   | UnknownInputMetadata
   | MissingRequiredInputMetadata
   | OutdatedComponentVersionMetadata;

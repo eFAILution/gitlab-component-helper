@@ -4,14 +4,25 @@ import { Logger } from '../../utils/logger';
 /**
  * Manages GitLab personal access tokens using VS Code's SecretStorage
  */
-export class TokenManager {
+export class TokenManager implements vscode.Disposable {
   private logger = Logger.getInstance();
   private secretStorage: vscode.SecretStorage | undefined;
+
+  private readonly onDidChangeTokenEmitter = new vscode.EventEmitter<string>();
+  /**
+   * Fires after a token is stored for a GitLab instance, with the instance hostname. Lets consumers
+   * (e.g. the validation provider) re-run work that previously failed for lack of a valid token.
+   */
+  public readonly onDidChangeToken = this.onDidChangeTokenEmitter.event;
 
   constructor() {}
 
   public setSecretStorage(secretStorage: vscode.SecretStorage): void {
     this.secretStorage = secretStorage;
+  }
+
+  public dispose(): void {
+    this.onDidChangeTokenEmitter.dispose();
   }
 
   /**
@@ -43,6 +54,7 @@ export class TokenManager {
     this.logger.debug(`Storing token with key: ${key}`);
     await this.secretStorage.store(key, token);
     this.logger.debug(`Token stored successfully for ${gitlabInstance}`);
+    this.onDidChangeTokenEmitter.fire(gitlabInstance);
   }
 
   /**

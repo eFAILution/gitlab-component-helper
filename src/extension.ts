@@ -132,6 +132,7 @@ export function activate(context: vscode.ExtensionContext) {
     logger.debug('[Extension] Registering addProjectToken command...', 'Extension');
     const service = getComponentService();
     service.setSecretStorage(context.secrets);
+    context.subscriptions.push(service);
     registerAddProjectTokenCommand(context, service);
 
     // Register component browser command
