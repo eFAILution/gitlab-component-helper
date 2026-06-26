@@ -41,6 +41,8 @@
 
 Add a private project or group with a personal access token — once per GitLab instance, then it's reused for that instance. Tokens are stored with VS Code **SecretStorage** (encrypted, never in plain text or files) and used only for API calls to the instance you added.
 
+Create the token with the **`read_api`** scope, and ensure its user has at least **Reporter** access to the project.
+
 > ⚠️ The legacy `gitlabComponentHelper.gitlabToken` setting stores tokens in plain text in `settings.json` and is **deprecated**. Use **GitLab CI: Add Component Project/Group** instead, then clear the field.
 
 ---
@@ -138,6 +140,7 @@ Debugging commands are also available: **Debug Cache (Detailed)**, **Show Perfor
 ## 🆘 Troubleshooting
 
 - **No components showing?** Confirm the file's language mode is YAML and that component sources are configured.
+- **HTTP 401 / "token expired" errors?** The token is expired or invalid — re-add it via **GitLab CI: Add Component Project/Group**, or the **Update Token** action in the error view. Confirm it has the **`read_api`** scope and at least **Reporter** access.
 - **Version dropdown not loading?** Check connectivity to the GitLab instance, verify token/permissions, and refresh the cache.
 - **Still stuck?** Set `gitlabComponentHelper.logLevel` to `DEBUG`, reproduce, and open an issue with the output and your configuration.
 

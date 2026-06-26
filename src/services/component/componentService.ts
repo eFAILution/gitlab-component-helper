@@ -60,6 +60,11 @@ export class ComponentService implements ComponentSource {
     this.tokenManager.setSecretStorage(secretStorage);
   }
 
+  /** Release the token manager's resources (its change-event emitter). */
+  public dispose(): void {
+    this.tokenManager.dispose();
+  }
+
   public async getTokenForProject(gitlabInstance: string): Promise<string | undefined> {
     return this.tokenManager.getTokenForProject(gitlabInstance);
   }

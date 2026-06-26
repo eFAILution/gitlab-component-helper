@@ -333,37 +333,20 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     const line = this.findLineForComponent(document, includes, includeIndex);
                     const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
 
-                    const diagnostic = componentAuthFailed
-                        ? new vscode.Diagnostic(
-                            range,
-                            `GitLab token for '${componentUrl}' is missing, invalid, or expired. Update it to validate this component.`,
-                            vscode.DiagnosticSeverity.Warning
-                          )
-                        : new vscode.Diagnostic(
-                            range,
-                            `Unable to fetch component '${componentUrl}'. Component may not exist, be inaccessible, or the URL may be incorrect.`,
-                            vscode.DiagnosticSeverity.Warning
-                          );
+                    const code = componentAuthFailed ? 'component-auth-failed' : 'component-fetch-failed';
+                    const message = componentAuthFailed
+                        ? `GitLab token for '${componentUrl}' is missing, invalid, or expired. Update it to validate this component.`
+                        : `Unable to fetch component '${componentUrl}'. Component may not exist, be inaccessible, or the URL may be incorrect.`;
 
-                    if (componentAuthFailed) {
-                        diagnostic.code = 'component-auth-failed';
-                        diagnostic.source = 'gitlab-component-helper';
-                        attachDiagnosticMetadata(diagnostic, {
-                            code: 'component-auth-failed',
-                            componentUrl: componentUrl,
-                            expandedUrl: expandedUrl,
-                            includeInputs: include.inputs || {}
-                        });
-                    } else {
-                        diagnostic.code = 'component-fetch-failed';
-                        diagnostic.source = 'gitlab-component-helper';
-                        attachDiagnosticMetadata(diagnostic, {
-                            code: 'component-fetch-failed',
-                            componentUrl: componentUrl,
-                            expandedUrl: expandedUrl,
-                            includeInputs: include.inputs || {}
-                        });
-                    }
+                    const diagnostic = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Warning);
+                    diagnostic.code = code;
+                    diagnostic.source = 'gitlab-component-helper';
+                    attachDiagnosticMetadata(diagnostic, {
+                        code,
+                        componentUrl: componentUrl,
+                        expandedUrl: expandedUrl,
+                        includeInputs: include.inputs || {}
+                    });
 
                     this.logger.debug(`[ValidationProvider] Created component ${componentAuthFailed ? 'auth' : 'fetch'} failure diagnostic for ${componentUrl}`, 'ValidationProvider');
                     diagnostics.push(diagnostic);

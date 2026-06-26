@@ -4,7 +4,7 @@ import { Logger } from '../../utils/logger';
 /**
  * Manages GitLab personal access tokens using VS Code's SecretStorage
  */
-export class TokenManager {
+export class TokenManager implements vscode.Disposable {
   private logger = Logger.getInstance();
   private secretStorage: vscode.SecretStorage | undefined;
 
@@ -19,6 +19,10 @@ export class TokenManager {
 
   public setSecretStorage(secretStorage: vscode.SecretStorage): void {
     this.secretStorage = secretStorage;
+  }
+
+  public dispose(): void {
+    this.onDidChangeTokenEmitter.dispose();
   }
 
   /**
