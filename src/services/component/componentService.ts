@@ -50,6 +50,12 @@ export class ComponentService implements ComponentSource {
   }
 
   // Token management delegation
+
+  /** Fires (with the instance hostname) after a token is stored, so consumers can revalidate. */
+  public get onDidChangeToken(): vscode.Event<string> {
+    return this.tokenManager.onDidChangeToken;
+  }
+
   public setSecretStorage(secretStorage: vscode.SecretStorage): void {
     this.tokenManager.setSecretStorage(secretStorage);
   }

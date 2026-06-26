@@ -11,6 +11,7 @@ import type { GitLabProjectInfo, GitLabTreeItem } from '../../types/api';
 import { HttpClient } from '../../utils/httpClient';
 import { Logger } from '../../utils/logger';
 import { GitLabSpecParser, ComponentVariable } from '../../parsers/specParser';
+import { isAuthError } from '../../errors';
 import { TokenManager } from './tokenManager';
 import { UrlParser } from './urlParser';
 import {
@@ -20,25 +21,41 @@ import {
 } from './componentFetcherTemplates';
 
 /**
- * Helper function to prompt user for token if needed
+ * Prompt the user for a GitLab personal access token for `gitlabInstance`.
+ *
+ * The two reasons we reach a 401 need different wording: a stored token that GitLab rejected
+ * (expired/invalid — *replace* it) versus no token at all (private source needs *first-time* auth).
+ *
+ * @param context        Extension context (currently unused; reserved for context-scoped secrets).
+ * @param tokenManager   Stores the entered token, keyed by `gitlabInstance`.
+ * @param gitlabInstance The GitLab host the token is for (e.g. `gitlab.com`).
+ * @param hadToken       Whether a token was already stored for this instance — selects which of the
+ *                       two messages above is shown.
+ * @returns              The trimmed token if the user entered one (also persisted), or `undefined`
+ *                       if they left it blank (public access) or dismissed the prompt.
  */
 async function promptForTokenIfNeeded(
   context: vscode.ExtensionContext | undefined,
   tokenManager: TokenManager,
-  gitlabInstance: string
+  gitlabInstance: string,
+  hadToken: boolean
 ): Promise<string | undefined> {
-  const tokenPrompt = `This project/group requires a GitLab personal access token for ${gitlabInstance}. Please enter one to continue.`;
+  const tokenPrompt = hadToken
+    ? `Your GitLab token for ${gitlabInstance} is invalid or has expired. Enter a new personal access token (needs the read_api scope) to continue.`
+    : `This project/group requires a GitLab personal access token for ${gitlabInstance} (needs the read_api scope). Enter one to continue, or leave blank for public access.`;
   const token = await vscode.window.showInputBox({
+    title: 'GitLab Component Helper',
     prompt: tokenPrompt,
+    placeHolder: hadToken ? 'New personal access token' : 'Personal access token (blank for public access)',
     password: true,
     ignoreFocusOut: true
   });
   if (token && token.trim()) {
     await tokenManager.setTokenForProject(gitlabInstance, token.trim());
-    vscode.window.showInformationMessage(`Token saved for ${gitlabInstance}`);
+    vscode.window.showInformationMessage(`GitLab Component Helper: token saved for ${gitlabInstance}`);
     return token.trim();
   } else if (token === '') {
-    vscode.window.showInformationMessage('No token entered. Public access will be used.');
+    vscode.window.showInformationMessage('GitLab Component Helper: no token entered. Public access will be used.');
     return undefined;
   }
   return undefined;
@@ -217,43 +234,31 @@ export class ComponentFetcher {
 
       this.logger.debug(`Using token for ${gitlabInstance}: ${token ? 'YES' : 'NO'}`);
 
-      // Fetch project info and template in parallel
-      let projectInfo: PromiseSettledResult<GitLabProjectInfo>;
-      let templateResult: PromiseSettledResult<Awaited<ReturnType<typeof this.fetchTemplate>>>;
-      try {
+      // Fetch project info and template in parallel. `allSettled` never rejects, so an auth failure
+      // surfaces as a rejected `projectInfo` rather than a thrown error — handle it explicitly below.
+      let [projectInfo, templateResult] = await Promise.allSettled([
+        this.httpClient.fetchJson<GitLabProjectInfo>(projectApiUrl, fetchOptions),
+        this.fetchTemplate(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions)
+      ]);
+
+      // On a 401/403 fetching project info, prompt for a token once and retry. If the user declines
+      // (or it still fails), rethrow the original auth error so callers can surface a clear prompt
+      // instead of degrading into an empty-parameter component.
+      if (projectInfo.status === 'rejected' && isAuthError(projectInfo.reason)) {
+        token = await promptForTokenIfNeeded(context, this.tokenManager, gitlabInstance, !!token);
+        if (!token) {
+          throw projectInfo.reason;
+        }
+        fetchOptions = { headers: { 'PRIVATE-TOKEN': token } };
         [projectInfo, templateResult] = await Promise.allSettled([
           this.httpClient.fetchJson<GitLabProjectInfo>(projectApiUrl, fetchOptions),
           this.fetchTemplate(apiBaseUrl, encodedProjectPath, componentName, version, fetchOptions)
         ]);
-      } catch (err: unknown) {
-        const status = (err && typeof err === 'object' && 'status' in err)
-          ? (err as { status?: number }).status
-          : undefined;
-        if (status === 401 || status === 403) {
-          // Prompt for token and retry
-          token = await promptForTokenIfNeeded(context, this.tokenManager, gitlabInstance);
-          if (token) {
-            fetchOptions = { headers: { 'PRIVATE-TOKEN': token } };
-            [projectInfo, templateResult] = await Promise.allSettled([
-              this.httpClient.fetchJson<GitLabProjectInfo>(projectApiUrl, fetchOptions),
-              this.fetchTemplate(
-                apiBaseUrl,
-                encodedProjectPath,
-                componentName,
-                version,
-                fetchOptions
-              )
-            ]);
-          } else {
-            throw err;
-          }
-        } else {
-          throw err;
-        }
       }
 
       if (projectInfo.status === 'rejected') {
-        throw new Error(`Failed to fetch project info: ${projectInfo.reason}`);
+        // Preserve the original error (and its status) so auth failures stay recognisable upstream.
+        throw projectInfo.reason;
       }
 
       const project = projectInfo.value;
@@ -296,7 +301,13 @@ export class ComponentFetcher {
     } catch (error) {
       this.logger.error(`Error fetching component metadata: ${error}`);
 
-      // Still provide a minimal component rather than failing
+      // Auth failures must propagate: a minimal empty-parameter component would make every provided
+      // input look "unknown" during validation. Let callers surface a token prompt instead.
+      if (isAuthError(error)) {
+        throw error;
+      }
+
+      // For other failures, still provide a minimal component rather than failing outright.
       const urlParts = url.split('/');
       const lastPart = urlParts[urlParts.length - 1];
       const componentName = lastPart.includes('@') ? lastPart.split('@')[0] : lastPart;
@@ -432,9 +443,9 @@ export class ComponentFetcher {
       // Handle authentication errors and retry if needed
       if (projectInfoResult.status === 'rejected') {
         const err = projectInfoResult.reason;
-        if (err && (err.status === 401 || err.status === 403)) {
+        if (isAuthError(err)) {
           // Prompt for token and retry
-          token = await promptForTokenIfNeeded(context, this.tokenManager, cleanGitlabInstance);
+          token = await promptForTokenIfNeeded(context, this.tokenManager, cleanGitlabInstance, !!token);
           if (token) {
             fetchOptions = { headers: { 'PRIVATE-TOKEN': token } };
             const [retryProjectInfo] = await Promise.allSettled([

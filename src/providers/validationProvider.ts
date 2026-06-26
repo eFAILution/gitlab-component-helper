@@ -9,6 +9,7 @@ import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { spawn } from 'child_process';
 import { resolveLocalComponent, isUnsupportedLocalPath } from './localComponentResolver';
 import { attachDiagnosticMetadata, readDiagnosticMetadata } from './validationMetadata';
+import { isAuthError } from '../errors';
 import type { MissingRequiredInputMetadata } from './validationMetadata';
 import type { GitApi, GitRepository } from '../types/vscode-git';
 import type { CachedComponent } from '../types/cache';
@@ -88,6 +89,16 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                 }
                 this.diagnosticCollection.delete(doc.uri);
                 this.versionDiagnostics.delete(doc.uri);
+            })
+        );
+
+        // A newly-saved token can turn a `component-auth-failed` (or generic fetch failure) into a
+        // successful fetch, so re-run validation on open documents to clear the stale diagnostics.
+        this.logger.debug('[ValidationProvider] Subscribing to token changes', 'ValidationProvider');
+        context.subscriptions.push(
+            getComponentService().onDidChangeToken(() => {
+                this.logger.debug('[ValidationProvider] Token changed - revalidating open documents', 'ValidationProvider');
+                this.revalidateOpenDocuments();
             })
         );
 
@@ -266,8 +277,10 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                 // First try to find the component in cache (using expanded URL)
                 let component = await this.findComponentInCache(expandedUrl);
 
-                // Track if component fetch failed
+                // Track if component fetch failed, and whether the failure was an auth/token error
+                // (which gets a distinct diagnostic + "update token" quick fix).
                 let componentFetchFailed = false;
+                let componentAuthFailed = false;
 
                 // If not found in cache, fetch from API and cache it (using expanded URL)
                 if (!component) {
@@ -307,33 +320,52 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     } catch (error) {
                         this.logger.debug(`[ValidationProvider] Error fetching component ${expandedUrl}: ${error}`, 'ValidationProvider');
                         componentFetchFailed = true;
+                        componentAuthFailed = isAuthError(error);
                     }
                 } else {
                     this.logger.debug(`[ValidationProvider] Using cached component: ${component.name}`, 'ValidationProvider');
                 }
 
                 // If component fetch failed, add a single diagnostic about the fetch failure
-                // instead of showing "unknown input" warnings for all inputs
+                // instead of showing "unknown input" warnings for all inputs. An auth failure gets a
+                // distinct message + "update token" quick fix; everything else stays generic.
                 if (componentFetchFailed) {
                     const line = this.findLineForComponent(document, includes, includeIndex);
                     const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
 
-                    const diagnostic = new vscode.Diagnostic(
-                        range,
-                        `Unable to fetch component '${componentUrl}'. Component may not exist, be inaccessible, or the URL may be incorrect.`,
-                        vscode.DiagnosticSeverity.Warning
-                    );
+                    const diagnostic = componentAuthFailed
+                        ? new vscode.Diagnostic(
+                            range,
+                            `GitLab token for '${componentUrl}' is missing, invalid, or expired. Update it to validate this component.`,
+                            vscode.DiagnosticSeverity.Warning
+                          )
+                        : new vscode.Diagnostic(
+                            range,
+                            `Unable to fetch component '${componentUrl}'. Component may not exist, be inaccessible, or the URL may be incorrect.`,
+                            vscode.DiagnosticSeverity.Warning
+                          );
 
-                    diagnostic.code = 'component-fetch-failed';
-                    diagnostic.source = 'gitlab-component-helper';
-                    attachDiagnosticMetadata(diagnostic, {
-                        code: 'component-fetch-failed',
-                        componentUrl: componentUrl,
-                        expandedUrl: expandedUrl,
-                        includeInputs: include.inputs || {}
-                    });
+                    if (componentAuthFailed) {
+                        diagnostic.code = 'component-auth-failed';
+                        diagnostic.source = 'gitlab-component-helper';
+                        attachDiagnosticMetadata(diagnostic, {
+                            code: 'component-auth-failed',
+                            componentUrl: componentUrl,
+                            expandedUrl: expandedUrl,
+                            includeInputs: include.inputs || {}
+                        });
+                    } else {
+                        diagnostic.code = 'component-fetch-failed';
+                        diagnostic.source = 'gitlab-component-helper';
+                        attachDiagnosticMetadata(diagnostic, {
+                            code: 'component-fetch-failed',
+                            componentUrl: componentUrl,
+                            expandedUrl: expandedUrl,
+                            includeInputs: include.inputs || {}
+                        });
+                    }
 
-                    this.logger.debug(`[ValidationProvider] Created component fetch failure diagnostic for ${componentUrl}`, 'ValidationProvider');
+                    this.logger.debug(`[ValidationProvider] Created component ${componentAuthFailed ? 'auth' : 'fetch'} failure diagnostic for ${componentUrl}`, 'ValidationProvider');
                     diagnostics.push(diagnostic);
 
                     // Skip input validation for failed component fetches
@@ -698,6 +730,21 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                         arguments: [vscode.Uri.parse('https://docs.gitlab.com/ee/ci/components/')]
                     };
                     actions.push(validateUrlAction);
+                }
+            }
+            else if (diagnosticMetadata?.code === 'component-auth-failed') {
+                const updateTokenTitle = `Update GitLab token`;
+                if (!actionTitles.has(updateTokenTitle)) {
+                    actionTitles.add(updateTokenTitle);
+
+                    const updateTokenAction = new vscode.CodeAction(updateTokenTitle, vscode.CodeActionKind.QuickFix);
+                    updateTokenAction.command = {
+                        title: updateTokenTitle,
+                        command: 'gitlabComponentHelper.addProjectToken'
+                    };
+                    updateTokenAction.diagnostics = [diagnostic];
+                    updateTokenAction.isPreferred = true;
+                    actions.push(updateTokenAction);
                 }
             }
             else if (diagnosticMetadata?.code === 'missing-required-input') {

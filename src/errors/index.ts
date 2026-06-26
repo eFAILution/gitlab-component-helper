@@ -13,6 +13,11 @@ export {
 } from './types';
 
 export {
+  extractStatusCode,
+  isAuthError
+} from './guards';
+
+export {
   ErrorHandler,
   ErrorHandlerOptions,
   getErrorHandler,

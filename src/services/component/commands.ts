@@ -14,6 +14,7 @@ export function registerAddProjectTokenCommand(
     vscode.commands.registerCommand('gitlabComponentHelper.addProjectToken', async () => {
       // Prompt for the full GitLab URL
       const url = await vscode.window.showInputBox({
+        title: 'GitLab Component Helper',
         prompt: 'Enter the full GitLab project or group URL (e.g. https://gitlab.com/mygroup/myproject)',
         ignoreFocusOut: true,
         placeHolder: 'https://gitlab.com/mygroup/myproject'
@@ -35,7 +36,8 @@ export function registerAddProjectTokenCommand(
 
       // Prompt for token (optional)
       const token = await vscode.window.showInputBox({
-        prompt: `Enter GitLab personal access token for ${gitlabInstance} (leave blank for public access)`,
+        title: 'GitLab Component Helper',
+        prompt: `Enter GitLab personal access token for ${gitlabInstance} (needs the read_api scope; leave blank for public access)`,
         password: true,
         ignoreFocusOut: true
       });
