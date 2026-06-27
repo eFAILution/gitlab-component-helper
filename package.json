@@ -60,7 +60,44 @@
         "gitlabComponentHelper.cacheTime": {
           "type": "number",
           "default": 3600,
-          "description": "Cache time for components in seconds"
+          "description": "How long to keep components cached in seconds. Default is 1 hour.",
+          "scope": "resource"
+        },
+        "gitlabComponentHelper.parser.preferLocalIncludes": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When enabled, `project:` and `component:` includes will first check your local workspace for the corresponding files and use them if they exist. This is useful for testing a local copy of a PEP or shared configuration. Disable this to strictly fetch them from the remote GitLab server.",
+          "scope": "resource"
+        },
+        "gitlabComponentHelper.parser.activePolicyOverride": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The name of a specific Pipeline Execution Policy (PEP) to isolate and parse. If set, only this policy will be parsed and injected. You can select this via the `GitLab CI: Select Active Policy Override` command.",
+          "scope": "resource"
+        },
+        "gitlabComponentHelper.projectPath": {
+          "type": "string",
+          "default": "",
+          "description": "The GitLab project path for the current workspace (e.g., 'my-group/my-project'). Required for resolving project-relative includes in the parser.",
+          "scope": "resource"
+        },
+        "gitlabComponentHelper.parser.pepProjectPathOverride": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Explicitly set the path to your Security Policy Project (PEP) to bypass GraphQL auto-discovery. Useful for Instance-level policies (e.g. `compliance-group/policy-repo`).",
+          "scope": "resource"
+        },
+        "gitlabComponentHelper.trustedIncludeRoot": {
+          "type": [
+            "string",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Additional local directories that are trusted for `local:` includes in the parser. By default, only the current workspace folders are trusted. Use this if your Pipeline Execution Policy (PEP) or other includes reside in a folder outside your primary workspace.",
+          "scope": "resource"
         },
         "gitlabComponentHelper.logLevel": {
           "type": "string",
@@ -229,6 +266,31 @@
         "title": "GitLab CI: Browse Components"
       },
       {
+        "command": "gitlab-component-helper.parsePipeline",
+        "title": "GitLab CI: Parse Pipeline (Text Output)",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "gitlab-component-helper.selectPolicyOverride",
+        "title": "GitLab CI: Select Active Policy Override",
+        "category": "GitLab CI"
+      },
+      {
+        "command": "gitlab-component-helper.setProjectPath",
+        "title": "GitLab CI: Set Active Project Path",
+        "category": "GitLab CI"
+      },
+      {
+        "command": "gitlab-component-helper.selectLocalPepOverride",
+        "title": "GitLab CI: Select Local PEP File Override",
+        "category": "GitLab CI"
+      },
+      {
+        "command": "gitlab-component-helper.clearPepOverrides",
+        "title": "GitLab CI: Clear PEP Overrides",
+        "category": "GitLab CI"
+      },
+      {
         "command": "gitlab-component-helper.refreshComponents",
         "title": "GitLab CI: Refresh Components Cache"
       },
@@ -264,9 +326,14 @@
     "menus": {
       "editor/context": [
         {
-          "when": "gitlabComponentHelper.isCiFile",
+          "when": "resourceFilename =~ /gitlab-ci\\.ya?ml$/",
           "command": "gitlab-component-helper.browseComponents",
           "group": "navigation"
+        },
+        {
+          "when": "resourceFilename =~ /gitlab-ci\\.ya?ml$/",
+          "command": "gitlab-component-helper.parsePipeline",
+          "group": "navigation@2"
         }
       ]
     }

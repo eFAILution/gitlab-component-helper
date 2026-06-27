@@ -12,6 +12,7 @@ import { ValidationProvider } from './providers/validationProvider';
 import type { CachedComponent } from './types/cache';
 import type { GitLabYamlFragment } from './types/gitlab-catalog';
 import type { HoverContext } from './providers/hoverContentBuilder';
+import { registerPipelineParserCommands } from './providers/pipelineParserCommandRegistrations';
 
 /** Component payload passed to the `detachHover` command. Adds the hover-builder's location context. */
 type DetachableComponent = Component & { _hoverContext?: HoverContext };
@@ -162,6 +163,9 @@ export function activate(context: vscode.ExtensionContext) {
         await componentBrowser.show(componentContext);
       })
     );
+
+    // Register Pipeline Parser commands (TUI output)
+    registerPipelineParserCommands(context);
 
     // Register command to refresh component cache
     logger.debug('[Extension] Registering refreshComponents command...', 'Extension');
