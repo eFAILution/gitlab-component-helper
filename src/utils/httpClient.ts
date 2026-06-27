@@ -12,6 +12,8 @@ interface RequestOptions {
   retryAttempts?: number;
   headers?: Record<string, string>;
   retryDelay?: number;
+  method?: string;
+  body?: string;
 }
 
 /**
@@ -234,7 +236,7 @@ export class HttpClient {
    */
   private async makeRequest(
     url: string,
-    options: { timeout: number; headers: Record<string, string> }
+    options: { timeout: number; headers: Record<string, string>; method?: string; body?: string }
   ): Promise<string> {
     const { body } = await this.makeRequestWithHeaders(url, options);
     return body;
@@ -252,7 +254,7 @@ export class HttpClient {
    */
   private makeRequestWithHeaders(
     url: string,
-    options: { timeout: number; headers: Record<string, string> }
+    options: { timeout: number; headers: Record<string, string>; method?: string; body?: string }
   ): Promise<{ body: string; headers: Record<string, string> }> {
     return new Promise((resolve, reject) => {
       try {
@@ -264,7 +266,7 @@ export class HttpClient {
           hostname: urlObj.hostname,
           port: urlObj.port || (isHttps ? 443 : 80),
           path: urlObj.pathname + urlObj.search,
-          method: 'GET',
+          method: options.method || 'GET',
           headers: options.headers,
           timeout: options.timeout
         };
@@ -304,6 +306,9 @@ export class HttpClient {
           reject(new NetworkError(error.message, { cause: error }));
         });
 
+        if (options.body) {
+          req.write(options.body);
+        }
         req.end();
       } catch (error) {
         reject(new NetworkError(extractMessage(error), { cause: toError(error) }));
@@ -421,6 +426,15 @@ export class HttpClient {
     }
 
     return results;
+  }
+
+  public async fetchGraphQL(url: string, query: string, variables: any, options: RequestOptions = {}): Promise<any> {
+    const body = JSON.stringify({ query, variables });
+    const headers = {
+      ...options.headers,
+      'Content-Type': 'application/json'
+    };
+    return this.fetchJson(url, { ...options, method: 'POST', body, headers });
   }
 
   // Get request deduplication statistics

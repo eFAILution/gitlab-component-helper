@@ -35,6 +35,7 @@ export class ComponentCacheManager {
   private refreshInProgress = false;
   private sourceErrors: Map<string, string> = new Map();
   private context: vscode.ExtensionContext | null = null;
+  private rawTemplateCache: Map<string, { content: string; timestamp: number }> = new Map();
 
   // Specialized cache modules
   private projectCache: ProjectCache;
@@ -750,6 +751,36 @@ export class ComponentCacheManager {
         sourceCacheSize: serviceStats.sourceCacheSize,
       },
     };
+  }
+
+  public getCachedComponents(): CachedComponent[] {
+    return this.components;
+  }
+
+  /**
+   * Fetch and cache raw YAML templates to optimize include parsing
+   */
+  public async fetchAndCacheRawTemplate(
+    gitlabInstance: string,
+    projectPath: string,
+    filePath: string,
+    version: string
+  ): Promise<string> {
+    const cacheKey = `${gitlabInstance}:${projectPath}:${filePath}@${version}`;
+    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+    const cacheTime = config.get<number>('cacheTime', 3600) * 1000;
+
+    const cached = this.rawTemplateCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < cacheTime) {
+      this.logger.debug(`[ComponentCache] Returning cached raw template for ${cacheKey}`, 'ComponentCache');
+      return cached.content;
+    }
+
+    const componentService = getComponentService();
+    const content = await componentService.fetchRawFile(gitlabInstance, projectPath, filePath, version);
+    
+    this.rawTemplateCache.set(cacheKey, { content, timestamp: Date.now() });
+    return content;
   }
 
   /**
