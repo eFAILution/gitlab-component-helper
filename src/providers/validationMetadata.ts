@@ -40,6 +40,11 @@ export interface ComponentFetchFailedMetadata extends ComponentRefBase {
   code: 'component-fetch-failed';
 }
 
+/** Metadata attached to `code: 'component-auth-failed'` diagnostics (401/403 — token expired/invalid). */
+export interface ComponentAuthFailedMetadata extends ComponentRefBase {
+  code: 'component-auth-failed';
+}
+
 /** Metadata attached to `code: 'unknown-input'` diagnostics (input name not in the component's spec). */
 export interface UnknownInputMetadata {
   code: 'unknown-input';
@@ -72,12 +77,25 @@ export interface MissingRequiredInputMetadata {
   providedInputs: string[];
 }
 
+/** Metadata attached to `code: 'outdated-component-version'` diagnostics (a newer stable semver is available). */
+export interface OutdatedComponentVersionMetadata {
+  code: 'outdated-component-version';
+  /** Full component URL as it appears in the document, including the `@version` suffix. */
+  componentUrl: string;
+  /** The semver ref currently pinned in the document. */
+  currentVersion: string;
+  /** The latest stable semver available — the quick-fix replaces the ref with this. */
+  latestVersion: string;
+}
+
 /** All diagnostic metadata variants the validation provider attaches. */
 export type DiagnosticMetadata =
   | UnresolvedVariablesMetadata
   | ComponentFetchFailedMetadata
+  | ComponentAuthFailedMetadata
   | UnknownInputMetadata
-  | MissingRequiredInputMetadata;
+  | MissingRequiredInputMetadata
+  | OutdatedComponentVersionMetadata;
 
 /**
  * `vscode.Diagnostic` extended with the (optional) typed metadata payload. Used at write sites so

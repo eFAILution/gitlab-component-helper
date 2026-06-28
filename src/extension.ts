@@ -132,6 +132,7 @@ export function activate(context: vscode.ExtensionContext) {
     logger.debug('[Extension] Registering addProjectToken command...', 'Extension');
     const service = getComponentService();
     service.setSecretStorage(context.secrets);
+    context.subscriptions.push(service);
     registerAddProjectTokenCommand(context, service);
 
     // Register component browser command
@@ -617,6 +618,31 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Initialize the validation provider
     const validationProvider = new ValidationProvider(context);
+
+    // Register command to update every outdated component in the active file to its latest stable version.
+    logger.debug('[Extension] Registering updateAllComponentVersions command...', 'Extension');
+    context.subscriptions.push(
+      vscode.commands.registerCommand('gitlab-component-helper.updateAllComponentVersions', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+          vscode.window.showErrorMessage('Open a GitLab CI file to update component versions.');
+          return;
+        }
+        try {
+          const updated = await validationProvider.updateAllComponentVersions(editor.document);
+          if (updated === 0) {
+            vscode.window.showInformationMessage('All components are already on their latest version.');
+          } else {
+            vscode.window.showInformationMessage(
+              `Updated ${updated} component${updated === 1 ? '' : 's'} to the latest version.`
+            );
+          }
+        } catch (error) {
+          logger.error(`[Extension] Failed to update component versions: ${error}`, 'Extension');
+          vscode.window.showErrorMessage(`Failed to update component versions: ${error}`);
+        }
+      })
+    );
 
     // Keep the `gitlabComponentHelper.isCiFile` context key in sync with `isGitLabCIFile` so the editor context menu
     // shows the Browse Components command on exactly the same files the providers activate on.

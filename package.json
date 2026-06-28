@@ -2,7 +2,7 @@
   "name": "gitlab-component-helper",
   "displayName": "GitLab Component Helper",
   "description": "Provides intellisense for GitLab CI components",
-  "version": "0.12.2",
+  "version": "0.13.10",
   "icon": "images/icon.png",
   "engines": {
     "node": ">=22.0.0",
@@ -220,6 +220,20 @@
           },
           "default": [],
           "description": "Extra GitLab CI file globs, merged with the built-in defaults. Patterns match at any directory depth (e.g. 'ci/*.yml' is treated as '**/ci/*.yml')."
+        },
+        "gitlabComponentHelper.versionCheck.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Warn when a component pinned to a semantic version (X.Y.Z) has a newer stable release available. Checked when a GitLab CI file is opened or saved."
+        },
+        "gitlabComponentHelper.versionCheck.severity": {
+          "type": "string",
+          "enum": [
+            "warning",
+            "information"
+          ],
+          "default": "warning",
+          "description": "Severity of the 'newer component version available' diagnostic."
         }
       }
     },
@@ -259,6 +273,10 @@
       {
         "command": "gitlab-component-helper.showPerformanceStats",
         "title": "GitLab CI: Show Performance Statistics"
+      },
+      {
+        "command": "gitlab-component-helper.updateAllComponentVersions",
+        "title": "GitLab CI: Update All Component Versions to Latest"
       }
     ],
     "menus": {
@@ -266,6 +284,11 @@
         {
           "when": "gitlabComponentHelper.isCiFile",
           "command": "gitlab-component-helper.browseComponents",
+          "group": "navigation"
+        },
+        {
+          "when": "gitlabComponentHelper.isCiFile",
+          "command": "gitlab-component-helper.updateAllComponentVersions",
           "group": "navigation"
         }
       ]
@@ -313,7 +336,7 @@
     "@types/js-yaml": "^4.0.9",
     "@types/mocha": "^10.0.10",
     "@types/node": "^26.0.0",
-    "@types/vscode": "^1.125.0",
+    "@types/vscode": "^1.120.0",
     "@typescript-eslint/eslint-plugin": "^8.61.1",
     "@typescript-eslint/parser": "^8.61.1",
     "@vscode/test-electron": "^3.0.0",

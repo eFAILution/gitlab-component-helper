@@ -12,7 +12,16 @@ export function isYamlNode(value: unknown): value is YamlNode {
 const parseCache = new Map<string, { content: string; parsed: unknown; timestamp: number }>();
 const CACHE_TTL = 5000; // 5 seconds TTL for parse cache
 
-export function parseYaml(text: string): unknown {
+/**
+ * Parse a YAML document.
+ *
+ * @param text - The YAML source to parse.
+ * @param silent - Suppress the `console.error` on a parse failure. Use when a parse failure is expected and
+ *   handled by the caller (e.g. probing a document that is invalid mid-edit), to avoid log noise on a hot path.
+ * @returns the parsed YAML value (a mapping, sequence, scalar, or `undefined` for empty input), or `null` if the
+ *   text fails to parse. Callers narrow object results with {@link isYamlNode} before reading fields.
+ */
+export function parseYaml(text: string, silent = false): unknown {
   try {
     // Generate a simple hash of the content for caching
     const contentHash = text.length + text.substring(0, 100) + text.substring(text.length - 100);
@@ -35,7 +44,9 @@ export function parseYaml(text: string): unknown {
 
     return parsed;
   } catch (e) {
-    console.error('Error parsing YAML:', e);
+    if (!silent) {
+      console.error('Error parsing YAML:', e);
+    }
     return null;
   }
 }

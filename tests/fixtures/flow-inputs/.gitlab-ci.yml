@@ -1,0 +1,13 @@
+include:
+  # Last include, flow-style inputs: `bad_input` appears only on the `inputs:` line,
+  # never on its own line. `bad_input` is unknown (the template only defines job_name).
+  - local: "flow-inputs/templates/deploy.yml"
+    inputs: { job_name: deploy, bad_input: oops }
+
+# A top-level job below the include whose variables reuse the input name. The unknown-input
+# diagnostic for `bad_input` must NOT anchor here — the input scan must stop at this dedent.
+deploy:
+  variables:
+    bad_input: from-job
+  script:
+    - echo "$bad_input"

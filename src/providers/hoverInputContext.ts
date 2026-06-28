@@ -45,7 +45,8 @@ export function findInputContextAtLine(text: string, lineIndex: number): InputCo
   const inputName = inputMatch[2];
 
   // Need a parsed `include:` array to know which includes are in scope; if YAML doesn't parse, bail.
-  const parsed = parseYaml(text);
+  // Silent: hover runs against the live, often mid-edit document, where a parse failure is expected and handled.
+  const parsed = parseYaml(text, true);
   if (!isYamlNode(parsed) || !parsed.include) return null;
   const includes = Array.isArray(parsed.include) ? parsed.include : [parsed.include];
 

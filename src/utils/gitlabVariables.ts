@@ -165,15 +165,16 @@ export const GITLAB_PREDEFINED_VARIABLES: GitLabVariable[] = [
  * Detects GitLab predefined variables in a string
  */
 export function detectGitLabVariables(text: string): string[] {
-  const variablePattern = /\$([A-Z_][A-Z0-9_]*)/g;
-  const matches = text.match(variablePattern);
-
-  if (!matches) {
-    return [];
-  }
-
-  const variables = matches.map(match => match.substring(1)); // Remove the $
+  // Match both the bare `$VAR` and braced `${VAR}` forms GitLab CI accepts; the capture group
+  // yields just the variable name, excluding the `$` and any surrounding braces.
+  const variablePattern = /\$\{?([A-Z_][A-Z0-9_]*)\}?/g;
   const predefinedVariableNames = GITLAB_PREDEFINED_VARIABLES.map(v => v.name);
+
+  const variables: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = variablePattern.exec(text)) !== null) {
+    variables.push(match[1]);
+  }
 
   return variables.filter(variable => predefinedVariableNames.includes(variable));
 }
@@ -195,6 +196,10 @@ export function expandComponentUrl(componentUrl: string, context?: {
   commitSha?: string; // Optionally provide a commit SHA for expansion
 }): string {
   let expanded = componentUrl;
+
+  // Normalize the braced `${VAR}` form to bare `$VAR` up front, so the expansions below — and the
+  // `$CI_SERVER_FQDN/` URL special-case — handle both spellings GitLab CI accepts.
+  expanded = expanded.replace(/\$\{([A-Z_][A-Z0-9_]*)\}/g, (_match, name) => `$${name}`);
 
   if (context) {
     // Handle URL expansion carefully to maintain proper URL structure

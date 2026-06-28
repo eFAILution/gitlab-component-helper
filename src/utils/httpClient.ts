@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import { Logger } from './logger';
 import { getRequestDeduplicator, RequestDeduplicator } from './requestDeduplicator';
 import { getPerformanceMonitor } from './performanceMonitor';
-import { NetworkError, getErrorHandler } from '../errors';
+import { NetworkError, getErrorHandler, extractStatusCode } from '../errors';
 import { API_PER_PAGE_LIMIT, MAX_PAGINATION_PAGES } from '../constants/timing';
 
 interface RequestOptions {
@@ -12,28 +12,6 @@ interface RequestOptions {
   retryAttempts?: number;
   headers?: Record<string, string>;
   retryDelay?: number;
-}
-
-/**
- * Extract an HTTP status code from an unknown thrown value.
- *
- * Prefers the typed `NetworkError.details.statusCode`, then falls back to a `statusCode` property on
- * the value itself (some Node networking errors expose one ad hoc). Anything else returns `undefined`
- * so callers can treat the failure as a non-HTTP error and route through the retry/backoff path.
- *
- * @param error  The value caught in a `try`/`catch` block. Accepted as `unknown` so callers don't
- *               need to narrow before passing it in.
- * @returns      The HTTP status code if one can be safely extracted, otherwise `undefined`.
- */
-function extractStatusCode(error: unknown): number | undefined {
-  if (error instanceof NetworkError && error.details?.statusCode) {
-    return error.details.statusCode;
-  }
-  if (typeof error === 'object' && error !== null && 'statusCode' in error) {
-    const candidate = (error as { statusCode: unknown }).statusCode;
-    return typeof candidate === 'number' ? candidate : undefined;
-  }
-  return undefined;
 }
 
 /**

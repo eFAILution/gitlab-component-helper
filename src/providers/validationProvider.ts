@@ -9,30 +9,30 @@ import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { spawn } from 'child_process';
 import { resolveLocalComponent, isUnsupportedLocalPath } from './localComponentResolver';
 import { attachDiagnosticMetadata, readDiagnosticMetadata } from './validationMetadata';
+import { isAuthError } from '../errors';
 import type { MissingRequiredInputMetadata } from './validationMetadata';
 import type { GitApi, GitRepository } from '../types/vscode-git';
-
-/**
- * A `.gitlab-ci.yml` include entry that this provider validates. Either a remote `component:` URL
- * or a `local:` path; both branches carry an optional `inputs` mapping. Built by narrowing a parsed
- * YAML node — fields outside the union (anything else under the include) are intentionally not modelled.
- */
-type ComponentInclude = { component: string; local?: undefined; inputs?: Record<string, unknown> };
-type LocalInclude = { local: string; component?: undefined; inputs?: Record<string, unknown> };
-type IncludeEntry = ComponentInclude | LocalInclude;
-
-/** Narrow a parsed YAML value to an {@link IncludeEntry} (string-typed `component` or `local`). */
-function isIncludeEntry(value: unknown): value is IncludeEntry {
-    if (!isYamlNode(value)) {
-        return false;
-    }
-    const hasComponent = typeof value.component === 'string';
-    const hasLocal = typeof value.local === 'string';
-    return hasComponent !== hasLocal; // exactly one of the two
-}
+import type { CachedComponent } from '../types/cache';
+import {
+    collectSemverComponentBases,
+    findOutdatedComponentRefs,
+    type OutdatedComponentRef,
+} from './componentVersionCheck';
+import {
+    type IncludeEntry,
+    type LocalInclude,
+    isIncludeEntry,
+    isLocalInclude,
+    includeKeyAndUrl,
+    includeLineMatches,
+} from '../utils/includeMatcher';
 
 export class ValidationProvider implements vscode.CodeActionProvider {
     private diagnosticCollection: vscode.DiagnosticCollection;
+    // Separate collection for "newer component version available" warnings. Kept apart from input/structure
+    // diagnostics so the on-save version check and the on-edit input validation never clobber each other's
+    // squiggles (VS Code merges diagnostics across collections natively).
+    private versionDiagnostics: vscode.DiagnosticCollection;
     private logger = Logger.getInstance();
     private cacheManager = getComponentCacheManager();
     private validationTimeouts = new Map<string, NodeJS.Timeout>(); // Throttle validation per document
@@ -48,6 +48,9 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
         this.diagnosticCollection = vscode.languages.createDiagnosticCollection('gitlab-component-helper');
         context.subscriptions.push(this.diagnosticCollection);
+
+        this.versionDiagnostics = vscode.languages.createDiagnosticCollection('gitlab-component-versions');
+        context.subscriptions.push(this.versionDiagnostics);
 
         // Register code action provider for the languages the providers run against.
         this.logger.debug('[ValidationProvider] Registering code action provider for yaml, gitlab-ci, and shellscript', 'ValidationProvider');
@@ -67,11 +70,15 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
         this.logger.debug('[ValidationProvider] Registering document event listeners', 'ValidationProvider');
         context.subscriptions.push(
-            vscode.workspace.onDidOpenTextDocument(doc => this.validate(doc)),
-            vscode.workspace.onDidChangeTextDocument(e => {
-                // Only validate if the change affects component inputs
-                this.validateIfInputsChanged(e);
+            vscode.workspace.onDidOpenTextDocument(doc => {
+                this.validate(doc);
+                // Version checks hit the GitLab tags API, so they run on open/save rather than on every keystroke.
+                this.checkComponentVersions(doc);
             }),
+            vscode.workspace.onDidChangeTextDocument(e => {
+                this.scheduleValidation(e.document);
+            }),
+            vscode.workspace.onDidSaveTextDocument(doc => this.checkComponentVersions(doc)),
             vscode.workspace.onDidCloseTextDocument(doc => {
                 const documentId = doc.uri.toString();
                 // Clear any pending validation timeouts
@@ -81,6 +88,17 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     this.validationTimeouts.delete(documentId);
                 }
                 this.diagnosticCollection.delete(doc.uri);
+                this.versionDiagnostics.delete(doc.uri);
+            })
+        );
+
+        // A newly-saved token can turn a `component-auth-failed` (or generic fetch failure) into a
+        // successful fetch, so re-run validation on open documents to clear the stale diagnostics.
+        this.logger.debug('[ValidationProvider] Subscribing to token changes', 'ValidationProvider');
+        context.subscriptions.push(
+            getComponentService().onDidChangeToken(() => {
+                this.logger.debug('[ValidationProvider] Token changed - revalidating open documents', 'ValidationProvider');
+                this.revalidateOpenDocuments();
             })
         );
 
@@ -101,11 +119,31 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         vscode.workspace.textDocuments.forEach(doc => {
             this.logger.debug(`[ValidationProvider] Found open document: ${doc.fileName} (${doc.languageId})`, 'ValidationProvider');
             this.validate(doc);
+            this.checkComponentVersions(doc);
         });
+    }
+
+    /**
+     * Only the working-tree copy of a file should carry diagnostics. In a diff view the source (left) panel is a
+     * read-only document under a VCS scheme (`git`, `gitlens`, `pr`, …) sharing the same `fsPath` as the working-tree
+     * document, so validating both makes the squiggles appear on both panels. Restricting to the `file` scheme keeps
+     * diagnostics on the editable (right) panel only.
+     *
+     * @param document - The text document a provider is about to validate.
+     * @returns `true` if the document is the editable working-tree copy (`file` scheme); `false` for diff-source and
+     *   other non-`file` documents that should not receive diagnostics.
+     */
+    private isDiagnosableDocument(document: vscode.TextDocument): boolean {
+        return document.uri.scheme === 'file';
     }
 
     private async validate(document: vscode.TextDocument) {
         this.logger.debug(`[ValidationProvider] validate() called for: ${document.fileName}, languageId: ${document.languageId}`, 'ValidationProvider');
+
+        if (!this.isDiagnosableDocument(document)) {
+            this.logger.debug(`[ValidationProvider] Skipping validation - non-file URI scheme: ${document.uri.scheme}`, 'ValidationProvider');
+            return;
+        }
 
         if (!isGitLabCIFile(document)) {
             this.logger.debug(`[ValidationProvider] Skipping validation - not a supported file type`, 'ValidationProvider');
@@ -124,7 +162,9 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
         const diagnostics: vscode.Diagnostic[] = [];
         const diagnosticKeys = new Set<string>(); // Track unique diagnostics to prevent duplicates
-        const parsedYaml = parseYaml(text);
+        // Silent: validation runs on every edit against the live, often mid-edit document; a parse failure is
+        // expected and handled below (diagnostics cleared), so it should not log to the debug console.
+        const parsedYaml = parseYaml(text, true);
 
         if (!isYamlNode(parsedYaml) || !parsedYaml.include) {
             this.diagnosticCollection.set(document.uri, diagnostics);
@@ -137,8 +177,8 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
         for (let includeIndex = 0; includeIndex < includes.length; includeIndex++) {
             const include = includes[includeIndex];
-            if (include.local && !include.component) {
-                await this.validateLocalInclude(document, include, diagnostics, diagnosticKeys);
+            if (isLocalInclude(include)) {
+                await this.validateLocalInclude(document, include, includes, includeIndex, diagnostics, diagnosticKeys);
                 continue;
             }
             if (include.component) {
@@ -174,7 +214,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                             let diagnosticMessage = `Component URL contains unresolved GitLab variables: '${componentUrl}'. `;
                             diagnosticMessage += `This project is hosted on ${nonGitlabInfo.hostname}, not GitLab. GitLab Component Helper requires a GitLab repository to resolve CI/CD variables like $CI_SERVER_FQDN and $CI_PROJECT_PATH.`;
 
-                            const line = this.findLineForComponent(document, include);
+                            const line = this.findLineForComponent(document, includes, includeIndex);
                             const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
 
                             const diagnostic = new vscode.Diagnostic(
@@ -208,7 +248,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     if (containsGitLabVariables(expandedUrl) || expandedUrl.includes('undefined') || expandedUrl === componentUrl) {
                         this.logger.debug(`[ValidationProvider] URL expansion failed or incomplete: ${expandedUrl}`, 'ValidationProvider');
 
-                        const line = this.findLineForComponent(document, include);
+                        const line = this.findLineForComponent(document, includes, includeIndex);
                         const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
 
                         const diagnostic = new vscode.Diagnostic(
@@ -237,8 +277,10 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                 // First try to find the component in cache (using expanded URL)
                 let component = await this.findComponentInCache(expandedUrl);
 
-                // Track if component fetch failed
+                // Track if component fetch failed, and whether the failure was an auth/token error
+                // (which gets a distinct diagnostic + "update token" quick fix).
                 let componentFetchFailed = false;
+                let componentAuthFailed = false;
 
                 // If not found in cache, fetch from API and cache it (using expanded URL)
                 if (!component) {
@@ -278,33 +320,35 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     } catch (error) {
                         this.logger.debug(`[ValidationProvider] Error fetching component ${expandedUrl}: ${error}`, 'ValidationProvider');
                         componentFetchFailed = true;
+                        componentAuthFailed = isAuthError(error);
                     }
                 } else {
                     this.logger.debug(`[ValidationProvider] Using cached component: ${component.name}`, 'ValidationProvider');
                 }
 
                 // If component fetch failed, add a single diagnostic about the fetch failure
-                // instead of showing "unknown input" warnings for all inputs
+                // instead of showing "unknown input" warnings for all inputs. An auth failure gets a
+                // distinct message + "update token" quick fix; everything else stays generic.
                 if (componentFetchFailed) {
-                    const line = this.findLineForComponent(document, include);
+                    const line = this.findLineForComponent(document, includes, includeIndex);
                     const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
 
-                    const diagnostic = new vscode.Diagnostic(
-                        range,
-                        `Unable to fetch component '${componentUrl}'. Component may not exist, be inaccessible, or the URL may be incorrect.`,
-                        vscode.DiagnosticSeverity.Warning
-                    );
+                    const code = componentAuthFailed ? 'component-auth-failed' : 'component-fetch-failed';
+                    const message = componentAuthFailed
+                        ? `GitLab token for '${componentUrl}' is missing, invalid, or expired. Update it to validate this component.`
+                        : `Unable to fetch component '${componentUrl}'. Component may not exist, be inaccessible, or the URL may be incorrect.`;
 
-                    diagnostic.code = 'component-fetch-failed';
+                    const diagnostic = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Warning);
+                    diagnostic.code = code;
                     diagnostic.source = 'gitlab-component-helper';
                     attachDiagnosticMetadata(diagnostic, {
-                        code: 'component-fetch-failed',
+                        code,
                         componentUrl: componentUrl,
                         expandedUrl: expandedUrl,
                         includeInputs: include.inputs || {}
                     });
 
-                    this.logger.debug(`[ValidationProvider] Created component fetch failure diagnostic for ${componentUrl}`, 'ValidationProvider');
+                    this.logger.debug(`[ValidationProvider] Created component ${componentAuthFailed ? 'auth' : 'fetch'} failure diagnostic for ${componentUrl}`, 'ValidationProvider');
                     diagnostics.push(diagnostic);
 
                     // Skip input validation for failed component fetches
@@ -344,7 +388,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
                     for (const providedInput in providedInputs) {
                         if (!componentInputs.some(p => p.name === providedInput)) {
-                            const line = this.findLineForInput(document, include, providedInput);
+                            const line = this.findLineForInput(document, includes, includeIndex, providedInput);
 
                             // Create a unique key to prevent duplicate diagnostics for the same input
                             const diagnosticKey = `unknown-input-${line}-${providedInput}-${componentUrl}`;
@@ -398,7 +442,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
                     for (const componentInput of componentInputs) {
                         if (componentInput.required && !Object.prototype.hasOwnProperty.call(providedInputs, componentInput.name)) {
-                            const line = this.findLineForComponent(document, include);
+                            const line = this.findLineForComponent(document, includes, includeIndex);
                             const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
                             const diagnostic = new vscode.Diagnostic(
                                 range,
@@ -444,35 +488,19 @@ export class ValidationProvider implements vscode.CodeActionProvider {
     }
 
     /**
-     * Smart validation that only triggers when inputs are actually changed
+     * Re-validate a document after an edit, throttled to coalesce rapid keystrokes.
+     *
+     * Every edit to a GitLab CI file schedules a full pass: diagnostics depend on the whole document (an input edit
+     * can resolve or raise a component-level error several lines away), so the change must be re-checked as a whole
+     * rather than judged "relevant" by its surrounding lines. {@link validate} cheaply skips files that aren't GitLab
+     * CI files or carry no `include`, and the 300ms throttle keeps typing responsive.
      */
-    private validateIfInputsChanged(e: vscode.TextDocumentChangeEvent): void {
-        const document = e.document;
+    private scheduleValidation(document: vscode.TextDocument): void {
+        if (!this.isDiagnosableDocument(document) || !isGitLabCIFile(document)) {
+            return;
+        }
+
         const documentId = document.uri.toString();
-
-        if (!isGitLabCIFile(document)) {
-            return;
-        }
-
-        // Check if the changes affect component inputs
-        let shouldValidate = false;
-        for (const change of e.contentChanges) {
-            const changedText = change.text;
-            const rangeText = document.getText(change.range);
-
-            // Check if the change is in an inputs section or affects component/include declarations
-            if (this.isInputRelatedChange(document, change.range, changedText, rangeText)) {
-                shouldValidate = true;
-                break;
-            }
-        }
-
-        if (!shouldValidate) {
-            this.logger.debug(`[ValidationProvider] Skipping validation - changes don't affect component inputs`, 'ValidationProvider');
-            return;
-        }
-
-        // Throttle validation to avoid excessive calls
         const existingTimeout = this.validationTimeouts.get(documentId);
         if (existingTimeout) {
             clearTimeout(existingTimeout);
@@ -483,41 +511,6 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             this.validate(document);
             this.validationTimeouts.delete(documentId);
         }, 300)); // 300ms delay to allow user to finish typing
-    }
-
-    /**
-     * Check if a change affects component inputs
-     */
-    private isInputRelatedChange(document: vscode.TextDocument, range: vscode.Range, newText: string, oldText: string): boolean {
-        const startLine = range.start.line;
-        const endLine = range.end.line;
-
-        // Check lines around the change for component/inputs context
-        const contextStart = Math.max(0, startLine - 5);
-        const contextEnd = Math.min(document.lineCount - 1, endLine + 5);
-
-        let hasComponentContext = false;
-        let hasInputsContext = false;
-
-        for (let i = contextStart; i <= contextEnd; i++) {
-            const lineText = document.lineAt(i).text;
-            if (lineText.includes('component:') || lineText.includes('include:')) {
-                hasComponentContext = true;
-            }
-            if (lineText.includes('inputs:')) {
-                hasInputsContext = true;
-            }
-        }
-
-        // If we're in a component context and either:
-        // 1. We're in an inputs section, or
-        // 2. The change involves input-like text (contains ':' which is common in YAML key-value pairs)
-        if (hasComponentContext && (hasInputsContext || newText.includes(':') || oldText.includes(':'))) {
-            this.logger.debug(`[ValidationProvider] Input-related change detected at line ${startLine}`, 'ValidationProvider');
-            return true;
-        }
-
-        return false;
     }
 
     /**
@@ -722,6 +715,21 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     actions.push(validateUrlAction);
                 }
             }
+            else if (diagnosticMetadata?.code === 'component-auth-failed') {
+                const updateTokenTitle = `Update GitLab token`;
+                if (!actionTitles.has(updateTokenTitle)) {
+                    actionTitles.add(updateTokenTitle);
+
+                    const updateTokenAction = new vscode.CodeAction(updateTokenTitle, vscode.CodeActionKind.QuickFix);
+                    updateTokenAction.command = {
+                        title: updateTokenTitle,
+                        command: 'gitlabComponentHelper.addProjectToken'
+                    };
+                    updateTokenAction.diagnostics = [diagnostic];
+                    updateTokenAction.isPreferred = true;
+                    actions.push(updateTokenAction);
+                }
+            }
             else if (diagnosticMetadata?.code === 'missing-required-input') {
                 const metadata = diagnosticMetadata;
                 const missingInput = metadata.missingInput;
@@ -820,28 +828,52 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     }
                 }
             }
+            else if (diagnosticMetadata?.code === 'outdated-component-version') {
+                const metadata = diagnosticMetadata;
+                const updateTitle = `Update to ${metadata.latestVersion}`;
+                if (!actionTitles.has(updateTitle)) {
+                    actionTitles.add(updateTitle);
+
+                    const updateAction = new vscode.CodeAction(updateTitle, vscode.CodeActionKind.QuickFix);
+                    updateAction.edit = new vscode.WorkspaceEdit();
+                    // diagnostic.range covers exactly the version ref, so replacing it bumps only the pinned version.
+                    updateAction.edit.replace(document.uri, diagnostic.range, metadata.latestVersion);
+                    updateAction.diagnostics = [diagnostic];
+                    updateAction.isPreferred = true;
+                    actions.push(updateAction);
+                }
+            }
         }
 
         this.logger.debug(`[ValidationProvider] Returning ${actions.length} unique code actions`, 'ValidationProvider');
         return actions;
     }
 
-    private findLineForInput(document: vscode.TextDocument, include: IncludeEntry, inputName: string): number {
-        const text = document.getText();
-        const lines = text.split('\n');
-        const componentLine = this.findLineForComponent(document, include);
+    private findLineForInput(
+        document: vscode.TextDocument,
+        includes: IncludeEntry[],
+        includeIndex: number,
+        inputName: string
+    ): number {
+        const lines = document.getText().split('\n');
+        const componentLine = this.findLineForComponent(document, includes, includeIndex);
+        const nextIncludeLine = this.findLineForNextInclude(document, includes, includeIndex, componentLine);
 
-        this.logger.debug(`[ValidationProvider] Finding line for input '${inputName}', component line: ${componentLine}`, 'ValidationProvider');
+        this.logger.debug(`[ValidationProvider] Finding line for input '${inputName}', component line: ${componentLine}, bounded by next include at ${nextIncludeLine}`, 'ValidationProvider');
 
-        for (let i = componentLine + 1; i < lines.length; i++) {
+        // Two bounds keep the scan inside this include's own inputs block:
+        //  - nextIncludeLine caps it before a sibling that may share input names (two includes of one component).
+        //  - the indent break ends it at the first non-indented line, so it can't bleed into a top-level section
+        //    (a job, `variables:`, etc.) below the last include, where nextIncludeLine is just end-of-file.
+        for (let i = componentLine + 1; i < nextIncludeLine; i++) {
             if (lines[i].includes('inputs:')) {
                 this.logger.debug(`[ValidationProvider] Found inputs section at line ${i}`, 'ValidationProvider');
-                for (let j = i + 1; j < lines.length; j++) {
+                for (let j = i + 1; j < nextIncludeLine; j++) {
                     if (lines[j].includes(`${inputName}:`)) {
                         this.logger.debug(`[ValidationProvider] Found input '${inputName}' at line ${j}`, 'ValidationProvider');
                         return j;
                     }
-                    if (!lines[j].match(/^\s+/)) {
+                    if (!/^\s/.test(lines[j]) && lines[j].trim() !== '') {
                         break;
                     }
                 }
@@ -860,8 +892,10 @@ export class ValidationProvider implements vscode.CodeActionProvider {
      *
      * @param document        The document being validated — used to read line text for diagnostic ranges and to
      *                        anchor workspace-relative path resolution.
-     * @param include         The parsed YAML include node, narrowed to the local-include shape: `local` is the
-     *                        workspace-relative path, `inputs` is the optional user-supplied input map.
+     * @param include         This local include, already narrowed to {@link LocalInclude} by the caller.
+     * @param includes        The full parsed include list, in document order. Passed alongside `includeIndex` so the
+     *                        line-finders can disambiguate this entry from siblings that share its path.
+     * @param includeIndex    This entry's position in `includes` (i.e. `includes[includeIndex] === include`).
      * @param diagnostics     Accumulator array. New diagnostics are pushed onto it; the caller owns publishing
      *                        the final list to the diagnostic collection.
      * @param diagnosticKeys  Dedup set shared across the whole validation pass. Prevents duplicate
@@ -871,7 +905,9 @@ export class ValidationProvider implements vscode.CodeActionProvider {
      */
     private async validateLocalInclude(
         document: vscode.TextDocument,
-        include: { local: string; inputs?: Record<string, unknown> },
+        include: LocalInclude,
+        includes: IncludeEntry[],
+        includeIndex: number,
         diagnostics: vscode.Diagnostic[],
         diagnosticKeys: Set<string>
     ): Promise<void> {
@@ -885,7 +921,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
         const component = await resolveLocalComponent(localPath, document);
         if (!component) {
-            const line = this.findLineForComponent(document, include);
+            const line = this.findLineForComponent(document, includes, includeIndex);
             const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
             const diagnostic = new vscode.Diagnostic(
                 range,
@@ -910,7 +946,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             if (componentInputs.some(p => p.name === providedInput)) {
                 continue;
             }
-            const line = this.findLineForInput(document, include, providedInput);
+            const line = this.findLineForInput(document, includes, includeIndex, providedInput);
             const diagnosticKey = `unknown-input-${line}-${providedInput}-${localPath}`;
             if (diagnosticKeys.has(diagnosticKey)) continue;
             diagnosticKeys.add(diagnosticKey);
@@ -941,7 +977,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
         for (const componentInput of componentInputs) {
             if (componentInput.required && !Object.prototype.hasOwnProperty.call(providedInputs, componentInput.name)) {
-                const line = this.findLineForComponent(document, include);
+                const line = this.findLineForComponent(document, includes, includeIndex);
                 const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
                 const diagnostic = new vscode.Diagnostic(
                     range,
@@ -964,23 +1000,80 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         }
     }
 
-    private findLineForComponent(document: vscode.TextDocument, include: IncludeEntry): number {
-        const text = document.getText();
-        const lines = text.split('\n');
-        const componentUrl = include.component ?? include.local;
-        const includeKey = include.component ? 'component:' : 'local:';
+    /**
+     * Locate the document line of the include entry at {@link includeIndex}.
+     *
+     * Two include entries can share an identical key+URL (e.g. the same component included twice with different
+     * inputs). Matching on key+URL alone returns the first occurrence for both, mis-anchoring the second entry's
+     * diagnostics onto the first. To disambiguate, this counts how many earlier entries in the parsed `includes`
+     * array carry the same key+URL and returns the correspondingly-numbered occurrence in the document — relying
+     * on the array being built in document order.
+     *
+     * @param document     The document being validated; its text is scanned line by line for the include.
+     * @param includes     The full parsed include list, in document order.
+     * @param includeIndex The position in `includes` of the entry to locate.
+     * @returns The 0-based line number of the matching include declaration, or `0` when no matching line is found
+     *          (e.g. the URL doesn't appear literally on a single line — folded scalar, alias). Callers use the
+     *          returned line as the anchor for a diagnostic range.
+     */
+    private findLineForComponent(document: vscode.TextDocument, includes: IncludeEntry[], includeIndex: number): number {
+        const { key, url } = includeKeyAndUrl(includes[includeIndex]);
 
-        this.logger.debug(`[ValidationProvider] Looking for include URL: ${componentUrl}`, 'ValidationProvider');
+        // The occurrence ordinal: how many entries at-or-before includeIndex share this exact key+URL.
+        let targetOccurrence = 0;
+        for (let k = 0; k <= includeIndex; k++) {
+            const prior = includeKeyAndUrl(includes[k]);
+            if (prior.key === key && prior.url === url) {
+                targetOccurrence++;
+            }
+        }
 
+        this.logger.debug(`[ValidationProvider] Looking for include URL: ${url} (occurrence ${targetOccurrence})`, 'ValidationProvider');
+
+        const lines = document.getText().split('\n');
+        let seen = 0;
         for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            if (line.includes(includeKey) && line.includes(componentUrl)) {
-                this.logger.debug(`[ValidationProvider] Found include at line ${i}: ${line.trim()}`, 'ValidationProvider');
-                return i;
+            if (includeLineMatches(lines[i], key, url)) {
+                seen++;
+                if (seen === targetOccurrence) {
+                    this.logger.debug(`[ValidationProvider] Found include at line ${i}: ${lines[i].trim()}`, 'ValidationProvider');
+                    return i;
+                }
             }
         }
         this.logger.debug(`[ValidationProvider] Include URL not found, returning 0`, 'ValidationProvider');
         return 0;
+    }
+
+    /**
+     * The line where the include entry *after* {@link includeIndex} begins, used as an exclusive upper bound when
+     * scanning an include's inputs. Returns `document.lineCount` when this is the last include, so the scan runs to
+     * end-of-file. `searchFrom` is the current include's own line — the next entry is found by scanning past it.
+     *
+     * @param document     The document being validated; its text is scanned line by line for the next include.
+     * @param includes     The full parsed include list, in document order.
+     * @param includeIndex The position in `includes` of the *current* entry; the next entry is `includeIndex + 1`.
+     * @param searchFrom   The current include's own line; scanning starts at the line after it.
+     * @returns The 0-based line number where the next include begins, or `document.lineCount` when there is no next
+     *          include or its line can't be found — either way an exclusive upper bound that runs to end-of-file.
+     */
+    private findLineForNextInclude(
+        document: vscode.TextDocument,
+        includes: IncludeEntry[],
+        includeIndex: number,
+        searchFrom: number
+    ): number {
+        if (includeIndex + 1 >= includes.length) {
+            return document.lineCount;
+        }
+        const { key, url } = includeKeyAndUrl(includes[includeIndex + 1]);
+        const lines = document.getText().split('\n');
+        for (let i = searchFrom + 1; i < lines.length; i++) {
+            if (includeLineMatches(lines[i], key, url)) {
+                return i;
+            }
+        }
+        return document.lineCount;
     }
 
     /**
@@ -1734,5 +1827,161 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             this.logger.debug(`[ValidationProvider] Error parsing remote URL for detection: ${error}`, 'ValidationProvider');
             return null;
         }
+    }
+
+    /**
+     * Recompute the "newer version available" diagnostics for a document and publish them to the dedicated version
+     * diagnostic collection. Runs on open/save (not on every keystroke) since it queries the GitLab tags API; the
+     * per-project tag cache keeps repeated runs cheap. No-op — and clears existing markers — when the feature is
+     * disabled or the document isn't a GitLab CI file.
+     *
+     * @param document The document to check.
+     */
+    private async checkComponentVersions(document: vscode.TextDocument): Promise<void> {
+        if (!this.isDiagnosableDocument(document) || !isGitLabCIFile(document)) {
+            return;
+        }
+
+        const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+        if (!config.get<boolean>('versionCheck.enabled', true)) {
+            this.versionDiagnostics.delete(document.uri);
+            return;
+        }
+
+        const findings = await this.computeOutdatedRefs(document);
+
+        const severity = config.get<string>('versionCheck.severity', 'warning') === 'information'
+            ? vscode.DiagnosticSeverity.Information
+            : vscode.DiagnosticSeverity.Warning;
+
+        const diagnostics = findings.map(finding => {
+            const range = new vscode.Range(finding.line, finding.refStart, finding.line, finding.refEnd);
+            const diagnostic = new vscode.Diagnostic(
+                range,
+                `A newer version of '${finding.componentName}' is available: ${finding.latestVersion} (current: ${finding.currentVersion}).`,
+                severity,
+            );
+            diagnostic.code = 'outdated-component-version';
+            diagnostic.source = 'gitlab-component-helper';
+            attachDiagnosticMetadata(diagnostic, {
+                code: 'outdated-component-version',
+                componentUrl: finding.componentUrl,
+                currentVersion: finding.currentVersion,
+                latestVersion: finding.latestVersion,
+            });
+            return diagnostic;
+        });
+
+        this.versionDiagnostics.set(document.uri, diagnostics);
+        this.logger.debug(`[ValidationProvider] ${diagnostics.length} outdated-version diagnostics for ${document.fileName}`, 'ValidationProvider');
+    }
+
+    /**
+     * Resolve the outdated component refs in a document: collect each clean-semver component's project, fetch its
+     * available versions once (deduped, via the shared per-project cache), then run the pure detection pass.
+     *
+     * Component URLs that use GitLab variables (e.g. `$CI_SERVER_FQDN/group/comp@1.2.3`) are expanded the same way
+     * {@link validate} expands them — resolving the instance/project from the file's repo context — before their
+     * versions are fetched. The version map is keyed by the *raw* base URL (as written in the document), because
+     * the pure finder matches against the document text and places ranges there; only the lookup uses the expanded
+     * URL.
+     *
+     * @param document The document to scan.
+     * @returns The outdated refs with their precise document locations; empty when nothing is behind.
+     */
+    private async computeOutdatedRefs(document: vscode.TextDocument): Promise<OutdatedComponentRef[]> {
+        const text = document.getText();
+        const bases = collectSemverComponentBases(text);
+        if (bases.length === 0) {
+            return [];
+        }
+
+        // Resolve workspace context once (git remote of the file's repo, or configured sources) only when some base
+        // URL actually uses variables — it can involve git lookups we don't want to pay for otherwise.
+        const workspaceContext = bases.some(base => containsGitLabVariables(base))
+            ? await this.getWorkspaceContext(document.uri)
+            : undefined;
+
+        const versionsByBase = new Map<string, readonly string[] | undefined>();
+        await Promise.all(
+            bases.map(async rawBase => {
+                let lookupUrl = rawBase;
+                if (containsGitLabVariables(rawBase)) {
+                    if (!workspaceContext?.gitlabInstance) {
+                        return; // can't resolve the instance for this file — leave the component unchecked
+                    }
+                    lookupUrl = expandComponentUrl(rawBase, workspaceContext);
+                    if (containsGitLabVariables(lookupUrl) || lookupUrl.includes('undefined')) {
+                        return; // expansion was incomplete — don't guess
+                    }
+                }
+                versionsByBase.set(rawBase, await this.fetchVersionsForBaseUrl(lookupUrl));
+            }),
+        );
+
+        return findOutdatedComponentRefs(text, baseUrl => versionsByBase.get(baseUrl));
+    }
+
+    /**
+     * Fetch the available version refs (tags + branches) for a component's base URL via the shared per-project
+     * version cache. Reuses a cached component when one is known (so monorepo tag-pattern scoping applies),
+     * otherwise builds a minimal lookup from the parsed URL.
+     *
+     * @param baseUrl The component base URL (no `@version`).
+     * @returns The available refs, or `undefined` when the URL can't be parsed or the fetch fails.
+     */
+    private async fetchVersionsForBaseUrl(baseUrl: string): Promise<string[] | undefined> {
+        const parsed = this.parseComponentUrl(baseUrl);
+        if (!parsed) {
+            return undefined;
+        }
+
+        try {
+            const cached = (await this.cacheManager.getComponents()).find(
+                component =>
+                    component.gitlabInstance === parsed.gitlabInstance &&
+                    component.sourcePath === parsed.projectPath &&
+                    component.name === parsed.componentName,
+            );
+            const lookup: CachedComponent = cached ?? {
+                name: parsed.componentName,
+                description: '',
+                parameters: [],
+                source: `${parsed.gitlabInstance}/${parsed.projectPath}`,
+                sourcePath: parsed.projectPath,
+                gitlabInstance: parsed.gitlabInstance,
+                version: parsed.version,
+                url: baseUrl,
+            };
+            return await this.cacheManager.fetchComponentVersions(lookup);
+        } catch (error) {
+            this.logger.debug(`[ValidationProvider] Could not fetch versions for ${baseUrl}: ${error}`, 'ValidationProvider');
+            return undefined;
+        }
+    }
+
+    /**
+     * Bump every outdated component in `document` to its latest stable version in a single edit. Backs the
+     * "Update all component versions to latest" command.
+     *
+     * @param document The document to update.
+     * @returns The number of component refs updated (0 when everything is already current).
+     */
+    public async updateAllComponentVersions(document: vscode.TextDocument): Promise<number> {
+        const findings = await this.computeOutdatedRefs(document);
+        if (findings.length === 0) {
+            return 0;
+        }
+
+        const edit = new vscode.WorkspaceEdit();
+        for (const finding of findings) {
+            const range = new vscode.Range(finding.line, finding.refStart, finding.line, finding.refEnd);
+            edit.replace(document.uri, range, finding.latestVersion);
+        }
+        await vscode.workspace.applyEdit(edit);
+
+        // Refresh markers so the just-fixed squiggles clear immediately.
+        await this.checkComponentVersions(document);
+        return findings.length;
     }
 }
