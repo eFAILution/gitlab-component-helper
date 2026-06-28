@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+# [0.14.0](https://github.com/eFAILution/gitlab-component-helper/compare/0.12.2...0.14.0) (2026-06-28)
+
+
+### Bug Fixes
+
+* **deps:** pin @types/vscode to ^1.120.0 to match engines.vscode ([a6c7626](https://github.com/eFAILution/gitlab-component-helper/commit/a6c7626801519f0388ee188c69008a4975ec8038)), closes [#188](https://github.com/eFAILution/gitlab-component-helper/issues/188) [188/#190](https://github.com/eFAILution/gitlab-component-helper/issues/190)
+* diff diagnostics ([#180](https://github.com/eFAILution/gitlab-component-helper/issues/180)) ([fc0ec6a](https://github.com/eFAILution/gitlab-component-helper/commit/fc0ec6a8bf0683430fbd9194c6ac23b41a86a41b))
+* Duplicate include line scoping ([#176](https://github.com/eFAILution/gitlab-component-helper/issues/176)) ([625f2ff](https://github.com/eFAILution/gitlab-component-helper/commit/625f2fff5b895550f803c391aa7d3da467a9b928))
+* Improve expired token user experience ([#198](https://github.com/eFAILution/gitlab-component-helper/issues/198)) ([2cad09f](https://github.com/eFAILution/gitlab-component-helper/commit/2cad09fb6900244327193b18ca33b076558512af))
+* input completions offered outside the input-name slot ([#185](https://github.com/eFAILution/gitlab-component-helper/issues/185)) ([f922edb](https://github.com/eFAILution/gitlab-component-helper/commit/f922edb01d6b34d6e4a927a469ccb0f1d34018b6))
+* re-requesting input suggestions after typing part of a new input name returns nothing ([#192](https://github.com/eFAILution/gitlab-component-helper/issues/192)) ([a7c4026](https://github.com/eFAILution/gitlab-component-helper/commit/a7c4026b463a6e549439a8769bedc7fe9d5c196c))
+* recognise braced ${VAR} GitLab variables in component URLs ([#182](https://github.com/eFAILution/gitlab-component-helper/issues/182)) ([d522fe4](https://github.com/eFAILution/gitlab-component-helper/commit/d522fe4ca9df90274b3e5f8eee21781b5c883fd3))
+* revalidate on edit ([#178](https://github.com/eFAILution/gitlab-component-helper/issues/178)) ([622ff97](https://github.com/eFAILution/gitlab-component-helper/commit/622ff97da16c2e9c82ee5339b16583c4b6cf30ba))
+* **version-check:** expand GitLab variables before fetching versions ([#195](https://github.com/eFAILution/gitlab-component-helper/issues/195)) ([54aa5fd](https://github.com/eFAILution/gitlab-component-helper/commit/54aa5fd9beb18894fe8b8de05f7d61d59d3905e8)), closes [#193](https://github.com/eFAILution/gitlab-component-helper/issues/193)
+
+
+### Features
+
+* **version-check:** detect outdated component versions ([#194](https://github.com/eFAILution/gitlab-component-helper/issues/194)) ([60af4ec](https://github.com/eFAILution/gitlab-component-helper/commit/60af4ec9bfc429b83893950a4d376718960a169d)), closes [#193](https://github.com/eFAILution/gitlab-component-helper/issues/193)
+
 ## [0.12.2](https://github.com/eFAILution/gitlab-component-helper/compare/0.12.1...0.12.2) (2026-06-12)
 
 ## [0.12.1](https://github.com/eFAILution/gitlab-component-helper/compare/0.12.0...0.12.1) (2026-06-12)
