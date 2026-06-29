@@ -29,6 +29,7 @@ suite('findCompletionInputContextAtLine', () => {
     assert.deepStrictEqual(ctx, {
       componentUrl: FULL_PIPELINE_URL,
       includeKind: 'component',
+      slot: 'name',
       existingInputNames: ['environment'],
     });
   });
@@ -46,6 +47,7 @@ suite('findCompletionInputContextAtLine', () => {
     assert.deepStrictEqual(ctx, {
       componentUrl: FULL_PIPELINE_URL,
       includeKind: 'component',
+      slot: 'name',
       existingInputNames: ['tags'],
     });
   });
@@ -82,6 +84,7 @@ suite('findCompletionInputContextAtLine', () => {
     assert.deepStrictEqual(ctx, {
       componentUrl: FULL_PIPELINE_URL,
       includeKind: 'component',
+      slot: 'name',
       existingInputNames: ['environment'],
     });
   });
@@ -96,6 +99,7 @@ suite('findCompletionInputContextAtLine', () => {
     assert.deepStrictEqual(ctx, {
       componentUrl: FULL_PIPELINE_URL,
       includeKind: 'component',
+      slot: 'name',
       existingInputNames: [],
     });
   });
@@ -161,6 +165,7 @@ stages:
     assert.deepStrictEqual(ctx, {
       componentUrl: FULL_PIPELINE_URL,
       includeKind: 'component',
+      slot: 'name',
       existingInputNames: ['environment'],
     });
   });
@@ -190,6 +195,7 @@ stages:
     assert.deepStrictEqual(ctx, {
       componentUrl: second,
       includeKind: 'component',
+      slot: 'name',
       existingInputNames: ['stage'],
     });
   });
@@ -204,6 +210,7 @@ stages:
     assert.deepStrictEqual(ctx, {
       componentUrl: '/templates/nx-test.yml',
       includeKind: 'local',
+      slot: 'name',
       existingInputNames: ['stage'],
     });
   });
@@ -219,6 +226,7 @@ stages:
     assert.deepStrictEqual(ctx, {
       componentUrl: FULL_PIPELINE_URL,
       includeKind: 'component',
+      slot: 'name',
       existingInputNames: ['environment'],
     });
   });
@@ -234,8 +242,45 @@ stages:
     assert.deepStrictEqual(ctx, {
       componentUrl: FULL_PIPELINE_URL,
       includeKind: 'component',
+      slot: 'name',
       existingInputNames: ['environment'],
     });
+  });
+
+  test('detects a value slot when the cursor sits past the colon of a known input line', () => {
+    const text = `include:
+  - component: ${FULL_PIPELINE_URL}
+    inputs:
+      environment: `;
+    // Column 19 is just past `      environment:` (the colon is at column 17, the space at 18).
+    const ctx = findCompletionInputContextAtLine(text, 3, 19);
+    assert.deepStrictEqual(ctx, {
+      componentUrl: FULL_PIPELINE_URL,
+      includeKind: 'component',
+      slot: 'value',
+      existingInputNames: ['environment'],
+      inputName: 'environment',
+    });
+  });
+
+  test('detects a value slot mid-value while a partial value is being typed', () => {
+    const text = `include:
+  - component: ${FULL_PIPELINE_URL}
+    inputs:
+      environment: prod`;
+    const ctx = findCompletionInputContextAtLine(text, 3, 21);
+    assert.strictEqual(ctx?.slot, 'value');
+    assert.strictEqual(ctx?.inputName, 'environment');
+  });
+
+  test('stays a name slot when the cursor sits left of the colon on a key line', () => {
+    const text = `include:
+  - component: ${FULL_PIPELINE_URL}
+    inputs:
+      environment: `;
+    // Column 10 is within the key `environment`, before the colon — still a name slot.
+    const ctx = findCompletionInputContextAtLine(text, 3, 10);
+    assert.strictEqual(ctx?.slot, 'name');
   });
 
   test('returns null when the cursor is on a complete key: value line', () => {
@@ -328,6 +373,24 @@ suite('buildInputInsertValue', () => {
   test('quotes an options entry only when bare YAML would reinterpret it, leaving others bare', () => {
     assert.strictEqual(buildInputInsertValue({ ...base, options: ['ns:', 'plain'] }), '${1|"ns:",plain|}');
     assert.strictEqual(buildInputInsertValue({ ...base, options: ['true', 'aws'] }), '${1|"true",aws|}');
+  });
+
+  test('offers the options choice (not the bare default) when an input has both, with the default pre-selected first', () => {
+    // options + default: the choice wins so the alternatives stay reachable, and the default floats to the front.
+    assert.strictEqual(
+      buildInputInsertValue({ ...base, default: 'gcp', options: ['aws', 'gcp', 'azure'] }),
+      '${1|gcp,aws,azure|}'
+    );
+    // A default that isn't among the options leaves the declared order untouched.
+    assert.strictEqual(
+      buildInputInsertValue({ ...base, default: 'on-prem', options: ['aws', 'gcp'] }),
+      '${1|aws,gcp|}'
+    );
+    // Non-string scalar default still matches its option entry.
+    assert.strictEqual(
+      buildInputInsertValue({ ...base, type: 'boolean', default: true, options: [false, true] }),
+      '${1|true,false|}'
+    );
   });
 
   test('falls back to a TODO placeholder for a required untyped input', () => {
