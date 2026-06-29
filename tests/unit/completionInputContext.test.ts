@@ -194,6 +194,23 @@ stages:
     });
   });
 
+  test('scopes to the second of two identical include', () => {
+    const text = `include:
+  - component: ${FULL_PIPELINE_URL}
+    inputs:
+      environment: "dev"
+  - component: ${FULL_PIPELINE_URL}
+    inputs:
+      stage: build
+      `;
+    const ctx = findCompletionInputContextAtLine(text, 7); // slot under the second (duplicate) include
+    assert.deepStrictEqual(ctx, {
+      componentUrl: FULL_PIPELINE_URL,
+      includeKind: 'component',
+      existingInputNames: ['stage'],
+    });
+  });
+
   test('detects a slot under a `- local:` include and reports includeKind = local', () => {
     const text = `include:
   - local: /templates/nx-test.yml

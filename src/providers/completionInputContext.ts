@@ -6,6 +6,7 @@
  */
 
 import { parseYaml, isYamlNode } from '../utils/yamlParser';
+import { findIncludeLine } from '../utils/includeMatcher';
 import type { ComponentParameter } from '../types/git-component';
 
 /**
@@ -126,10 +127,24 @@ function parseInputDocument(text: string, lines: string[], lineIndex: number): u
 /**
  * Find the include entry whose source line is the closest one above `lineIndex`, matching the parsed includes
  * back to their position in the text.
+ *
+ * `includes` is in document order, so duplicate entries that share an identical key+URL (the same component included
+ * twice with different inputs) are disambiguated by occurrence ordinal: the Nth such entry anchors to the Nth
+ * matching line.
+ *
+ * @param includes - The parsed `include:` entries, in document order; non-mapping entries and those without a
+ *   string `component`/`local` are skipped.
+ * @param lines - The full document split into lines, used to locate each include's source line.
+ * @param lineIndex - 0-based cursor line; only includes whose source line sits strictly above it are considered.
+ * @returns The closest matching include's URL/kind, its source line index, and the names of inputs already present
+ *   under it; `null` when no include is declared above `lineIndex`.
  */
 function findClosestInclude(includes: unknown[], lines: string[], lineIndex: number): ClosestInclude | null {
   let closest: ClosestInclude | null = null;
   let closestDistance = Infinity;
+
+  // How many key+URL pairs identical to the current entry we have already passed in document order.
+  const occurrenceSeen = new Map<string, number>();
 
   for (const include of includes) {
     if (!isYamlNode(include)) continue;
@@ -145,13 +160,11 @@ function findClosestInclude(includes: unknown[], lines: string[], lineIndex: num
 
     const includeKey = isLocal ? 'local:' : 'component:';
 
-    let componentLineIndex = -1;
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].includes(includeKey) && lines[i].includes(componentUrl)) {
-        componentLineIndex = i;
-        break;
-      }
-    }
+    const occurrenceKey = `${includeKey}\n${componentUrl}`;
+    const occurrence = (occurrenceSeen.get(occurrenceKey) ?? 0) + 1;
+    occurrenceSeen.set(occurrenceKey, occurrence);
+
+    const componentLineIndex = findIncludeLine(lines, includeKey, componentUrl, occurrence);
     if (componentLineIndex === -1 || componentLineIndex >= lineIndex) continue;
 
     const distance = lineIndex - componentLineIndex;
