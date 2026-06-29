@@ -1,0 +1,16 @@
+spec:
+  inputs:
+    job_name:
+      description: The name of the CI job
+      type: string
+    cluster:
+      description: The target cluster (no default — required)
+      type: string
+    region:
+      description: The deployment region
+      type: string
+      default: eu-west-1
+---
+$[[ inputs.job_name ]]:
+  script:
+    - echo "deploying to $[[ inputs.cluster ]] in $[[ inputs.region ]]"
