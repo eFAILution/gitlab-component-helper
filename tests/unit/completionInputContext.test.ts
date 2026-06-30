@@ -213,6 +213,7 @@ stages:
     assert.deepStrictEqual(ctx, {
       componentUrl: FULL_PIPELINE_URL,
       includeKind: 'component',
+      slot: 'name',
       existingInputNames: ['stage'],
     });
   });
