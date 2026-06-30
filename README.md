@@ -197,7 +197,7 @@ Press `F5` to launch an Extension Development Host with the extension loaded.
 2. Commit using [conventional commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`, …).
 3. Open a Pull Request.
 
-Releases are automated with [semantic-release](https://semantic-release.gitbook.io/) — version, `CHANGELOG.md`, and the GitHub release are derived from commit messages on merge. See [SEMANTIC_RELEASE.md](./SEMANTIC_RELEASE.md).
+Releases are automated with [semantic-release](https://semantic-release.gitbook.io/) — version, `CHANGELOG.md`, and the GitHub release are derived from commit messages on merge. See [docs/SEMANTIC_RELEASE.md](https://github.com/eFAILution/gitlab-component-helper/blob/main/docs/SEMANTIC_RELEASE.md).
 
 ---
 

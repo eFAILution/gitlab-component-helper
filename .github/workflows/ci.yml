@@ -54,7 +54,6 @@ jobs:
           path: |
             tests/
             out/
-            compile.txt
           retention-days: 30
 
   extension-host:

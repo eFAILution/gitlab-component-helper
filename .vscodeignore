@@ -35,7 +35,6 @@ commitlint.config.js
 .ai/**
 docs/**
 AGENTS.md
-CACHE_MANAGEMENT.md
 CLAUDE.md
 CONTRIBUTING.md
 DEVELOPERS.md
@@ -50,7 +49,6 @@ sync-changes.sh
 # Test and coverage
 .nyc_output
 coverage
-compile.txt
 
 # Build artifacts
 **/*.backup

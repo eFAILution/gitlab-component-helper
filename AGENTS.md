@@ -143,9 +143,8 @@ API requests are batched (default 5 concurrent) to respect rate limits.
 
 - **Full specification:** See [`.ai/`](.ai/) directory
 - **User documentation:** See [`README.md`](README.md)
-- **Semantic release:** See [`SEMANTIC_RELEASE.md`](SEMANTIC_RELEASE.md)
-- **Cache management:** See [`CACHE_MANAGEMENT.md`](CACHE_MANAGEMENT.md)
-- **Performance:** See [`PERFORMANCE_OPTIMIZATIONS.md`](PERFORMANCE_OPTIMIZATIONS.md)
+- **Semantic release:** See [`docs/SEMANTIC_RELEASE.md`](docs/SEMANTIC_RELEASE.md)
+- **Cache & performance architecture:** See [`.ai/architecture.yaml`](.ai/architecture.yaml)
 
 ## About AICaC
 
