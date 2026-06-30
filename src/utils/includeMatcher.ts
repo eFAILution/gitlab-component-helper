@@ -94,3 +94,33 @@ export function includeLineMatches(line: string, key: string, url: string): bool
     }
     return false;
 }
+
+/**
+ * The document line where the include identified by `key`+`url` makes its `occurrence`-th appearance.
+ *
+ * Two include entries can share an identical key+URL (e.g. the same component included twice with different inputs).
+ * Matching on key+URL alone returns the first occurrence for every duplicate, collapsing them onto one line. Callers
+ * that hold includes in document order pass the 1-based ordinal of the entry among its identical siblings, and this
+ * returns the correspondingly-numbered matching line. Matching uses {@link includeLineMatches}, so a versioned URL
+ * matches only at a token boundary, not as a prefix of a longer sibling.
+ *
+ * @param lines      The document split into lines (no trailing newlines).
+ * @param key        The include key token to require — `'component:'` or `'local:'`, as returned by
+ *                   {@link includeKeyAndUrl}.
+ * @param url        The remote URL or local path that must appear on the line, terminated at a token boundary.
+ * @param occurrence The 1-based ordinal among identical key+URL includes — the 1st, 2nd, … such entry in document
+ *                   order. Defaults to `1` (the first match) for callers with no duplicates to disambiguate.
+ * @returns The 0-based line index of the `occurrence`-th match, or `-1` when fewer than `occurrence` lines match.
+ */
+export function findIncludeLine(lines: string[], key: string, url: string, occurrence = 1): number {
+    let seen = 0;
+    for (let i = 0; i < lines.length; i++) {
+        if (includeLineMatches(lines[i], key, url)) {
+            seen++;
+            if (seen === occurrence) {
+                return i;
+            }
+        }
+    }
+    return -1;
+}

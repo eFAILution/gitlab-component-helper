@@ -14,6 +14,7 @@ import {
     isLocalInclude,
     includeKeyAndUrl,
     includeLineMatches,
+    findIncludeLine,
 } from '../../src/utils/includeMatcher';
 
 suite('includeMatcher — isIncludeEntry', () => {
@@ -94,5 +95,37 @@ suite('includeMatcher — includeLineMatches token boundary', () => {
         const localUrl = 'templates/deploy';
         assert.equal(includeLineMatches('  - local: templates/deploy10', 'local:', localUrl), false);
         assert.equal(includeLineMatches('  - local: templates/deploy', 'local:', localUrl), true);
+    });
+});
+
+suite('includeMatcher — findIncludeLine occurrence disambiguation', () => {
+    const url = 'host/g/c@1';
+    const lines = [
+        'include:',
+        `  - component: ${url}`,
+        '    inputs:',
+        '      a: 1',
+        `  - component: ${url}`,
+        '    inputs:',
+        '      b: 2',
+    ];
+
+    test('defaults to the first occurrence', () => {
+        assert.equal(findIncludeLine(lines, 'component:', url), 1);
+    });
+
+    test('returns the Nth occurrence for duplicate key+URL includes', () => {
+        assert.equal(findIncludeLine(lines, 'component:', url, 1), 1);
+        assert.equal(findIncludeLine(lines, 'component:', url, 2), 4);
+    });
+
+    test('returns -1 when fewer than `occurrence` lines match', () => {
+        assert.equal(findIncludeLine(lines, 'component:', url, 3), -1);
+        assert.equal(findIncludeLine(lines, 'component:', 'host/g/absent@1'), -1);
+    });
+
+    test('honours the token boundary, not a prefix match', () => {
+        const collide = ['  - component: host/g/c@10', '  - component: host/g/c@1'];
+        assert.equal(findIncludeLine(collide, 'component:', 'host/g/c@1', 1), 1);
     });
 });

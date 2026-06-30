@@ -80,6 +80,22 @@ stages:
     });
   });
 
+  test('resolves an input under the second of two identical includes', () => {
+    const text = `include:
+  - component: ${FULL_PIPELINE_URL}
+    inputs:
+      environment: "dev"
+  - component: ${FULL_PIPELINE_URL}
+    inputs:
+      stage: build`;
+    const ctx = findInputContextAtLine(text, 6); // `stage:` under the second include
+    assert.deepStrictEqual(ctx, {
+      inputName: 'stage',
+      componentUrl: FULL_PIPELINE_URL,
+      includeKind: 'component',
+    });
+  });
+
   test('returns null when the line is in a sibling `variables:` block, not `inputs:`', () => {
     const text = `include:
   - component: https://gitlab.com/components/test@1.0.0
