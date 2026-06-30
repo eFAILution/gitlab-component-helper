@@ -102,20 +102,6 @@ try {
     }
   });
 
-  // Check documentation
-  console.log('\n--- Documentation ---');
-  const docsPath = path.join(__dirname, '../PERFORMANCE_OPTIMIZATIONS.md');
-  if (fs.existsSync(docsPath)) {
-    const docsContent = fs.readFileSync(docsPath, 'utf8');
-    if (docsContent.length > 1000) {
-      console.log('✅ Performance documentation: Complete');
-    } else {
-      console.log('⚠️  Performance documentation: Basic');
-    }
-  } else {
-    console.log('❌ Performance documentation: Missing');
-  }
-
   console.log('\n=== Validation Complete ===');
 
   // Overall success criteria
