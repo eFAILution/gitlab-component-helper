@@ -4,13 +4,16 @@ import * as vscode from 'vscode';
 
 const EXTENSION_ID = 'eFAILution.gitlab-component-helper';
 // __dirname is <repo>/out-test/suite at runtime; fixture lives under tests/fixtures.
+// The file is named `.gitlab-ci.yml` (inside a `variables/` subdir) so it matches the
+// path-based GitLab CI glob — the providers now key off the `yaml` language plus filename.
 const FIXTURE = path.resolve(
   __dirname,
   '..',
   '..',
   'tests',
   'fixtures',
-  'variables.gitlab-ci.yml'
+  'variables',
+  '.gitlab-ci.yml'
 );
 
 async function ensureActive(): Promise<void> {

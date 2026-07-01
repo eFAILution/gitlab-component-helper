@@ -179,25 +179,4 @@ git_workflow:
       - Runs commitlint to validate message format
       purpose: Enforce conventional commit message format
       format: 'type(scope): description'
-syntax_highlighting:
-  language_definition:
-    location: syntaxes/gitlab-ci.tmLanguage.json
-    language_id: gitlab-ci
-    scope: source.yaml.gitlab-ci
-    file_extensions:
-    - .gitlab-ci.yml
-    - .gitlab-ci.yaml
-  configuration:
-    location: language-configuration.json
-    features:
-    - Comment toggling
-    - Bracket matching
-    - Auto-closing pairs
-    - Folding markers
-  registration:
-    file: package.json
-    section: contributes.languages
-    grammar_path: syntaxes/gitlab-ci.tmLanguage.json
-    embedded_languages:
-      yaml: For base YAML syntax
 version: '2.0'

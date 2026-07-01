@@ -54,12 +54,11 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         context.subscriptions.push(this.versionDiagnostics);
 
         // Register code action provider for the languages the providers run against.
-        this.logger.debug('[ValidationProvider] Registering code action provider for yaml, gitlab-ci, and shellscript', 'ValidationProvider');
+        this.logger.debug('[ValidationProvider] Registering code action provider for yaml and shellscript', 'ValidationProvider');
         context.subscriptions.push(
             vscode.languages.registerCodeActionsProvider(
                 [
                     { language: 'yaml' },
-                    { language: 'gitlab-ci' },
                     { language: 'shellscript' },
                 ],
                 this,

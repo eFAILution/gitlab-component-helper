@@ -46,18 +46,19 @@ suite('buildFileGlobs', () => {
 });
 
 suite('matchesGitLabCIFile — language-id escape hatches', () => {
-  test('returns true for `gitlab-ci` regardless of filename', () => {
-    assert.strictEqual(matchesGitLabCIFile('repo/anything.txt', 'gitlab-ci', buildFileGlobs()), true);
-  });
-
   test('returns true for `shellscript` regardless of filename', () => {
     assert.strictEqual(matchesGitLabCIFile('repo/some-script.sh', 'shellscript', buildFileGlobs()), true);
     // Untitled documents have non-filesystem-shaped URIs; the language-id branch must still win.
     assert.strictEqual(matchesGitLabCIFile('untitled:Untitled-1', 'shellscript', buildFileGlobs()), true);
   });
 
+  test('does not treat `gitlab-ci` as a privileged language id (custom language removed in #117)', () => {
+    // GitLab CI files now keep the `yaml` language id and are matched by path, not language.
+    assert.ok(!ALLOWED_LANGUAGE_IDS.has('gitlab-ci'));
+    assert.strictEqual(matchesGitLabCIFile('repo/anything.txt', 'gitlab-ci', buildFileGlobs()), false);
+  });
+
   test('exposes the allowed-language-ids set for downstream callers', () => {
-    assert.ok(ALLOWED_LANGUAGE_IDS.has('gitlab-ci'));
     assert.ok(ALLOWED_LANGUAGE_IDS.has('shellscript'));
     assert.ok(!ALLOWED_LANGUAGE_IDS.has('yaml'));
   });
