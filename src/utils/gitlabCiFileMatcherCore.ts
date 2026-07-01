@@ -17,9 +17,11 @@ export const DEFAULT_GITLAB_CI_FILE_GLOBS = [
 ];
 
 /**
- * Languages whose documents are always in-scope for the providers regardless of filename.
+ * Languages whose documents are always in-scope for the providers regardless of filename. `shellscript` covers
+ * standalone shell scripts and embedded `script:` blocks; GitLab CI files themselves use the `yaml` language and
+ * are matched by path against {@link DEFAULT_GITLAB_CI_FILE_GLOBS}.
  */
-export const ALLOWED_LANGUAGE_IDS: ReadonlySet<string> = new Set(['gitlab-ci', 'shellscript']);
+export const ALLOWED_LANGUAGE_IDS: ReadonlySet<string> = new Set(['shellscript']);
 
 /**
  * Normalise a user-supplied glob so it matches the same way users intuitively expect.
@@ -51,7 +53,7 @@ export function buildFileGlobs(additionalGlobs: readonly string[] = []): string[
  * the production wrapper extracts `path` and `languageId` from a `vscode.TextDocument` and delegates here.
  *
  * Resolution order:
- *  1. If `languageId` is in {@link ALLOWED_LANGUAGE_IDS} (`gitlab-ci`, `shellscript`), match unconditionally.
+ *  1. If `languageId` is in {@link ALLOWED_LANGUAGE_IDS} (`shellscript`), match unconditionally.
  *  2. Otherwise check the path against the supplied `globs` list.
  *
  * @param filePath   Repo-relative or absolute filesystem path of the document.

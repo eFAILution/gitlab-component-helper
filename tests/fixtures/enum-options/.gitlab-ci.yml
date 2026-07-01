@@ -1,0 +1,6 @@
+include:
+  - local: "enum-options/templates/deploy.yml"
+    inputs:
+      job_name: deploy
+      region: 
+      

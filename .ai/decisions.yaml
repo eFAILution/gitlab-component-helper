@@ -54,7 +54,6 @@ decisions:
       - Memory usage
     references:
     - src/services/componentCacheManager.ts
-    - CACHE_MANAGEMENT.md
     title: Cache Components
   USE_SECRETSTORAGE_FOR_TOKENS:
     date: '2024'
@@ -367,7 +366,6 @@ decisions:
       - More complex implementation
     references:
     - src/services/componentService.ts
-    - PERFORMANCE_OPTIMIZATIONS.md
     title: Batch Api Requests
   MOCHA_OVER_JEST:
     date: '2024'

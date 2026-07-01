@@ -2,7 +2,7 @@
   "name": "gitlab-component-helper",
   "displayName": "GitLab Component Helper",
   "description": "Provides intellisense for GitLab CI components",
-  "version": "0.14.1",
+  "version": "0.15.2",
   "icon": "images/icon.png",
   "engines": {
     "node": ">=22.0.0",
@@ -22,31 +22,10 @@
     "workspaceContains:**/.gitlab/**/*.yml",
     "workspaceContains:**/.gitlab/**/*.yaml"
   ],
+  "extensionPack": [
+    "redhat.vscode-yaml"
+  ],
   "contributes": {
-    "languages": [
-      {
-        "id": "gitlab-ci",
-        "aliases": [
-          "GitLab CI",
-          "gitlab-ci"
-        ],
-        "extensions": [
-          ".gitlab-ci.yml",
-          ".gitlab-ci.yaml"
-        ],
-        "configuration": "./language-configuration.json"
-      }
-    ],
-    "grammars": [
-      {
-        "language": "gitlab-ci",
-        "scopeName": "source.yaml.gitlab-ci",
-        "path": "./syntaxes/gitlab-ci.tmLanguage.json",
-        "embeddedLanguages": {
-          "source.yaml": "yaml"
-        }
-      }
-    ],
     "configuration": {
       "title": "GitLab Component Helper",
       "properties": {

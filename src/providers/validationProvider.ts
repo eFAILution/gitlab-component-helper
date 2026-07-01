@@ -25,6 +25,7 @@ import {
     isLocalInclude,
     includeKeyAndUrl,
     includeLineMatches,
+    findIncludeLine,
 } from '../utils/includeMatcher';
 
 export class ValidationProvider implements vscode.CodeActionProvider {
@@ -53,12 +54,11 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         context.subscriptions.push(this.versionDiagnostics);
 
         // Register code action provider for the languages the providers run against.
-        this.logger.debug('[ValidationProvider] Registering code action provider for yaml, gitlab-ci, and shellscript', 'ValidationProvider');
+        this.logger.debug('[ValidationProvider] Registering code action provider for yaml and shellscript', 'ValidationProvider');
         context.subscriptions.push(
             vscode.languages.registerCodeActionsProvider(
                 [
                     { language: 'yaml' },
-                    { language: 'gitlab-ci' },
                     { language: 'shellscript' },
                 ],
                 this,
@@ -1031,15 +1031,10 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         this.logger.debug(`[ValidationProvider] Looking for include URL: ${url} (occurrence ${targetOccurrence})`, 'ValidationProvider');
 
         const lines = document.getText().split('\n');
-        let seen = 0;
-        for (let i = 0; i < lines.length; i++) {
-            if (includeLineMatches(lines[i], key, url)) {
-                seen++;
-                if (seen === targetOccurrence) {
-                    this.logger.debug(`[ValidationProvider] Found include at line ${i}: ${lines[i].trim()}`, 'ValidationProvider');
-                    return i;
-                }
-            }
+        const line = findIncludeLine(lines, key, url, targetOccurrence);
+        if (line !== -1) {
+            this.logger.debug(`[ValidationProvider] Found include at line ${line}: ${lines[line].trim()}`, 'ValidationProvider');
+            return line;
         }
         this.logger.debug(`[ValidationProvider] Include URL not found, returning 0`, 'ValidationProvider');
         return 0;

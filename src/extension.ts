@@ -94,7 +94,6 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.languages.registerHoverProvider(
         [
           { language: 'yaml' },
-          { language: 'gitlab-ci' },
           { language: 'shellscript' }
         ],
         new HoverProvider()
@@ -107,7 +106,6 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.languages.registerCompletionItemProvider(
         [
           { language: 'yaml' },
-          { language: 'gitlab-ci' },
           { language: 'shellscript' }
         ],
         new CompletionProvider(),
@@ -121,8 +119,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.languages.registerDocumentLinkProvider(
         [
-          { language: 'yaml' },
-          { language: 'gitlab-ci' }
+          { language: 'yaml' }
         ],
         new ComponentDocumentLinkProvider()
       )

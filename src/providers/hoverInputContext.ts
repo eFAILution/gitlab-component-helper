@@ -5,6 +5,7 @@
  */
 
 import { parseYaml, isYamlNode } from '../utils/yamlParser';
+import { findIncludeLine } from '../utils/includeMatcher';
 
 /**
  * The component-input slot a YAML cursor position resolves to.
@@ -62,19 +63,22 @@ export function findInputContextAtLine(text: string, lineIndex: number): InputCo
   }
   if (candidates.length === 0) return null;
 
-  // Find the closest include line above the cursor that matches one of the parsed candidates.
+  // Find the closest include line above the cursor that matches one of the parsed candidates. `candidates` is in
+  // document order, so duplicate entries sharing an identical key+URL (the same component included twice with
+  // different inputs) are disambiguated by occurrence ordinal.
   let closestIncludeLine = -1;
   let closestCandidate: IncludeCandidate | null = null;
+  const occurrenceSeen = new Map<string, number>();
   for (const candidate of candidates) {
     const lineKey = `${candidate.key}:`;
-    for (let i = 0; i < lineIndex; i++) {
-      if (lines[i].includes(lineKey) && lines[i].includes(candidate.value)) {
-        if (i > closestIncludeLine) {
-          closestIncludeLine = i;
-          closestCandidate = candidate;
-        }
-        break;
-      }
+    const occurrenceKey = `${lineKey}\n${candidate.value}`;
+    const occurrence = (occurrenceSeen.get(occurrenceKey) ?? 0) + 1;
+    occurrenceSeen.set(occurrenceKey, occurrence);
+
+    const matchLine = findIncludeLine(lines, lineKey, candidate.value, occurrence);
+    if (matchLine !== -1 && matchLine < lineIndex && matchLine > closestIncludeLine) {
+      closestIncludeLine = matchLine;
+      closestCandidate = candidate;
     }
   }
   if (closestIncludeLine === -1 || closestCandidate === null) return null;
