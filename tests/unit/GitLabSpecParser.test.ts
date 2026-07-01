@@ -59,6 +59,60 @@ deploy-job:
     }
   });
 
+  test('maps hyphenated input names correctly across comments and blank lines (issue #211)', () => {
+    // Hyphenated keys (e.g. `job-name`) weren't recognised as new inputs, so their description/default
+    // bled onto the previous non-hyphenated input — `architecture` would show a later input's description.
+    // Comment and blank lines within the inputs block must not shift the mapping either.
+    const template = `spec:
+  inputs:
+    job-name:
+      description: The job name
+      default: build
+    # ── package metadata ──────────────
+    package-name:
+      description: The package name
+
+    package-version:
+      description: The version to stamp
+      default: 0.0.1
+
+    # ── build options ─────────────────
+    architecture:
+      description: Target CPU architecture
+      default: amd64
+    skip-find-images:
+      description: Skip image discovery
+      default: false
+---
+$[[ inputs.job-name ]]:
+  script: echo build`;
+
+    const parsed = GitLabSpecParser.parse(template);
+    const byName = Object.fromEntries(parsed.variables.map((v) => [v.name, v]));
+
+    // All five inputs are recognised — the hyphenated ones were previously skipped entirely.
+    assert.deepStrictEqual(parsed.variables.map((v) => v.name), [
+      'job-name',
+      'package-name',
+      'package-version',
+      'architecture',
+      'skip-find-images',
+    ]);
+
+    // Each input keeps its OWN description/default — no bleed across the comment/blank boundaries.
+    assert.strictEqual(byName['job-name'].description, 'The job name');
+    assert.strictEqual(byName['job-name'].default, 'build');
+    assert.strictEqual(byName['package-version'].description, 'The version to stamp');
+    assert.strictEqual(byName['package-version'].default, '0.0.1');
+    assert.strictEqual(byName['architecture'].description, 'Target CPU architecture');
+    assert.strictEqual(byName['architecture'].default, 'amd64');
+    assert.strictEqual(byName['skip-find-images'].description, 'Skip image discovery');
+
+    // A hyphenated input with no default is marked required, same as a non-hyphenated one.
+    assert.strictEqual(byName['package-name'].default, undefined);
+    assert.strictEqual(byName['package-name'].required, true);
+  });
+
   test('component without --- separator (legacy format) still scopes inputs to the spec section', () => {
     const template = `spec:
   inputs:
