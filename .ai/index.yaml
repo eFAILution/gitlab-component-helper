@@ -61,6 +61,7 @@ keys:
   - cache_issues
   - compilation_errors
   - component_not_loading
+  - empty_changelog_conventionalcommits_v10
   - extension_not_activating
   - hover_not_working
   - release_failure

@@ -1,0 +1,21 @@
+{
+  "valid": true,
+  "compliance_level": "Comprehensive",
+  "found_files": {
+    "context.yaml": true,
+    "architecture.yaml": true,
+    "workflows.yaml": true,
+    "decisions.yaml": true,
+    "errors.yaml": true
+  },
+  "context_valid": true,
+  "errors": [],
+  "warnings": [],
+  "info": [
+    "context.yaml declares version '2.0'"
+  ],
+  "error": null,
+  "recommendation": null,
+  "badge": "https://img.shields.io/badge/AICaC-Comprehensive-success.svg",
+  "badge_markdown": "[![AICaC](https://img.shields.io/badge/AICaC-Comprehensive-success.svg)](https://github.com/eFAILution/AICaC)"
+}
