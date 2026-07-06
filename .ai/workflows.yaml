@@ -81,21 +81,20 @@ workflows:
       command: vsce package
       output: gitlab-component-helper-{version}.vsix
   release:
-    description: Create a new release
+    description: Cut and publish a release (two stages; NOT semantic-release)
     steps:
-    - action: commit_changes
-      command: 'git add . && git commit -m ''feat: description'''
-      note: Use conventional commits (feat, fix, chore, etc.)
-    - action: push_to_main
-      command: git push origin main
-    - action: automatic_release
-      note: semantic-release runs automatically on push to main
+    - action: land_changes
+      command: Merge PRs to beta (pre-release) or main (stable) via the normal PR flow
+      note: Use conventional commits so release-it can compute the next version
+    - action: automatic_versioning
+      note: 'On push to beta/main, ci.yml release job runs release-it (--config .release-it.beta.json or .release-it.json --ci)'
       creates:
-      - GitHub release
       - Version bump in package.json
       - Updated CHANGELOG.md
-      - VSIX artifact
-    reference: SEMANTIC_RELEASE.md
+      - 'chore(release): <version> [skip ci] commit and git tag'
+    - action: manual_publish
+      note: 'Manual workflow_dispatch: Actions -> Publish (main) or Publish Beta (beta), enter version matching package.json; guardrails enforce branch, version match, release-commit HEAD, tests, npm audit, gitleaks, and even(stable)/odd(pre-release) minor before vsce publish'
+    reference: RELEASING.md
   add_configuration_option:
     description: Add new user configuration setting
     steps:
