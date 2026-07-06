@@ -49,3 +49,4 @@ sync-changes.sh
 
 # AICaC validation artifacts
 validation_output.txt
+validation.json
