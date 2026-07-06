@@ -3,8 +3,20 @@
   "compilerOptions": {
     "noEmit": true,
     "rootDir": ".",
-    "types": ["node", "mocha"]
+    "types": [
+      "node",
+      "mocha"
+    ]
   },
-  "include": ["src/**/*", "tests/unit/**/*.ts"],
-  "exclude": ["node_modules", ".vscode-test", "out", "out-test", "tests/extension-host"]
+  "include": [
+    "src/**/*",
+    "tests/unit/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".vscode-test",
+    "out",
+    "out-test",
+    "tests/extension-host"
+  ]
 }

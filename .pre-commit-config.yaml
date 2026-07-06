@@ -9,9 +9,11 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
-        exclude: ^(docs)
+        # tests/fixtures/** are intentionally-crafted parser inputs (trailing
+        # whitespace / blank lines are part of the test scenario) — never rewrite them.
+        exclude: ^(docs|tests/fixtures)
       - id: end-of-file-fixer
-        exclude: ^(docs)
+        exclude: ^(docs|tests/fixtures)
       - id: check-ast
         exclude: ^(docs)
       # - id: check-yaml
@@ -24,7 +26,7 @@ repos:
       - id: detect-private-key
       - id: mixed-line-ending
         args: ["--fix=lf"]
-        exclude: \.md$
+        exclude: (\.md$|^tests/fixtures/)
       # - id: no-commit-to-branch
       #   args: [--branch, main]
       - id: pretty-format-json
