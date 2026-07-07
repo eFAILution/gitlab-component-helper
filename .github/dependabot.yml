@@ -43,10 +43,26 @@ updates:
     # fails when @types/vscode > engines.vscode. Allow only patch bumps (which stay
     # within the floor); a minor/major bump must be a deliberate engines.vscode raise,
     # not an automatic dependency update. This stops the bump, not any security alert.
+    # Hold conventional-changelog-conventionalcommits at v9.x. v10 replaced
+    # Handlebars template strings with render functions (@conventional-changelog/
+    # template) that require conventional-changelog-writer@9. Our release
+    # toolchain pins the older Handlebars writer transitively via
+    # @release-it/conventional-changelog@11 (conventional-changelog@7 -> writer@8)
+    # and expects the conventionalcommits family at ^9.3.1. In the Argus repo,
+    # whose release preset IS conventionalcommits, the v10 bump rendered an EMPTY
+    # changelog (see huntridge-labs/argus#318). This repo currently uses the
+    # angular preset, so it is not directly affected today, but the top-level dep
+    # is dev-only and unused by our changelog path, so a major bump has no upside
+    # and would become a latent footgun if the preset ever switched. Re-enable
+    # once @release-it/conventional-changelog ships the render-function stack
+    # (conventional-changelog@8 / writer@9).
     ignore:
       - dependency-name: "@types/vscode"
         update-types:
           - "version-update:semver-minor"
+          - "version-update:semver-major"
+      - dependency-name: "conventional-changelog-conventionalcommits"
+        update-types:
           - "version-update:semver-major"
 
   # Maintain GitHub Actions

@@ -349,6 +349,48 @@ errors:
       types: chore, docs, style don't trigger version bump
     - check: GitHub Actions secrets
       required: GITHUB_TOKEN (automatic) or GH_TOKEN
+  empty_changelog_conventionalcommits_v10:
+    symptoms:
+    - Release changelog renders empty (version header only, no sections/entries)
+    - Dependabot repeatedly proposes conventional-changelog-conventionalcommits v10
+    causes:
+    - cause: conventional-changelog-conventionalcommits v10 replaced Handlebars template
+        strings with render functions (@conventional-changelog/template) that require
+        conventional-changelog-writer@9. The release toolchain pins the older Handlebars
+        writer transitively via @release-it/conventional-changelog@11 (conventional-changelog@7
+        -> writer@8) and expects the conventionalcommits family at ^9.3.1. writer@8
+        handed v10 render functions compiles to nothing.
+      solution:
+        note: This repo uses the angular preset (.release-it.json), and the top-level
+          conventional-changelog-conventionalcommits dep is dev-only and unused by
+          the changelog path, so it is not directly affected today. It is held at
+          v9 to honor the org-wide lesson and guard against a future preset switch.
+        steps:
+        - Keep conventional-changelog-conventionalcommits at ^9.3.1 in package.json
+        - Dependabot ignores its version-update:semver-major (.github/dependabot.yml)
+        - Re-enable v10 once @release-it/conventional-changelog adopts the render-function
+          stack (conventional-changelog@8 / writer@9)
+        reference: .github/dependabot.yml + package.json; see huntridge-labs/argus#318
+    symptom: empty changelog|release preview shows only version header|no sections|dependabot
+      re-proposes conventionalcommits v10
+    common_causes:
+    - conventional-changelog-conventionalcommits v10 replaced Handlebars template
+      strings with render functions (@conventional-changelog/template) that require
+      conventional-changelog-writer@9. The release toolchain pins the older Handlebars
+      writer transitively via @release-it/conventional-changelog@11 (conventional-changelog@7
+      -> writer@8) and expects the conventionalcommits family at ^9.3.1. writer@8
+      handed v10 render functions compiles to nothing.
+    solutions:
+    - note: This repo uses the angular preset (.release-it.json), and the top-level
+        conventional-changelog-conventionalcommits dep is dev-only and unused by the
+        changelog path, so it is not directly affected today. It is held at v9 to
+        honor the org-wide lesson and guard against a future preset switch.
+      steps:
+      - Keep conventional-changelog-conventionalcommits at ^9.3.1 in package.json
+      - Dependabot ignores its version-update:semver-major (.github/dependabot.yml)
+      - Re-enable v10 once @release-it/conventional-changelog adopts the render-function
+        stack (conventional-changelog@8 / writer@9)
+      reference: .github/dependabot.yml + package.json; see huntridge-labs/argus#318
 debugging:
   enable_debug_logs:
     steps:
