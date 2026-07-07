@@ -5,7 +5,8 @@ import { Logger } from './logger';
 import { getRequestDeduplicator, RequestDeduplicator } from './requestDeduplicator';
 import { getPerformanceMonitor } from './performanceMonitor';
 import { NetworkError, getErrorHandler, extractStatusCode } from '../errors';
-import { API_PER_PAGE_LIMIT, MAX_PAGINATION_PAGES } from '../constants/timing';
+import { API_PER_PAGE_LIMIT, MAX_PAGINATION_PAGES, MAX_REDIRECTS } from '../constants/timing';
+import { planRedirect, stripCredentialHeaders } from './redirectPolicy';
 
 interface RequestOptions {
   timeout?: number;
@@ -224,13 +225,20 @@ export class HttpClient {
    * `makeRequest` discards headers; this sibling preserves them so callers that need pagination metadata (GitLab's
    * `x-next-page` / `x-total-pages`) can read it. Header names are lower-cased by Node's HTTP layer.
    *
+   * Redirects are followed under the credential-safe policy in {@link planRedirect}: same-origin hops keep the
+   * request headers, cross-origin hops drop the `Authorization`/`PRIVATE-TOKEN`/`Cookie` headers first (so a moved
+   * project whose old path was reclaimed can't harvest the user's token), HTTPS→HTTP downgrades are refused, and the
+   * chain is capped at `redirectsRemaining` hops.
+   *
    * @param url The fully-qualified request URL.
    * @param options Request timeout (ms) and headers to send.
+   * @param redirectsRemaining Remaining redirect hops before the chain is rejected (defaults to {@link MAX_REDIRECTS}).
    * @returns The response body string and a lower-cased header map.
    */
   private makeRequestWithHeaders(
     url: string,
-    options: { timeout: number; headers: Record<string, string> }
+    options: { timeout: number; headers: Record<string, string> },
+    redirectsRemaining: number = MAX_REDIRECTS
   ): Promise<{ body: string; headers: Record<string, string> }> {
     return new Promise((resolve, reject) => {
       try {
@@ -248,6 +256,36 @@ export class HttpClient {
         };
 
         const req = client.request(requestOptions, (res) => {
+          const statusCode = res.statusCode ?? 0;
+
+          // Resolve redirects before reading the body. `planRedirect` enforces the credential-safe,
+          // same-origin-preferring policy; a malformed redirect or a refused HTTPS→HTTP downgrade throws.
+          let redirect;
+          try {
+            redirect = planRedirect(url, statusCode, res.headers.location);
+          } catch (policyError) {
+            res.resume(); // drain so the socket can be released
+            reject(policyError);
+            return;
+          }
+
+          if (redirect) {
+            res.resume(); // discard the redirect response body
+            if (redirectsRemaining <= 0) {
+              reject(new NetworkError(`Too many redirects while fetching ${url}`, { statusCode }));
+              return;
+            }
+            const nextHeaders = redirect.stripCredentials
+              ? stripCredentialHeaders(options.headers)
+              : options.headers;
+            this.makeRequestWithHeaders(
+              redirect.nextUrl,
+              { timeout: options.timeout, headers: nextHeaders },
+              redirectsRemaining - 1
+            ).then(resolve, reject);
+            return;
+          }
+
           let data = '';
 
           res.on('data', (chunk) => {
@@ -255,7 +293,7 @@ export class HttpClient {
           });
 
           res.on('end', () => {
-            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            if (statusCode >= 200 && statusCode < 300) {
               const headers: Record<string, string> = {};
               for (const [key, value] of Object.entries(res.headers)) {
                 if (typeof value === 'string') {
@@ -266,8 +304,8 @@ export class HttpClient {
               }
               resolve({ body: data, headers });
             } else {
-              const message = `HTTP ${res.statusCode}: ${data.substring(0, 200)}`;
-              reject(new NetworkError(message, { statusCode: res.statusCode }));
+              const message = `HTTP ${statusCode}: ${data.substring(0, 200)}`;
+              reject(new NetworkError(message, { statusCode }));
             }
           });
         });
