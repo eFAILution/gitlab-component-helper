@@ -42,6 +42,8 @@ export const HTTP_STATUS_SERVER_ERROR_MIN = 500 as const;
 // HTTP Headers
 export const HEADER_USER_AGENT = 'User-Agent' as const;
 export const HEADER_PRIVATE_TOKEN = 'PRIVATE-TOKEN' as const;
+export const HEADER_AUTHORIZATION = 'Authorization' as const;
+export const HEADER_COOKIE = 'Cookie' as const;
 export const USER_AGENT_VALUE = 'VSCode-GitLabComponentHelper' as const;
 
 // Documentation URLs

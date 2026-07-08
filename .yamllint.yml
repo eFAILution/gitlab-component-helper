@@ -9,6 +9,12 @@ yaml-files:
   - ".yamllint"
 
 ignore:
+  # Test fixtures are intentionally-crafted GitLab CI parser inputs: flow-style
+  # braces ({ job_name: deploy }), empty values (region:), trailing whitespace
+  # and blank lines are the exact conditions the parser/completion tests exist to
+  # exercise. They represent arbitrary user files, so they must not be
+  # style-linted — the mocha suite validates their behaviour instead.
+  - "tests/fixtures/**"
   - "node_modules/**"
   - ".git/**"
   - ".github/**"

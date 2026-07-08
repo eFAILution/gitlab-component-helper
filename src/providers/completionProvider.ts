@@ -5,7 +5,7 @@ import { getVariableCompletions, containsGitLabVariables, expandComponentUrl } f
 import { Logger } from '../utils/logger';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { resolveLocalComponent } from './localComponentResolver';
-import { findCompletionInputContextAtLine, buildInputInsertValue } from './completionInputContext';
+import { findCompletionInputContextAtLine, buildInputInsertValue, renderOptionValue } from './completionInputContext';
 import type { ComponentParameter } from '../types/git-component';
 import type { CachedComponent } from '../types/cache';
 
@@ -372,7 +372,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       const { componentUrl, includeKind, existingInputNames } = context;
       const isLocal = includeKind === 'local';
 
-      this.logger.debug(`[CompletionProvider] In inputs slot for ${componentUrl} (local=${isLocal})`, 'CompletionProvider');
+      this.logger.debug(`[CompletionProvider] In inputs ${context.slot} slot for ${componentUrl} (local=${isLocal})`, 'CompletionProvider');
 
       // Get the component details - local includes resolve from the workspace file, others from cache.
       const component = isLocal
@@ -384,6 +384,25 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       }
 
       this.logger.debug(`[CompletionProvider] Found component ${component.name} with ${component.parameters.length} parameters; existing inputs: ${existingInputNames.join(', ') || 'none'}`, 'CompletionProvider');
+
+      // A value slot (cursor after a known `inputName:`) offers that input's allowed values, independent of whether
+      // it also declares a default — the default is just the pre-filled choice, not a reason to hide the others.
+      if (context.slot === 'value') {
+        const param = component.parameters.find((p: ComponentParameter) => p.name === context.inputName);
+        if (!param?.options?.length) {
+          this.logger.debug(`[CompletionProvider] Value slot for ${context.inputName} has no options to offer`, 'CompletionProvider');
+          return null;
+        }
+        return param.options.map((value, index) => {
+          const rendered = renderOptionValue(value);
+          const item = new vscode.CompletionItem(String(value), vscode.CompletionItemKind.EnumMember);
+          item.insertText = rendered;
+          item.detail = `${param.type || 'string'} option`;
+          // Preserve the declared order of `options:` in the dropdown.
+          item.sortText = String(index).padStart(4, '0');
+          return item;
+        });
+      }
 
       // Filter out already provided inputs
       const existing = new Set(existingInputNames);

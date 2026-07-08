@@ -40,6 +40,7 @@ out-test
 junit.xml
 
 # Other
+compile.txt
 offline-search-index.*
 .gitlab-ci-local*
 *.vsix

@@ -33,7 +33,7 @@ This project uses **AI Context as Code (AICaC)** - structured YAML documentation
 - TypeScript (strict mode)
 - esbuild (bundler)
 - Mocha (testing)
-- semantic-release (automated releases)
+- release-it (version + changelog automation; Marketplace publish is a manual workflow dispatch)
 
 ### Entry Points
 - Extension activation: [`src/extension.ts`](src/extension.ts)
@@ -90,7 +90,7 @@ gitlab-component-helper/
 
 **Branch naming:** `feature/description` or `fix/description`
 **Commit format:** `type(scope): description`
-**Release:** Automated via semantic-release on push to main
+**Release:** release-it bumps the version + CHANGELOG on push to `beta`/`main` (ci.yml `release` job); publishing to the Marketplace is a manual `workflow_dispatch` (Publish / Publish Beta). See [`docs/RELEASING.md`](docs/RELEASING.md)
 
 ### Commit Types
 - `feat:` New feature (triggers minor version bump)
@@ -143,9 +143,8 @@ API requests are batched (default 5 concurrent) to respect rate limits.
 
 - **Full specification:** See [`.ai/`](.ai/) directory
 - **User documentation:** See [`README.md`](README.md)
-- **Semantic release:** See [`SEMANTIC_RELEASE.md`](SEMANTIC_RELEASE.md)
-- **Cache management:** See [`CACHE_MANAGEMENT.md`](CACHE_MANAGEMENT.md)
-- **Performance:** See [`PERFORMANCE_OPTIMIZATIONS.md`](PERFORMANCE_OPTIMIZATIONS.md)
+- **Releasing:** See [`docs/RELEASING.md`](docs/RELEASING.md)
+- **Cache & performance architecture:** See [`.ai/architecture.yaml`](.ai/architecture.yaml)
 
 ## About AICaC
 

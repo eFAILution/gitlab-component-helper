@@ -1,0 +1,16 @@
+include:
+  # First include of the deploy template — fully populated.
+  - local: "duplicate-include-completion/templates/deploy.yml"
+    inputs:
+      job_name: deploy:first
+      cluster: first-cluster
+      region: eu-west-1
+
+  # Second include of the SAME template. `region` is already set; the blank,
+  # six-space-indented slot below is where input-name completions must fire.
+  # Before the duplicate-include fix this slot resolved to the first include
+  # and returned nothing.
+  - local: "duplicate-include-completion/templates/deploy.yml"
+    inputs:
+      region: eu-west-2
+      

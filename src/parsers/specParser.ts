@@ -157,9 +157,12 @@ export class GitLabSpecParser {
         break;
       }
 
-      // New input parameter (indented under inputs) - handle both 2-space and 4-space indentation
-      // Match lines like "    name:" where the input name ends with ":" and has only whitespace after
-      if (line.match(/^\s{2,4}[a-zA-Z_][a-zA-Z0-9_]*:\s*$/)) {
+      // New input parameter (indented under inputs) - handle both 2-space and 4-space indentation.
+      // Match lines like "    name:" where the input name ends with ":" and has only whitespace after.
+      // The name class includes `-`: GitLab input names are commonly hyphenated (e.g. `job-name`). Without
+      // it, a hyphenated key isn't recognised as a new input, so its `description:`/`default:` lines bleed
+      // onto the previous (non-hyphenated) input and mis-map every field after it (issue #211).
+      if (line.match(/^\s{2,4}[a-zA-Z_][a-zA-Z0-9_-]*:\s*$/)) {
         // If we have a current input, finalize it before starting a new one
         if (currentInput) {
           // Mark as required if no default was specified (GitLab CI/CD component behavior)
