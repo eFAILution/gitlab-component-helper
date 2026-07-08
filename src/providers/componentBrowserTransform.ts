@@ -171,7 +171,7 @@ export function transformCachedComponentsToGroups(
     if (!componentGroup) {
       componentGroup = {
         name: comp.name,
-        description: comp.description || 'No description available',
+        description: comp.description || '',
         summary: comp.summary,
         usage: comp.usage,
         notes: comp.notes,
@@ -196,7 +196,7 @@ export function transformCachedComponentsToGroups(
 
     componentGroup.versions.set(comp.version || 'latest', {
       version: comp.version || 'latest',
-      description: comp.description || 'No description available',
+      description: comp.description || '',
       summary: comp.summary,
       usage: comp.usage,
       notes: comp.notes,
@@ -229,7 +229,7 @@ export function transformCachedComponentsToGroups(
           const versionData = component.versions.get(version);
           return {
             version,
-            description: versionData?.description || component.description || 'No description available',
+            description: versionData?.description || component.description || '',
             summary: versionData?.summary || component.summary,
             usage: versionData?.usage || component.usage,
             notes: versionData?.notes || component.notes,
@@ -256,7 +256,7 @@ export function transformCachedComponentsToGroups(
           versionCount: availableVersions.filter(Boolean).length,
           defaultVersion,
           availableVersions: availableVersions.filter(Boolean),
-          description: component.description || 'No description available',
+          description: component.description || '',
           parameters: component.parameters || [],
           gitlabInstance: component.gitlabInstance || 'gitlab.com',
         };

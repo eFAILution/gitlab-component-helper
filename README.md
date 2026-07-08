@@ -13,7 +13,7 @@
 
 - **Component Browser** — explore and insert components from any GitLab project or group
 - **Smart Completion** — context-aware suggestions for components and versions as you type
-- **Hover Docs** — full documentation and parameter hints inline
+- **Hover Docs** — full documentation and parameter hints inline; when a component declares no description, its README's opening lines stand in
 - **Input Validation** — real-time checking of component inputs, with Quick Fix suggestions
 - **Local Includes** — the same hover, completion, and validation for `include: - local:` entries that declare a `spec.inputs` block
 - **Version Picker & Upgrade Hints** — pick the right tag, and get flagged when a pinned semver falls behind (with one-click updates)
@@ -120,6 +120,8 @@ Add spec-compliant header comments to the top of a template to surface consisten
 ```
 
 The short prefix `# @gch:` works too. Headers must appear before any non-comment content; multiple `note` lines are allowed, and the section stays hidden if no header is present. Component details also include a **Raw YAML** toggle for inspecting the original template.
+
+When a component or project has no description of its own, the Component Browser and hover fall back to the opening paragraph of its `README.md` — checked alongside the template first, then at the repository root — so the details panel is never left blank.
 
 ---
 

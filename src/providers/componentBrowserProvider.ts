@@ -1736,7 +1736,7 @@ export class ComponentBrowserProvider {
         <h1 id="componentName">${component.name}</h1>
 
         <div class="description" id="componentDescription">
-          ${component.description}
+          ${this.renderInlineMarkdown(component.description || '')}
         </div>
 
         <div class="metadata" id="componentContext" style="display: ${hasContext ? 'block' : 'none'};">
@@ -1847,6 +1847,22 @@ export class ComponentBrowserProvider {
           let currentVersions = ${JSON.stringify(availableVersions)};
           let versionsLoaded = ${availableVersions.length > 1};
 
+          // Render a single-paragraph description with inline Markdown (links, bold, italic, code). HTML is
+          // escaped first so nothing in the source can inject markup; only the patterns below re-introduce tags.
+          // Patterns use new RegExp(...) so their escaping isn't mangled by this webview HTML template literal.
+          function renderInlineMarkdown(text) {
+            const escaped = String(text || '')
+              .replace(new RegExp('&', 'g'), '&amp;')
+              .replace(new RegExp('<', 'g'), '&lt;')
+              .replace(new RegExp('>', 'g'), '&gt;')
+              .replace(new RegExp('"', 'g'), '&quot;');
+            return escaped
+              .replace(new RegExp('\`([^\`]+)\`', 'g'), '<code>$1</code>')
+              .replace(new RegExp('\\[([^\\]]+)\\]\\((https?://[^\\s)]+)\\)', 'g'), '<a href="$2">$1</a>')
+              .replace(new RegExp('\\*\\*([^*]+)\\*\\*', 'g'), '<strong>$1</strong>')
+              .replace(new RegExp('(^|[^*])\\*([^*]+)\\*', 'g'), '$1<em>$2</em>');
+          }
+
           function insertComponent() {
             const selectedVersion = document.getElementById('versionSelect').value;
             const includeInputs = document.getElementById('includeInputs')?.checked || false;
@@ -1944,7 +1960,7 @@ export class ComponentBrowserProvider {
             document.getElementById('componentName').textContent = component.name;
 
             // Update description
-            document.getElementById('componentDescription').textContent = component.description || 'No description available';
+            document.getElementById('componentDescription').innerHTML = renderInlineMarkdown(component.description || '');
 
             // Update context section (summary/usage/notes) from spec-compliant header comments
             const contextContainer = document.getElementById('componentContext');
@@ -2187,6 +2203,21 @@ export class ComponentBrowserProvider {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  /**
+   * Render a single-paragraph description with inline Markdown (links, bold, italic, code). Escapes HTML
+   * first so the source can't inject markup; only these patterns re-introduce tags. `http(s)` links only.
+   *
+   * @param value The raw description text (may contain inline Markdown).
+   * @returns     HTML-safe markup with inline Markdown converted to `<a>`/`<code>`/`<strong>`/`<em>` tags.
+   */
+  private renderInlineMarkdown(value: string): string {
+    return this.escapeHtml(value)
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
   }
 
   private buildTemplateFileUrl(component: Component): string | undefined {

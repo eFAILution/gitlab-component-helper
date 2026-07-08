@@ -173,7 +173,7 @@ export async function buildCatalogComponents(
 
         return {
           name,
-          description: parsedSpec.description || `${name} component`,
+          description: parsedSpec.description || '',
           variables: parsedSpec.variables,
           latest_version: ref,
           templatePath: file.path,

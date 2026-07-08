@@ -34,6 +34,38 @@ import {
  * @returns              The trimmed token if the user entered one (also persisted), or `undefined`
  *                       if they left it blank (public access) or dismissed the prompt.
  */
+/**
+ * Extract the first meaningful prose paragraph from a README to use as a component description.
+ *
+ * Skips a leading H1 title, HTML comments, and badge/image-only lines (e.g. shields), then returns the
+ * first paragraph with its Markdown heading markers stripped.
+ *
+ * @param readme The raw README text, or `undefined` when no README was fetched.
+ * @returns      The first prose paragraph, or `undefined` when the README is empty/missing or has no usable prose.
+ */
+function firstParagraph(readme: string | undefined): string | undefined {
+  if (!readme) {
+    return undefined;
+  }
+  const blocks = readme.replace(/<!--[\s\S]*?-->/g, '').split(/\n\s*\n/);
+  for (const block of blocks) {
+    const text = block.trim();
+    if (!text) {
+      continue;
+    }
+    // Skip a top-level title and badge/image-only blocks (every line is a link or image).
+    if (/^#\s/.test(text)) {
+      continue;
+    }
+    const lines = text.split('\n');
+    if (lines.every((line) => /^\s*(!?\[[^\]]*\]\([^)]*\))+\s*$/.test(line.trim()))) {
+      continue;
+    }
+    return text.replace(/^#+\s*/, '').trim();
+  }
+  return undefined;
+}
+
 async function promptForTokenIfNeeded(
   context: vscode.ExtensionContext | undefined,
   tokenManager: TokenManager,
@@ -199,10 +231,23 @@ export class ComponentFetcher {
               extractedParameters = backfillParameterOptions(extractedParameters, templateResult.parameters);
             }
 
+            // The catalog often omits a description; fall back to the component's README (next to its
+            // template, then repo root) so the detail view isn't left blank.
+            const readmeDirs = [this.readmeDirForTemplate(templateResult?.templatePath), ''];
+            const readme =
+              (await this.fetchReadme(
+                apiBaseUrl,
+                encodedProjectPath,
+                version,
+                readmeDirs,
+                catalogFetchOptions
+              )) ?? undefined;
+            const summary = catalogComponent.description?.trim() || firstParagraph(readme) || '';
+
             const component = {
               name: componentName,
               description:
-                `# ${componentName}\n\n${catalogComponent.description || ''}\n\n` +
+                `# ${componentName}\n\n${summary}\n\n` +
                 `**From GitLab CI/CD Catalog**\n` +
                 `**Project:** [${projectPath}](https://${gitlabInstance}/${projectPath})\n` +
                 `**Version:** ${version}\n\n` +
@@ -273,14 +318,14 @@ export class ComponentFetcher {
         this.logger.debug(`Found component template with ${parameters.length} parameters at ${templatePath}`);
       }
 
-      // Build component description with proper fallbacks
-      let cleanDescription = '';
+      // A component's README sits next to its template; fall back to the repo root for flat layouts.
+      const readmeDirs = [this.readmeDirForTemplate(resolvedTemplatePath), ''];
+      const readme =
+        (await this.fetchReadme(apiBaseUrl, encodedProjectPath, version, readmeDirs, fetchOptions)) ??
+        undefined;
 
-      if (project.description && project.description.trim()) {
-        cleanDescription = project.description.trim();
-      } else {
-        cleanDescription = `Component/Project does not have a description`;
-      }
+      // Prefer the project description; when absent, fall back to the README's first meaningful paragraph.
+      const cleanDescription = project.description?.trim() || firstParagraph(readme) || '';
 
       // Construct the component
       const component: Component = {
@@ -386,6 +431,65 @@ export class ComponentFetcher {
       this.logger.debug(`Could not fetch component template: ${error}`);
       return null;
     }
+  }
+
+  /**
+   * Fetch a README, trying the common filename/casing variants under each of `dirs` in order. A component's
+   * own README lives next to its template (`templates/<name>/README.md`), so callers pass that directory
+   * ahead of the root.
+   *
+   * @param apiBaseUrl   GitLab API v4 base.
+   * @param projectId    Numeric or string project id for the raw-file endpoint.
+   * @param version      Git ref to read each file at.
+   * @param dirs         Directories to search, in priority order; `''` means the repo root.
+   * @param fetchOptions Optional request headers.
+   * @returns            The raw text of the first README that exists, or `null` when none are present (or the fetch fails).
+   */
+  private async fetchReadme(
+    apiBaseUrl: string,
+    projectId: string,
+    version: string,
+    dirs: string[],
+    fetchOptions?: { headers?: Record<string, string> }
+  ): Promise<string | null> {
+    const names = ['README.md', 'README.MD', 'readme.md', 'README', 'README.rst', 'README.txt'];
+
+    for (const dir of dirs) {
+      const prefix = dir ? `${dir.replace(/\/$/, '')}/` : '';
+      for (const name of names) {
+        const path = `${prefix}${name}`;
+        const readmeUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(
+          path
+        )}/raw?ref=${version}`;
+        try {
+          const content = await this.httpClient.fetchText(readmeUrl, fetchOptions);
+          if (content && content.trim()) {
+            this.logger.debug(`[ComponentFetcher] README found at ${path}, length: ${content.length} chars`);
+            return content;
+          }
+        } catch {
+          // try next candidate
+        }
+      }
+    }
+
+    this.logger.debug(`[ComponentFetcher] No README found at known paths`);
+    return null;
+  }
+
+  /**
+   * The directory a component's README would sit in, derived from its resolved template path
+   * (`templates/<name>/template.yml` → `templates/<name>`).
+   *
+   * @param templatePath The resolved repo-relative template path, or `undefined` when none was found.
+   * @returns            The template's directory, or `''` for a flat template (`templates/<name>.yml`) or a
+   *                     missing path — signalling the caller to look at the repo root.
+   */
+  private readmeDirForTemplate(templatePath: string | undefined): string {
+    if (!templatePath || !templatePath.includes('/')) {
+      return '';
+    }
+    return templatePath.slice(0, templatePath.lastIndexOf('/'));
   }
 
   /**
