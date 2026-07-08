@@ -6,12 +6,16 @@
 import { minimatch } from 'minimatch';
 
 /**
- * Built-in glob patterns that always identify a file as a GitLab CI file. Covers the canonical entrypoint and the
- * conventional `.gitlab/` directory used for nested/included pipeline config.
+ * Built-in glob patterns that always identify a file as a GitLab CI file. Covers the canonical entrypoint, the
+ * `*.gitlab-ci.{yml,yaml}` suffix convention used for modular/included pipeline files, and the conventional
+ * `.gitlab/` directory. The suffix patterns restore recognition of files like `deploy.gitlab-ci.yml` that the
+ * removed custom `gitlab-ci` language used to match via its `extensions` (a filename-suffix match).
  */
 export const DEFAULT_GITLAB_CI_FILE_GLOBS = [
   '**/.gitlab-ci.yml',
   '**/.gitlab-ci.yaml',
+  '**/*.gitlab-ci.yml',
+  '**/*.gitlab-ci.yaml',
   '**/.gitlab/**/*.yml',
   '**/.gitlab/**/*.yaml',
 ];
