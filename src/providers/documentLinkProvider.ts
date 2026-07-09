@@ -9,9 +9,30 @@ import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 
 const COMPONENT_LINE = /^(\s*-?\s*component:\s*)(\S+)/;
 
-export class ComponentDocumentLinkProvider implements vscode.DocumentLinkProvider {
+export class ComponentDocumentLinkProvider implements vscode.DocumentLinkProvider, vscode.Disposable {
   private logger = Logger.getInstance();
   private urlParser = new UrlParser();
+
+  // VS Code requests links once per document render and caches the result, re-asking only when the document changes or
+  // this event fires. Without it, links resolved from the async cache never appear on first view — they only show up
+  // after the first edit. We fire it when the component cache is populated/updated so VS Code re-requests then.
+  private readonly _onDidChangeLinks = new vscode.EventEmitter<void>();
+  public readonly onDidChangeLinks = this._onDidChangeLinks.event;
+  private readonly cacheSubscription: vscode.Disposable;
+
+  constructor() {
+    // Re-request links whenever the cache changes. Fire once up front too, so an editor already open at registration
+    // re-requests against the current cache rather than keeping the (possibly empty) result from its first render.
+    this.cacheSubscription = getComponentCacheManager().onDidChangeComponents(() => {
+      this._onDidChangeLinks.fire();
+    });
+    this._onDidChangeLinks.fire();
+  }
+
+  public dispose(): void {
+    this.cacheSubscription.dispose();
+    this._onDidChangeLinks.dispose();
+  }
 
   public async provideDocumentLinks(
     document: vscode.TextDocument,

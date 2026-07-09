@@ -116,12 +116,14 @@ export function activate(context: vscode.ExtensionContext) {
     // Register document link provider so `component:` URLs (including those using GitLab variables like
     // $CI_SERVER_FQDN) become clickable and point at the GitLab project tree at the requested ref.
     logger.debug('[Extension] Registering document link provider...', 'Extension');
+    const documentLinkProvider = new ComponentDocumentLinkProvider();
     context.subscriptions.push(
+      documentLinkProvider,
       vscode.languages.registerDocumentLinkProvider(
         [
           { language: 'yaml' }
         ],
-        new ComponentDocumentLinkProvider()
+        documentLinkProvider
       )
     );
 

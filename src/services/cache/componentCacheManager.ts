@@ -36,6 +36,12 @@ export class ComponentCacheManager {
   private sourceErrors: Map<string, string> = new Map();
   private context: vscode.ExtensionContext | null = null;
 
+  // Fires whenever the in-memory component list is populated or changes. Consumers that render from the cache (e.g. the
+  // document link provider) subscribe so they can re-request once the cache is ready — VS Code caches a provider's
+  // result and won't re-ask on its own until the document changes.
+  private readonly _onDidChangeComponents = new vscode.EventEmitter<void>();
+  public readonly onDidChangeComponents = this._onDidChangeComponents.event;
+
   // Specialized cache modules
   private projectCache: ProjectCache;
   private versionCache: VersionCache;
@@ -143,6 +149,8 @@ export class ComponentCacheManager {
       // Persist so dynamically fetched entries (and their freshness fields) survive across sessions instead of being
       // re-resolved on next launch. Fire-and-forget — a failed save only costs a re-fetch, never correctness.
       this.persistComponentState();
+
+      this.notifyComponentsChanged();
     } catch (error) {
       this.logger.debug(
         `[ComponentCache] Error adding dynamic component: ${error}`,
@@ -160,6 +168,10 @@ export class ComponentCacheManager {
     this.saveCacheToDisk().catch(error => {
       this.logger.debug(`[ComponentCache] Failed to persist component state: ${error}`, 'ComponentCache');
     });
+  }
+
+  private notifyComponentsChanged(): void {
+    this._onDidChangeComponents.fire();
   }
 
   public getSourceErrors(): Map<string, string> {
@@ -331,6 +343,8 @@ export class ComponentCacheManager {
 
       // Save updated cache to disk
       await this.saveCacheToDisk();
+
+      this.notifyComponentsChanged();
     } catch (error) {
       this.logger.error(`[ComponentCache] Error during refresh: ${error}`, 'ComponentCache');
     } finally {
@@ -464,6 +478,7 @@ export class ComponentCacheManager {
         'ComponentCache'
       );
       this.logger.debug(`[ComponentCache] Cache location: ${cacheInfo.location}`, 'ComponentCache');
+      this.notifyComponentsChanged();
       return;
     }
 
