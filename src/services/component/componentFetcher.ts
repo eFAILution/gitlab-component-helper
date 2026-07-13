@@ -19,6 +19,7 @@ import {
   buildCatalogComponents,
   fetchAllTemplateFiles,
 } from './componentFetcherTemplates';
+import { firstParagraph, readmeDirForTemplate } from './readmeDescription';
 
 /**
  * Prompt the user for a GitLab personal access token for `gitlabInstance`.
@@ -34,57 +35,6 @@ import {
  * @returns              The trimmed token if the user entered one (also persisted), or `undefined`
  *                       if they left it blank (public access) or dismissed the prompt.
  */
-/**
- * Extract the first meaningful prose paragraph from a README to use as a component description.
- *
- * Skips a leading H1 title, HTML comments, and badge/image-only lines (e.g. shields), then returns the
- * first paragraph with its Markdown heading markers stripped.
- *
- * @param readme The raw README text, or `undefined` when no README was fetched.
- * @returns      The first prose paragraph, or `undefined` when the README is empty/missing or has no usable prose.
- */
-/**
- * Remove HTML comments (`<!-- … -->`) from `text`, repeating until no `<!--` remains. A single global
- * replace is insufficient: overlapping/nested markers like `<!--<!-- -->-->` can leave a residual `<!--`
- * after one pass, so we iterate to a fixed point.
- *
- * @param text The raw text to strip comments from.
- * @returns    `text` with all HTML comments (and any residual opening markers) removed.
- */
-function stripHtmlComments(text: string): string {
-  let previous: string;
-  let current = text;
-  do {
-    previous = current;
-    current = current.replace(/<!--[\s\S]*?-->/g, '');
-  } while (current !== previous);
-  // Drop any unterminated opening marker left over (e.g. `<!--` with no closing `-->`).
-  return current.replace(/<!--/g, '');
-}
-
-function firstParagraph(readme: string | undefined): string | undefined {
-  if (!readme) {
-    return undefined;
-  }
-  const blocks = stripHtmlComments(readme).split(/\n\s*\n/);
-  for (const block of blocks) {
-    const text = block.trim();
-    if (!text) {
-      continue;
-    }
-    // Skip a top-level title and badge/image-only blocks (every line is a link or image).
-    if (/^#\s/.test(text)) {
-      continue;
-    }
-    const lines = text.split('\n');
-    if (lines.every((line) => /^\s*(!?\[[^\]]*\]\([^)]*\))+\s*$/.test(line.trim()))) {
-      continue;
-    }
-    return text.replace(/^#+\s*/, '').trim();
-  }
-  return undefined;
-}
-
 async function promptForTokenIfNeeded(
   context: vscode.ExtensionContext | undefined,
   tokenManager: TokenManager,
@@ -252,7 +202,7 @@ export class ComponentFetcher {
 
             // The catalog often omits a description; fall back to the component's README (next to its
             // template, then repo root) so the detail view isn't left blank.
-            const readmeDirs = [this.readmeDirForTemplate(templateResult?.templatePath), ''];
+            const readmeDirs = [readmeDirForTemplate(templateResult?.templatePath), ''];
             const readme =
               (await this.fetchReadme(
                 apiBaseUrl,
@@ -338,7 +288,7 @@ export class ComponentFetcher {
       }
 
       // A component's README sits next to its template; fall back to the repo root for flat layouts.
-      const readmeDirs = [this.readmeDirForTemplate(resolvedTemplatePath), ''];
+      const readmeDirs = [readmeDirForTemplate(resolvedTemplatePath), ''];
       const readme =
         (await this.fetchReadme(apiBaseUrl, encodedProjectPath, version, readmeDirs, fetchOptions)) ??
         undefined;
@@ -494,21 +444,6 @@ export class ComponentFetcher {
 
     this.logger.debug(`[ComponentFetcher] No README found at known paths`);
     return null;
-  }
-
-  /**
-   * The directory a component's README would sit in, derived from its resolved template path
-   * (`templates/<name>/template.yml` → `templates/<name>`).
-   *
-   * @param templatePath The resolved repo-relative template path, or `undefined` when none was found.
-   * @returns            The template's directory, or `''` for a flat template (`templates/<name>.yml`) or a
-   *                     missing path — signalling the caller to look at the repo root.
-   */
-  private readmeDirForTemplate(templatePath: string | undefined): string {
-    if (!templatePath || !templatePath.includes('/')) {
-      return '';
-    }
-    return templatePath.slice(0, templatePath.lastIndexOf('/'));
   }
 
   /**
