@@ -43,11 +43,30 @@ import {
  * @param readme The raw README text, or `undefined` when no README was fetched.
  * @returns      The first prose paragraph, or `undefined` when the README is empty/missing or has no usable prose.
  */
+/**
+ * Remove HTML comments (`<!-- … -->`) from `text`, repeating until no `<!--` remains. A single global
+ * replace is insufficient: overlapping/nested markers like `<!--<!-- -->-->` can leave a residual `<!--`
+ * after one pass, so we iterate to a fixed point.
+ *
+ * @param text The raw text to strip comments from.
+ * @returns    `text` with all HTML comments (and any residual opening markers) removed.
+ */
+function stripHtmlComments(text: string): string {
+  let previous: string;
+  let current = text;
+  do {
+    previous = current;
+    current = current.replace(/<!--[\s\S]*?-->/g, '');
+  } while (current !== previous);
+  // Drop any unterminated opening marker left over (e.g. `<!--` with no closing `-->`).
+  return current.replace(/<!--/g, '');
+}
+
 function firstParagraph(readme: string | undefined): string | undefined {
   if (!readme) {
     return undefined;
   }
-  const blocks = readme.replace(/<!--[\s\S]*?-->/g, '').split(/\n\s*\n/);
+  const blocks = stripHtmlComments(readme).split(/\n\s*\n/);
   for (const block of blocks) {
     const text = block.trim();
     if (!text) {
