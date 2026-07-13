@@ -16,7 +16,6 @@
   "github": {
     "release": true,
     "releaseName": "${version}",
-    "releaseNotes": "echo '${changelog}'",
     "draft": false,
     "preRelease": false,
     "assets": [
