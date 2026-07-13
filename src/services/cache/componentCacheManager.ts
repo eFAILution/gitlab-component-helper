@@ -3,6 +3,8 @@ import { getComponentService } from '../component';
 import { Logger } from '../../utils/logger';
 import { getPerformanceMonitor } from '../../utils/performanceMonitor';
 import { CachedComponent, PersistentCacheData } from '../../types/cache';
+import { ComponentSource } from '../../types/api';
+import { reconcileComponentSource } from './sourceReconciliation';
 import { ProjectCache } from './projectCache';
 import { VersionCache } from './versionCache';
 import { GroupCache } from './groupCache';
@@ -115,6 +117,13 @@ export class ComponentCacheManager {
    */
   public addDynamicComponent(component: CachedComponent): void {
     try {
+      // Dynamic fetches synthesize `source` as `instance/path`; adopt the configured source's display name (and tag
+      // template) so the entry merges into its source group instead of spawning a phantom top-level instance node.
+      const sources = vscode.workspace
+        .getConfiguration('gitlabComponentHelper')
+        .get<ComponentSource[]>('componentSources', []);
+      component = reconcileComponentSource(component, sources);
+
       // Check if component already exists (avoid duplicates)
       const existingIndex = this.components.findIndex(
         comp =>

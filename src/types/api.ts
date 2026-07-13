@@ -128,6 +128,7 @@ export interface ComponentSource {
   path: string;
   gitlabInstance?: string;
   type?: 'project' | 'group';
+  tagPattern?: string;
 }
 
 /**
