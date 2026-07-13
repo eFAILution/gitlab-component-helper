@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+# [0.16.0](https://github.com/eFAILution/gitlab-component-helper/compare/0.14.5...0.16.0) (2026-07-08)
+
+
+### Bug Fixes
+
+* enum input values aren't offered, and an enum input with a default never shows its dropdown ([#205](https://github.com/eFAILution/gitlab-component-helper/issues/205)) ([7f086e1](https://github.com/eFAILution/gitlab-component-helper/commit/7f086e13f98163dc112bb12959e64cabe7b8520b))
+* **matcher:** recognize *.gitlab-ci.{yml,yaml} suffix-named files ([#223](https://github.com/eFAILution/gitlab-component-helper/issues/223)) ([6f3e16e](https://github.com/eFAILution/gitlab-component-helper/commit/6f3e16e809f7dcfacb724a28441cda7745848818))
+* no input suggestions for the second of two identical component includes ([#207](https://github.com/eFAILution/gitlab-component-helper/issues/207)) ([9496deb](https://github.com/eFAILution/gitlab-component-helper/commit/9496deb9eb4df6d9be756a972486d19613e32c24))
+* **spec-parser:** recognise hyphenated input names ([#212](https://github.com/eFAILution/gitlab-component-helper/issues/212)) ([1180dd9](https://github.com/eFAILution/gitlab-component-helper/commit/1180dd94fb284e2ef41d3516eb30e512ab8abfad)), closes [#211](https://github.com/eFAILution/gitlab-component-helper/issues/211)
+
+
+### Features
+
+* **httpClient:** follow redirects safely — same-origin only, strip credentials cross-origin ([#222](https://github.com/eFAILution/gitlab-component-helper/issues/222)) ([f8d8b02](https://github.com/eFAILution/gitlab-component-helper/commit/f8d8b02f644a162c1a939937c5c0919caa411780))
+* remove custom gitlab-ci language contribution ([#210](https://github.com/eFAILution/gitlab-component-helper/issues/210)) ([a20a4e6](https://github.com/eFAILution/gitlab-component-helper/commit/a20a4e661817847e33ed77405a04bf1ed14145d6))
+
 ## [0.14.5](https://github.com/eFAILution/gitlab-component-helper/compare/0.14.4...0.14.5) (2026-07-06)
 
 ## [0.14.4](https://github.com/eFAILution/gitlab-component-helper/compare/0.14.3...0.14.4) (2026-07-06)
