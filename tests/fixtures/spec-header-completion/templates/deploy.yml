@@ -1,0 +1,16 @@
+spec:
+  inputs:
+    environment:
+      description: Target environment
+      type: string
+      default: staging
+    region:
+      description: Target region
+      type: string
+    job_name:
+      description: The name of the CI job
+      type: string
+---
+$[[ inputs.job_name ]]:
+  script:
+    - echo "deploy $[[ inputs.job_name ]] to $[[ inputs.environment ]]/$[[ inputs.region ]]"

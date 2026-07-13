@@ -51,6 +51,44 @@ export function parseYaml(text: string, silent = false): unknown {
   }
 }
 
+/**
+ * Parse a YAML document *stream* into its constituent mapping documents.
+ *
+ * A GitLab CI component template is a multi-document file: the `spec:` header is one document, the `include:`/jobs
+ * body another, separated by `---`. `js-yaml`'s `load` throws on any stream with more than one document, so
+ * {@link parseYaml} returns `null` for these files. This uses `loadAll` and returns each document that is a mapping,
+ * in document order, so a caller can select the one owning the key it needs (see {@link findDocumentWith}) rather
+ * than flattening distinct documents together.
+ *
+ * @param text - The YAML source (one or more `---`-separated documents) to parse.
+ * @param silent - Suppress the `console.error` on a parse failure. Use on hot paths where a mid-edit parse failure
+ *   is expected and handled.
+ * @returns the stream's mapping documents in order (non-mapping documents — scalars, sequences, `null` — are
+ *   dropped); an empty array when the stream is empty or fails to parse.
+ */
+export function parseYamlDocuments(text: string, silent = false): YamlNode[] {
+  try {
+    const docs = yaml.loadAll(text);
+    return docs.filter(isYamlNode);
+  } catch (e) {
+    if (!silent) {
+      console.error('Error parsing YAML:', e);
+    }
+    return [];
+  }
+}
+
+/**
+ * Find the first document in a parsed stream that carries the given top-level key.
+ *
+ * @param docs - Mapping documents from {@link parseYamlDocuments}, in document order.
+ * @param key - The top-level key to locate (e.g. `'include'` or `'spec'`).
+ * @returns the first document whose own `key` is defined, or `null` when no document carries it.
+ */
+export function findDocumentWith(docs: YamlNode[], key: string): YamlNode | null {
+  return docs.find((doc) => doc[key] !== undefined) ?? null;
+}
+
 // Clean expired cache entries
 function cleanParseCache(currentTime: number): void {
   for (const [key, value] of parseCache.entries()) {

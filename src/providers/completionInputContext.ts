@@ -5,7 +5,7 @@
  * missing ones).
  */
 
-import { parseYaml, isYamlNode } from '../utils/yamlParser';
+import { parseYaml, parseYamlDocuments, findDocumentWith, isYamlNode, type YamlNode } from '../utils/yamlParser';
 import { findIncludeLine } from '../utils/includeMatcher';
 import type { ComponentParameter } from '../types/git-component';
 
@@ -65,7 +65,7 @@ export function findCompletionInputContextAtLine(
   // exactly while the user is typing the name. Blank the cursor line before parsing: it contributes nothing to the
   // existing-input set (it *is* the slot being typed), and the positional scans below read `lines`, not the parse.
   const parsed = parseInputDocument(text, lines, lineIndex);
-  if (!isYamlNode(parsed) || !parsed.include) return null;
+  if (parsed === null) return null;
 
   const includes = Array.isArray(parsed.include) ? parsed.include : [parsed.include];
 
@@ -120,30 +120,34 @@ export function findCompletionInputContextAtLine(
 }
 
 /**
- * Parse `text` as a YAML mapping, tolerating an in-progress input name on the cursor line.
+ * Parse `text` and return the document that owns the `include:` block, tolerating an in-progress input name on the
+ * cursor line.
  *
- * The document parses normally first. If that fails (or yields a non-mapping), and the cursor line looks like a
+ * A GitLab component template is a multi-document stream — the `spec:` header and the `include:`/jobs body are
+ * separate `---`-delimited documents — so we parse the whole stream and pick the document carrying `include`.
+ *
+ * The stream parses normally first. If no `include`-bearing document is found, and the cursor line looks like a
  * partially-typed name — leading whitespace then a bare token with no `:` — the line is blanked and the document
- * re-parsed. That token is the slot being typed; as a bare scalar beside its mapping siblings it makes the whole
- * document invalid, so blanking it lets the surrounding structure parse while the user types.
+ * re-parsed. That token is the slot being typed; as a bare scalar beside its mapping siblings it makes the
+ * surrounding document invalid, so blanking it lets the structure parse while the user types.
  *
  * @param text - The full YAML document text to parse.
  * @param lines - `text` split into lines, so the cursor line can be blanked without re-splitting.
  * @param lineIndex - 0-based index of the cursor line, the one blanked on the retry.
- * @returns the parsed value (from the original text where valid, otherwise the cursor-line-blanked retry), or the
- *   original parse result when the cursor line isn't an in-progress name.
+ * @returns the `include`-bearing document (from the original text where valid, otherwise the cursor-line-blanked
+ *   retry), or `null` when no such document is found.
  */
-function parseInputDocument(text: string, lines: string[], lineIndex: number): unknown {
-  const parsed = parseYaml(text, true);
-  if (isYamlNode(parsed) && parsed.include) return parsed;
+function parseInputDocument(text: string, lines: string[], lineIndex: number): YamlNode | null {
+  const includeDoc = findDocumentWith(parseYamlDocuments(text, true), 'include');
+  if (includeDoc) return includeDoc;
 
   const cursorLine = lines[lineIndex];
   const isInProgressName = /^\s*[^\s:#-][^:]*$/.test(cursorLine);
-  if (!isInProgressName) return parsed;
+  if (!isInProgressName) return null;
 
   const blanked = [...lines];
   blanked[lineIndex] = '';
-  return parseYaml(blanked.join('\n'), true);
+  return findDocumentWith(parseYamlDocuments(blanked.join('\n'), true), 'include');
 }
 
 /**

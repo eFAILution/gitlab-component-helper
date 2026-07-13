@@ -4,7 +4,7 @@
  * parameter it names.
  */
 
-import { parseYaml, isYamlNode } from '../utils/yamlParser';
+import { parseYamlDocuments, findDocumentWith, isYamlNode } from '../utils/yamlParser';
 import { findIncludeLine } from '../utils/includeMatcher';
 
 /**
@@ -47,8 +47,10 @@ export function findInputContextAtLine(text: string, lineIndex: number): InputCo
 
   // Need a parsed `include:` array to know which includes are in scope; if YAML doesn't parse, bail.
   // Silent: hover runs against the live, often mid-edit document, where a parse failure is expected and handled.
-  const parsed = parseYaml(text, true);
-  if (!isYamlNode(parsed) || !parsed.include) return null;
+  // A component template is a multi-document stream (`spec:` header + `include:` body), so select the document
+  // that owns `include` rather than assuming a single document.
+  const parsed = findDocumentWith(parseYamlDocuments(text, true), 'include');
+  if (parsed === null) return null;
   const includes = Array.isArray(parsed.include) ? parsed.include : [parsed.include];
 
   // Each include is either a remote `component:` URL or a `local:` path — both behave the same here.
