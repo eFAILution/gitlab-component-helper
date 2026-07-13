@@ -200,8 +200,7 @@ export class ComponentFetcher {
               extractedParameters = backfillParameterOptions(extractedParameters, templateResult.parameters);
             }
 
-            // The catalog often omits a description; fall back to the component's README (next to its
-            // template, then repo root) so the detail view isn't left blank.
+            // If the catalog omits a description, fall back to the component's README.
             const readmeDirs = [readmeDirForTemplate(templateResult?.templatePath), ''];
             const readme =
               (await this.fetchReadme(

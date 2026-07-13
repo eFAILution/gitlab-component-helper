@@ -121,7 +121,7 @@ Add spec-compliant header comments to the top of a template to surface consisten
 
 The short prefix `# @gch:` works too. Headers must appear before any non-comment content; multiple `note` lines are allowed, and the section stays hidden if no header is present. Component details also include a **Raw YAML** toggle for inspecting the original template.
 
-When a component or project has no description of its own, the Component Browser and hover fall back to the opening paragraph of its `README.md` — checked alongside the template first, then at the repository root — so the details panel is never left blank.
+When a component or project has no description of its own, the Component Browser and hover fall back to the opening paragraph of its `README.md` — checked alongside the template first, then at the repository root.
 
 ---
 
