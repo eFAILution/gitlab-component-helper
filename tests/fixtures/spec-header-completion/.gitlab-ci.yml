@@ -1,0 +1,12 @@
+spec:
+  inputs:
+    tier:
+      description: Deployment tier
+      type: string
+      default: standard
+---
+include:
+  - local: "spec-header-completion/templates/deploy.yml"
+    inputs:
+      job_name: deploy
+

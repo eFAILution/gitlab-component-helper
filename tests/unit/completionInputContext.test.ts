@@ -339,6 +339,50 @@ variables:
     const ctx = findCompletionInputContextAtLine(text, 3);
     assert.strictEqual(ctx, null);
   });
+
+  test('detects a slot when a spec: header precedes the include in a separate YAML document (regression)', () => {
+    // A component template is a multi-document stream: the `spec:` header is its own `---`-delimited document,
+    // the `include:`/jobs body another. `include:` therefore lives in the second document, not the first. This
+    // is the shape of every real GitLab component template; the slot must still resolve against it.
+    const text = `spec:
+  inputs:
+    job_name:
+      type: string
+---
+include:
+  - component: ${FULL_PIPELINE_URL}
+    inputs:
+      environment: "development"
+      `;
+    const ctx = findCompletionInputContextAtLine(text, 9); // blank, 6-space slot under the second-document include
+    assert.deepStrictEqual(ctx, {
+      componentUrl: FULL_PIPELINE_URL,
+      includeKind: 'component',
+      slot: 'name',
+      existingInputNames: ['environment'],
+    });
+  });
+
+  test('resolves an in-progress name slot in a multi-document template (regression)', () => {
+    // The half-typed name blanks the cursor line before re-parsing; that retry must still locate the
+    // `include`-bearing document past the `spec:` header rather than treating the whole stream as unparseable.
+    const text = `spec:
+  inputs:
+    debug:
+      type: boolean
+---
+include:
+  - component: ${FULL_PIPELINE_URL}
+    inputs:
+      env`;
+    const ctx = findCompletionInputContextAtLine(text, 8, 9); // cursor after the partial `env`
+    assert.deepStrictEqual(ctx, {
+      componentUrl: FULL_PIPELINE_URL,
+      includeKind: 'component',
+      slot: 'name',
+      existingInputNames: [],
+    });
+  });
 });
 
 suite('buildInputInsertValue', () => {

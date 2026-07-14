@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { getComponentService } from '../services/component';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
-import { parseYaml, isYamlNode } from '../utils/yamlParser';
+import { parseYamlDocuments, findDocumentWith } from '../utils/yamlParser';
 import { Component, ComponentParameter } from '../types/git-component';
 import { Logger } from '../utils/logger';
 import { expandComponentUrl, containsGitLabVariables } from '../utils/gitlabVariables';
@@ -164,9 +164,11 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         const diagnosticKeys = new Set<string>(); // Track unique diagnostics to prevent duplicates
         // Silent: validation runs on every edit against the live, often mid-edit document; a parse failure is
         // expected and handled below (diagnostics cleared), so it should not log to the debug console.
-        const parsedYaml = parseYaml(text, true);
+        // A component template is a multi-document stream (`spec:` header + `include:` body), so select the
+        // document that owns `include` rather than assuming a single document.
+        const parsedYaml = findDocumentWith(parseYamlDocuments(text, true), 'include');
 
-        if (!isYamlNode(parsedYaml) || !parsedYaml.include) {
+        if (parsedYaml === null) {
             this.diagnosticCollection.set(document.uri, diagnostics);
             return;
         }
