@@ -6,6 +6,7 @@ import { CachedComponent, PersistentCacheData } from '../../types/cache';
 import { ProjectCache } from './projectCache';
 import { VersionCache } from './versionCache';
 import { GroupCache } from './groupCache';
+import { sameCachedComponent } from '../../utils/cachedComponentEquality';
 import {
   CACHE_LOCATION_GLOBAL_STATE,
   CACHE_LOCATION_MEMORY_ONLY,
@@ -27,7 +28,7 @@ const CURRENT_CACHE_VERSION = '1.3.0';
  * - Track source errors
  * - Provide singleton access pattern
  */
-export class ComponentCacheManager {
+export class ComponentCacheManager implements vscode.Disposable {
   private logger = Logger.getInstance();
   private performanceMonitor = getPerformanceMonitor();
   private components: CachedComponent[] = [];
@@ -35,12 +36,14 @@ export class ComponentCacheManager {
   private refreshInProgress = false;
   private sourceErrors: Map<string, string> = new Map();
   private context: vscode.ExtensionContext | null = null;
+  private readonly disposables: vscode.Disposable[] = [];
 
   // Fires whenever the in-memory component list is populated or changes. Consumers that render from the cache (e.g. the
   // document link provider) subscribe so they can re-request once the cache is ready — VS Code caches a provider's
   // result and won't re-ask on its own until the document changes.
   private readonly _onDidChangeComponents = new vscode.EventEmitter<void>();
   public readonly onDidChangeComponents = this._onDidChangeComponents.event;
+  private changeNotificationScheduled = false;
 
   // Specialized cache modules
   private projectCache: ProjectCache;
@@ -71,20 +74,27 @@ export class ComponentCacheManager {
     });
 
     // Listen for configuration changes to refresh cache
-    vscode.workspace.onDidChangeConfiguration(e => {
-      if (e.affectsConfiguration('gitlabComponentHelper.componentSources')) {
-        this.logger.debug(
-          '[ComponentCache] Configuration changed, forcing refresh...',
-          'ComponentCache'
-        );
-        this.forceRefresh().catch(error => {
+    this.disposables.push(
+      vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration('gitlabComponentHelper.componentSources')) {
           this.logger.debug(
-            `[ComponentCache] Error during config refresh: ${error}`,
+            '[ComponentCache] Configuration changed, forcing refresh...',
             'ComponentCache'
           );
-        });
-      }
-    });
+          this.forceRefresh().catch(error => {
+            this.logger.debug(
+              `[ComponentCache] Error during config refresh: ${error}`,
+              'ComponentCache'
+            );
+          });
+        }
+      })
+    );
+  }
+
+  public dispose(): void {
+    this._onDidChangeComponents.dispose();
+    this.disposables.forEach(d => d.dispose());
   }
 
   /**
@@ -130,8 +140,11 @@ export class ComponentCacheManager {
           comp.version === component.version
       );
 
+      let changed: boolean;
       if (existingIndex >= 0) {
-        // Update existing component
+        // Update existing component. Skip notifying when nothing link-relevant changed — validation re-adds the same
+        // entries on every open/change/save, and an unconditional fire would thrash the link provider.
+        changed = !sameCachedComponent(this.components[existingIndex], component);
         this.components[existingIndex] = component;
         this.logger.debug(
           `[ComponentCache] Updated existing dynamic component: ${component.name}@${component.version}`,
@@ -139,6 +152,7 @@ export class ComponentCacheManager {
         );
       } else {
         // Add new component
+        changed = true;
         this.components.push(component);
         this.logger.debug(
           `[ComponentCache] Added new dynamic component: ${component.name}@${component.version} from ${component.gitlabInstance}/${component.sourcePath}`,
@@ -150,7 +164,9 @@ export class ComponentCacheManager {
       // re-resolved on next launch. Fire-and-forget — a failed save only costs a re-fetch, never correctness.
       this.persistComponentState();
 
-      this.notifyComponentsChanged();
+      if (changed) {
+        this.notifyComponentsChanged();
+      }
     } catch (error) {
       this.logger.debug(
         `[ComponentCache] Error adding dynamic component: ${error}`,
@@ -170,8 +186,17 @@ export class ComponentCacheManager {
     });
   }
 
+  // Coalesce a burst of mutations (e.g. a refresh adding many components, or a validation pass re-adding several) into a
+  // single emission on the next microtask, so consumers re-request once rather than once per component.
   private notifyComponentsChanged(): void {
-    this._onDidChangeComponents.fire();
+    if (this.changeNotificationScheduled) {
+      return;
+    }
+    this.changeNotificationScheduled = true;
+    queueMicrotask(() => {
+      this.changeNotificationScheduled = false;
+      this._onDidChangeComponents.fire();
+    });
   }
 
   public getSourceErrors(): Map<string, string> {

@@ -70,6 +70,7 @@ export function activate(context: vscode.ExtensionContext) {
     let cacheManager: ComponentCacheManager;
     try {
       cacheManager = getComponentCacheManager(context);
+      context.subscriptions.push(cacheManager);
       logger.info(`[Extension] Component cache manager initialized successfully`, 'Extension');
     } catch (cacheError) {
       logger.error(`[Extension] ERROR initializing cache manager: ${cacheError}`, 'Extension');
@@ -126,6 +127,8 @@ export function activate(context: vscode.ExtensionContext) {
         documentLinkProvider
       )
     );
+    // Fire the initial refresh after registration.
+    queueMicrotask(() => documentLinkProvider.refresh());
 
     // Register command to add project/group token
     logger.debug('[Extension] Registering addProjectToken command...', 'Extension');

@@ -21,11 +21,14 @@ export class ComponentDocumentLinkProvider implements vscode.DocumentLinkProvide
   private readonly cacheSubscription: vscode.Disposable;
 
   constructor() {
-    // Re-request links whenever the cache changes. Fire once up front too, so an editor already open at registration
-    // re-requests against the current cache rather than keeping the (possibly empty) result from its first render.
     this.cacheSubscription = getComponentCacheManager().onDidChangeComponents(() => {
       this._onDidChangeLinks.fire();
     });
+  }
+
+  // Re-request links against the current cache. Call after registration so an editor already open at activation
+  // re-requests instead of keeping the (possibly empty) result from its first render.
+  public refresh(): void {
     this._onDidChangeLinks.fire();
   }
 
