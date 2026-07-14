@@ -7,7 +7,7 @@ import { Logger } from '../utils/logger';
 import { expandComponentUrl, containsGitLabVariables } from '../utils/gitlabVariables';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { spawn } from 'child_process';
-import { resolveLocalComponent, isUnsupportedLocalPath } from './localComponentResolver';
+import { resolveLocalIncludeOutcome, isUnsupportedLocalPath } from './localComponentResolver';
 import { attachDiagnosticMetadata, readDiagnosticMetadata } from './validationMetadata';
 import { isAuthError } from '../errors';
 import type { MissingRequiredInputMetadata } from './validationMetadata';
@@ -921,8 +921,8 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             return;
         }
 
-        const component = await resolveLocalComponent(localPath, document);
-        if (!component) {
+        const outcome = await resolveLocalIncludeOutcome(localPath, document);
+        if (outcome.kind === 'unreadable') {
             const line = this.findLineForComponent(document, includes, includeIndex);
             const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
             const diagnostic = new vscode.Diagnostic(
@@ -935,6 +935,14 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             diagnostics.push(diagnostic);
             return;
         }
+
+        // `skipped` (glob/`..`/no root) and `no-spec` (a valid plain include with no `spec:` block) both have no
+        // inputs to validate — leave them alone rather than reporting a spurious not-found.
+        if (outcome.kind !== 'component') {
+            this.logger.debug(`[ValidationProvider] Local include not a parameterised template (${outcome.kind}), skipping: ${localPath}`, 'ValidationProvider');
+            return;
+        }
+        const component = outcome.component;
 
         if (!component.parameters || component.parameters.length === 0) {
             this.logger.debug(`[ValidationProvider] Local include has no spec.inputs, skipping input validation: ${localPath}`, 'ValidationProvider');

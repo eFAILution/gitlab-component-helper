@@ -183,15 +183,91 @@ async function readIncludeTarget(uri: vscode.Uri): Promise<string | null> {
 }
 
 /**
- * Resolve a local include path into a synthetic `Component` so the rest of the providers can treat it identically to
- * a catalog component. Reads the target file (preferring an open editor buffer), parses every YAML document in it,
- * picks the first one declaring `spec`, and maps `spec.inputs` onto `ComponentParameter[]`.
+ * The outcome of resolving a `local:` include, discriminating the reasons resolution can fail to yield a component.
  *
- * Returns `null` for several distinct reasons, all of which the caller treats the same way (no spurious diagnostics):
- *   - the path is a glob or contains `..` (see `isUnsupportedLocalPath`)
- *   - no resolution root is available (no document, no Git repo, no workspace folder)
- *   - the file doesn't exist or can't be read
- *   - the file parses but has no `spec` block (a legitimate plain include, not a parameterised template)
+ * `unreadable` and `no-spec` look identical to callers that only want the component, but they are opposites to the
+ * validator: `unreadable` is a real problem (the included file is missing or can't be read) worth a diagnostic,
+ * whereas `no-spec` is a legitimate plain include (hidden jobs, `.pre`/`.post`, cache config) with nothing to
+ * validate and must stay silent. Collapsing both to `null` is what made valid non-parameterised includes report a
+ * spurious "file not found" warning.
+ */
+export type LocalIncludeOutcome =
+  | { kind: 'component'; component: Component }
+  /** Path is a glob/`..`, or no resolution root is available — not something to diagnose. */
+  | { kind: 'skipped' }
+  /** The include target is missing or unreadable — the validator surfaces this as a diagnostic. */
+  | { kind: 'unreadable' }
+  /** The target was read and parsed but declares no `spec:` document — a valid plain include, nothing to validate. */
+  | { kind: 'no-spec' };
+
+/**
+ * Resolve a local include path into a {@link LocalIncludeOutcome}. Reads the target file (preferring an open editor
+ * buffer), parses every YAML document in it, picks the first one declaring `spec`, and maps `spec.inputs` onto
+ * `ComponentParameter[]`.
+ *
+ * @param localPath  The raw path string from a parsed `include: - local:` entry.
+ * @param document   The document making the include. Used to determine the resolution root and the open-buffer fast path.
+ * @returns          The resolution outcome — a `component` on success, or one of `skipped`/`unreadable`/`no-spec`.
+ */
+export async function resolveLocalIncludeOutcome(
+  localPath: string,
+  document?: vscode.TextDocument
+): Promise<LocalIncludeOutcome> {
+  if (isUnsupportedLocalPath(localPath)) {
+    return { kind: 'skipped' };
+  }
+
+  const uri = resolveLocalIncludeUri(localPath, document);
+  if (!uri) {
+    logger.debug(`[LocalComponentResolver] No resolution root available for: ${localPath}`, 'LocalComponentResolver');
+    return { kind: 'skipped' };
+  }
+
+  const text = await readIncludeTarget(uri);
+  if (text === null) {
+    return { kind: 'unreadable' };
+  }
+  let docs: unknown[];
+  try {
+    docs = yaml.loadAll(text);
+  } catch (err) {
+    logger.debug(`[LocalComponentResolver] Failed to parse ${uri.fsPath}: ${err}`, 'LocalComponentResolver');
+    // The file exists and was read; it just isn't valid YAML. That's a plain include we can't extract inputs from,
+    // not a missing file — treat it like a no-spec include rather than a false "not found".
+    return { kind: 'no-spec' };
+  }
+  const specDoc = docs.find(
+    (d): d is { spec?: { inputs?: unknown } } => !!d && typeof d === 'object' && 'spec' in d
+  );
+  if (!specDoc) {
+    logger.debug(`[LocalComponentResolver] ${uri.fsPath} has no spec document`, 'LocalComponentResolver');
+    return { kind: 'no-spec' };
+  }
+
+  const specInputs = specDoc.spec && specDoc.spec.inputs;
+  const parameters = parseInputs(specInputs);
+  const displayName = path.basename(localPath);
+  const url = buildLocalComponentUrl(localPath);
+
+  return {
+    kind: 'component',
+    component: {
+      name: displayName,
+      description: `Local include: \`${localPath}\``,
+      parameters,
+      source: 'local',
+      url,
+      originalUrl: url,
+      sourcePath: localPath,
+    },
+  };
+}
+
+/**
+ * Resolve a local include path into a synthetic `Component`, or `null` when no component can be produced (unsupported
+ * path, no resolution root, unreadable file, or no `spec` block). A thin wrapper over
+ * {@link resolveLocalIncludeOutcome} for callers (completion, include detection) that only need the component and
+ * treat every failure the same way.
  *
  * @param localPath  The raw path string from a parsed `include: - local:` entry.
  * @param document   The document making the include. Used to determine the resolution root and the open-buffer fast path.
@@ -201,49 +277,8 @@ export async function resolveLocalComponent(
   localPath: string,
   document?: vscode.TextDocument
 ): Promise<Component | null> {
-  if (isUnsupportedLocalPath(localPath)) {
-    return null;
-  }
-
-  const uri = resolveLocalIncludeUri(localPath, document);
-  if (!uri) {
-    logger.debug(`[LocalComponentResolver] No resolution root available for: ${localPath}`, 'LocalComponentResolver');
-    return null;
-  }
-
-  const text = await readIncludeTarget(uri);
-  if (text === null) {
-    return null;
-  }
-  let docs: unknown[];
-  try {
-    docs = yaml.loadAll(text);
-  } catch (err) {
-    logger.debug(`[LocalComponentResolver] Failed to parse ${uri.fsPath}: ${err}`, 'LocalComponentResolver');
-    return null;
-  }
-  const specDoc = docs.find(
-    (d): d is { spec?: { inputs?: unknown } } => !!d && typeof d === 'object' && 'spec' in d
-  );
-  if (!specDoc) {
-    logger.debug(`[LocalComponentResolver] ${uri.fsPath} has no spec document`, 'LocalComponentResolver');
-    return null;
-  }
-
-  const specInputs = specDoc.spec && specDoc.spec.inputs;
-  const parameters = parseInputs(specInputs);
-  const displayName = path.basename(localPath);
-  const url = buildLocalComponentUrl(localPath);
-
-  return {
-    name: displayName,
-    description: `Local include: \`${localPath}\``,
-    parameters,
-    source: 'local',
-    url,
-    originalUrl: url,
-    sourcePath: localPath,
-  };
+  const outcome = await resolveLocalIncludeOutcome(localPath, document);
+  return outcome.kind === 'component' ? outcome.component : null;
 }
 
 /**

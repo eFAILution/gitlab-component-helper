@@ -92,9 +92,15 @@ suite('Local include support', () => {
     );
   });
 
-  test('missing local include file produces a not-found diagnostic', async () => {
+  test('missing local include file produces a not-found diagnostic on the missing-file line', async () => {
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(FIXTURE));
     await vscode.window.showTextDocument(doc);
+
+    const missingLine = doc
+      .getText()
+      .split('\n')
+      .findIndex((l) => l.includes('missing-template.yml'));
+    assert.ok(missingLine !== -1, 'fixture missing the missing-template.yml include');
 
     const diags = await waitForDiagnostics(doc.uri);
     const notFound = diags.find(
@@ -103,6 +109,34 @@ suite('Local include support', () => {
     assert.ok(
       notFound,
       `expected a local-include-not-found diagnostic. Got: ${JSON.stringify(diags.map((d) => ({ code: d.code, msg: d.message })))}`
+    );
+    assert.strictEqual(
+      notFound.range.start.line,
+      missingLine,
+      'the not-found diagnostic should anchor to the missing-template.yml line'
+    );
+  });
+
+  test('a valid local include with no spec: block produces no not-found diagnostic (regression)', async () => {
+    // `no-spec.yml` exists and is readable but declares hidden jobs, not a `spec:` component. It is a legitimate
+    // plain include with nothing to validate — it must not be reported as "file not found or unreadable".
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(FIXTURE));
+    await vscode.window.showTextDocument(doc);
+
+    const noSpecLine = doc
+      .getText()
+      .split('\n')
+      .findIndex((l) => l.includes('no-spec.yml'));
+    assert.ok(noSpecLine !== -1, 'fixture missing the no-spec.yml include');
+
+    await waitForDiagnostics(doc.uri);
+    const onNoSpecLine = vscode.languages
+      .getDiagnostics(doc.uri)
+      .filter((d) => d.source === 'gitlab-component-helper' && d.range.start.line === noSpecLine);
+    assert.deepStrictEqual(
+      onNoSpecLine.map((d) => d.code),
+      [],
+      `expected no diagnostics on the no-spec include line. Got: ${JSON.stringify(onNoSpecLine.map((d) => ({ code: d.code, msg: d.message })))}`
     );
   });
 
