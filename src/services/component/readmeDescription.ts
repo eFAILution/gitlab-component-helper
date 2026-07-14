@@ -1,7 +1,12 @@
 /**
- * Functions for deriving a component description from its README — operating on already-fetched text and
- * resolved paths.
+ * Deriving a component description from its README: locating and fetching the file, then extracting the
+ * first prose paragraph.
  */
+
+/** The slice of the HTTP client this module needs — the real `HttpClient` satisfies it. */
+export interface ReadmeHttpClient {
+  fetchText(url: string, options?: { headers?: Record<string, string> }): Promise<string>;
+}
 
 /**
  * Remove HTML comments (`<!-- … -->`) from `text`.
@@ -63,19 +68,14 @@ export function firstParagraph(readme: string | undefined): string | undefined {
   }
   const blocks = stripHtmlComments(readme).split(/\n\s*\n/);
   for (const block of blocks) {
-    const text = block.trim();
-    if (!text) {
-      continue;
+    // Within a block, drop leading heading and badge/image lines so a `# Title` immediately followed by
+    // prose (no blank line between) still yields the prose rather than being skipped whole.
+    const prose = block
+      .split('\n')
+      .filter((line) => line.trim() && !/^\s*#+\s/.test(line) && !isBadgeOrImageOnly(line));
+    if (prose.length > 0) {
+      return prose.join('\n').trim();
     }
-    // Skip a top-level title and badge/image-only blocks (every line is a link or image).
-    if (/^#\s/.test(text)) {
-      continue;
-    }
-    const lines = text.split('\n');
-    if (lines.every(isBadgeOrImageOnly)) {
-      continue;
-    }
-    return text.replace(/^#+\s*/, '').trim();
   }
   return undefined;
 }
@@ -101,4 +101,45 @@ export function readmeDirForTemplate(templatePath: string | undefined): string {
     return '';
   }
   return templatePath.slice(0, lastSlash);
+}
+
+/** README filename/casing variants tried, in order, within each candidate directory. */
+const README_NAMES = ['README.md', 'README.MD', 'readme.md', 'README', 'README.rst', 'README.txt'];
+
+/**
+ * Fetch a README, trying {@link README_NAMES} under each of `dirs` in order. A component's own README lives
+ * next to its template (`templates/<name>/README.md`), so callers pass that directory ahead of the root.
+ *
+ * @param http         Structural HTTP client (the real `HttpClient` satisfies it).
+ * @param apiBaseUrl   GitLab API v4 base.
+ * @param projectId    Numeric or string project id for the raw-file endpoint.
+ * @param version      Git ref to read each file at.
+ * @param dirs         Directories to search, in priority order; `''` means the repo root.
+ * @param fetchOptions Optional request headers.
+ * @returns            The raw text of the first README that exists, or `null` when none are present (or the fetch fails).
+ */
+export async function fetchReadme(
+  http: ReadmeHttpClient,
+  apiBaseUrl: string,
+  projectId: string | number,
+  version: string,
+  dirs: string[],
+  fetchOptions?: { headers?: Record<string, string> }
+): Promise<string | null> {
+  for (const dir of dirs) {
+    const prefix = dir ? `${dir.replace(/\/$/, '')}/` : '';
+    for (const name of README_NAMES) {
+      const path = `${prefix}${name}`;
+      const url = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(path)}/raw?ref=${version}`;
+      try {
+        const content = await http.fetchText(url, fetchOptions);
+        if (content && content.trim()) {
+          return content;
+        }
+      } catch {
+        // try next candidate
+      }
+    }
+  }
+  return null;
 }

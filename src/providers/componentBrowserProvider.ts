@@ -9,6 +9,7 @@ import type { HoverContext } from './hoverContentBuilder';
 import { containsGitLabVariables } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
+import { escapeHtml, renderInlineMarkdown } from '../webview/inlineMarkdown';
 import { generateComponentText } from './componentBrowserGenerate';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
 import { transformCachedComponentsToGroups } from './componentBrowserTransform';
@@ -243,7 +244,7 @@ export class ComponentBrowserProvider {
             if (catalogData && catalogData.components && catalogData.components.length > 0) {
               const components = catalogData.components.map((c: GitLabCatalogComponent) => ({
                 name: c.name,
-                description: c.description || `Component from ${contextPath}`,
+                description: c.description || '',
                 summary: c.summary,
                 usage: c.usage,
                 notes: c.notes,
@@ -741,7 +742,7 @@ export class ComponentBrowserProvider {
               const hasVersions = component.availableVersions && component.availableVersions.length > 0;
 
               return `
-              <div class="component-card" data-name="${component.name}" data-description="${component.description}" data-component-name="${component.name}" data-project-id="${projectId}" data-source-path="${component.sourcePath}" data-gitlab-instance="${component.gitlabInstance}" id="component-${componentKey}">
+              <div class="component-card" data-name="${component.name}" data-description="${this.escapeHtml(component.description || '')}" data-component-name="${component.name}" data-project-id="${projectId}" data-source-path="${component.sourcePath}" data-gitlab-instance="${component.gitlabInstance}" id="component-${componentKey}">
                 <div class="component-header">
                   <span class="component-title">
                     ${component.name}
@@ -762,7 +763,7 @@ export class ComponentBrowserProvider {
                     `}
                   </div>
                 </div>
-                <div class="component-description" id="desc-${component.name}-${projectId}">${component.description}</div>
+                <div class="component-description" id="desc-${component.name}-${projectId}">${this.renderInlineMarkdown(component.description || '')}</div>
                 ${hasVersions && component.availableVersions.length > 1 ? `
                   <div class="version-info" id="version-info-${component.name}-${projectId}">
                     <small>Default version: ${component.defaultVersion}</small>
@@ -1134,6 +1135,8 @@ export class ComponentBrowserProvider {
         <script>
           const vscode = acquireVsCodeApi();
 
+          ${this.clientRenderInlineMarkdownSource()}
+
           // Inject component version data for client-side version switching
           window.componentVersionData = ${versionDataJson};
 
@@ -1284,7 +1287,7 @@ export class ComponentBrowserProvider {
             // Update the description
             const descElement = document.getElementById('desc-' + componentName + '-' + projectId);
             if (descElement) {
-              descElement.textContent = versionData.description;
+              descElement.innerHTML = renderInlineMarkdown(versionData.description);
             }
 
             // Update version info
@@ -1847,21 +1850,7 @@ export class ComponentBrowserProvider {
           let currentVersions = ${JSON.stringify(availableVersions)};
           let versionsLoaded = ${availableVersions.length > 1};
 
-          // Render a single-paragraph description with inline Markdown (links, bold, italic, code). HTML is
-          // escaped first so nothing in the source can inject markup; only the patterns below re-introduce tags.
-          // Patterns use new RegExp(...) so their escaping isn't mangled by this webview HTML template literal.
-          function renderInlineMarkdown(text) {
-            const escaped = String(text || '')
-              .replace(new RegExp('&', 'g'), '&amp;')
-              .replace(new RegExp('<', 'g'), '&lt;')
-              .replace(new RegExp('>', 'g'), '&gt;')
-              .replace(new RegExp('"', 'g'), '&quot;');
-            return escaped
-              .replace(new RegExp('\`([^\`]+)\`', 'g'), '<code>$1</code>')
-              .replace(new RegExp('\\[([^\\]]+)\\]\\((https?://[^\\s)]+)\\)', 'g'), '<a href="$2">$1</a>')
-              .replace(new RegExp('\\*\\*([^*]+)\\*\\*', 'g'), '<strong>$1</strong>')
-              .replace(new RegExp('(^|[^*])\\*([^*]+)\\*', 'g'), '$1<em>$2</em>');
-          }
+          ${this.clientRenderInlineMarkdownSource()}
 
           function insertComponent() {
             const selectedVersion = document.getElementById('versionSelect').value;
@@ -2197,27 +2186,35 @@ export class ComponentBrowserProvider {
   }
 
   private escapeHtml(value: string): string {
-    return value
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+    return escapeHtml(value);
+  }
+
+  private renderInlineMarkdown(value: string): string {
+    return renderInlineMarkdown(value);
   }
 
   /**
-   * Render a single-paragraph description with inline Markdown (links, bold, italic, code). Escapes HTML
-   * first so the source can't inject markup; only these patterns re-introduce tags. `http(s)` links only.
-   *
-   * @param value The raw description text (may contain inline Markdown).
-   * @returns     HTML-safe markup with inline Markdown converted to `<a>`/`<code>`/`<strong>`/`<em>` tags.
+   * Source for the client-side twin of {@link renderInlineMarkdown}, injected into every webview `<script>`
+   * that renders a description so all render paths escape and format identically. Kept as one string (not
+   * duplicated per script) so the twins can't drift. `new RegExp(...)` avoids the webview HTML template
+   * literal mangling the pattern escaping; the escape set (incl. `'`) mirrors the server `escapeHtml`.
    */
-  private renderInlineMarkdown(value: string): string {
-    return this.escapeHtml(value)
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>')
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
+  private clientRenderInlineMarkdownSource(): string {
+    return `
+      function renderInlineMarkdown(text) {
+        const escaped = String(text || '')
+          .replace(new RegExp('&', 'g'), '&amp;')
+          .replace(new RegExp('<', 'g'), '&lt;')
+          .replace(new RegExp('>', 'g'), '&gt;')
+          .replace(new RegExp('"', 'g'), '&quot;')
+          .replace(new RegExp("'", 'g'), '&#39;');
+        return escaped
+          .replace(new RegExp('\`([^\`]+)\`', 'g'), '<code>$1</code>')
+          .replace(new RegExp('\\[([^\\]]+)\\]\\((https?://[^\\s)]+)\\)', 'g'), '<a href="$2">$1</a>')
+          .replace(new RegExp('\\*\\*([^*]+)\\*\\*', 'g'), '<strong>$1</strong>')
+          .replace(new RegExp('(^|[^*])\\*([^*]+)\\*', 'g'), '$1<em>$2</em>');
+      }
+    `;
   }
 
   private buildTemplateFileUrl(component: Component): string | undefined {

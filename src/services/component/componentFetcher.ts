@@ -19,7 +19,7 @@ import {
   buildCatalogComponents,
   fetchAllTemplateFiles,
 } from './componentFetcherTemplates';
-import { firstParagraph, readmeDirForTemplate } from './readmeDescription';
+import { fetchReadme, firstParagraph, readmeDirForTemplate } from './readmeDescription';
 
 /**
  * Prompt the user for a GitLab personal access token for `gitlabInstance`.
@@ -203,7 +203,8 @@ export class ComponentFetcher {
             // If the catalog omits a description, fall back to the component's README.
             const readmeDirs = [readmeDirForTemplate(templateResult?.templatePath), ''];
             const readme =
-              (await this.fetchReadme(
+              (await fetchReadme(
+                this.httpClient,
                 apiBaseUrl,
                 encodedProjectPath,
                 version,
@@ -289,7 +290,7 @@ export class ComponentFetcher {
       // A component's README sits next to its template; fall back to the repo root for flat layouts.
       const readmeDirs = [readmeDirForTemplate(resolvedTemplatePath), ''];
       const readme =
-        (await this.fetchReadme(apiBaseUrl, encodedProjectPath, version, readmeDirs, fetchOptions)) ??
+        (await fetchReadme(this.httpClient, apiBaseUrl, encodedProjectPath, version, readmeDirs, fetchOptions)) ??
         undefined;
 
       // Prefer the project description; when absent, fall back to the README's first meaningful paragraph.
@@ -399,50 +400,6 @@ export class ComponentFetcher {
       this.logger.debug(`Could not fetch component template: ${error}`);
       return null;
     }
-  }
-
-  /**
-   * Fetch a README, trying the common filename/casing variants under each of `dirs` in order. A component's
-   * own README lives next to its template (`templates/<name>/README.md`), so callers pass that directory
-   * ahead of the root.
-   *
-   * @param apiBaseUrl   GitLab API v4 base.
-   * @param projectId    Numeric or string project id for the raw-file endpoint.
-   * @param version      Git ref to read each file at.
-   * @param dirs         Directories to search, in priority order; `''` means the repo root.
-   * @param fetchOptions Optional request headers.
-   * @returns            The raw text of the first README that exists, or `null` when none are present (or the fetch fails).
-   */
-  private async fetchReadme(
-    apiBaseUrl: string,
-    projectId: string,
-    version: string,
-    dirs: string[],
-    fetchOptions?: { headers?: Record<string, string> }
-  ): Promise<string | null> {
-    const names = ['README.md', 'README.MD', 'readme.md', 'README', 'README.rst', 'README.txt'];
-
-    for (const dir of dirs) {
-      const prefix = dir ? `${dir.replace(/\/$/, '')}/` : '';
-      for (const name of names) {
-        const path = `${prefix}${name}`;
-        const readmeUrl = `${apiBaseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(
-          path
-        )}/raw?ref=${version}`;
-        try {
-          const content = await this.httpClient.fetchText(readmeUrl, fetchOptions);
-          if (content && content.trim()) {
-            this.logger.debug(`[ComponentFetcher] README found at ${path}, length: ${content.length} chars`);
-            return content;
-          }
-        } catch {
-          // try next candidate
-        }
-      }
-    }
-
-    this.logger.debug(`[ComponentFetcher] No README found at known paths`);
-    return null;
   }
 
   /**

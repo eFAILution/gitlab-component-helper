@@ -63,8 +63,12 @@ suite('firstParagraph', () => {
     assert.equal(firstParagraph(readme), 'Real prose.');
   });
 
-  test('strips heading markers when the first block is a lower-level heading', () => {
-    assert.equal(firstParagraph('## Overview\nSome text'), 'Overview\nSome text');
+  test('drops a heading line and keeps the prose in the same block', () => {
+    assert.equal(firstParagraph('## Overview\nSome text'), 'Some text');
+  });
+
+  test('keeps prose when a H1 shares a block with it (no blank line between)', () => {
+    assert.equal(firstParagraph('# Title\nDescription on next line'), 'Description on next line');
   });
 
   test('returns undefined when there is no usable prose', () => {
