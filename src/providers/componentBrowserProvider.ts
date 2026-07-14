@@ -10,6 +10,7 @@ import { containsGitLabVariables } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
 import { escapeHtml, renderInlineMarkdown } from '../webview/inlineMarkdown';
+import { serializeForScript } from '../webview/scriptData';
 import { generateComponentText } from './componentBrowserGenerate';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
 import { transformCachedComponentsToGroups } from './componentBrowserTransform';
@@ -705,7 +706,7 @@ export class ComponentBrowserProvider {
       return acc;
     }, {});
 
-    const versionDataJson = JSON.stringify(versionData);
+    const versionDataJson = serializeForScript(versionData);
 
     // Build error section HTML
     const hasAuthError = Object.values(cacheErrors).some(error => this.classifySourceError(error).isAuth);
@@ -1847,7 +1848,7 @@ export class ComponentBrowserProvider {
 
         <script>
           const vscode = acquireVsCodeApi();
-          let currentVersions = ${JSON.stringify(availableVersions)};
+          let currentVersions = ${serializeForScript(availableVersions)};
           let versionsLoaded = ${availableVersions.length > 1};
 
           ${this.clientRenderInlineMarkdownSource()}
