@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+# [0.17.0](https://github.com/eFAILution/gitlab-component-helper/compare/0.16.0...0.17.0) (2026-07-14)
+
+
+### Bug Fixes
+
+* **security:** escape component data injected into browser webview <script> ([f36dcd5](https://github.com/eFAILution/gitlab-component-helper/commit/f36dcd58ea76299d87d4956a706046a65a5270d2)), closes [#237](https://github.com/eFAILution/gitlab-component-helper/issues/237)
+
+
+### Features
+
+* derive component descriptions from README when none is declared ([479244d](https://github.com/eFAILution/gitlab-component-helper/commit/479244d9f4e73adb1422595b4aeb14a678d36fbd))
+
 # [0.16.0](https://github.com/eFAILution/gitlab-component-helper/compare/0.14.5...0.16.0) (2026-07-08)
 
 
