@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.2](https://github.com/eFAILution/gitlab-component-helper/compare/0.16.1...0.16.2) (2026-07-14)
+
+
+### Bug Fixes
+
+* **browser:** merge hover-fetched components into their configured source group ([#230](https://github.com/eFAILution/gitlab-component-helper/issues/230)) ([967a8e9](https://github.com/eFAILution/gitlab-component-helper/commit/967a8e9fb2eb2d475a1809b31652df4228bb071f))
+* **links:** show component links on first view ([#232](https://github.com/eFAILution/gitlab-component-helper/issues/232)) ([25189a3](https://github.com/eFAILution/gitlab-component-helper/commit/25189a3f30f2c7a94a24bda0f9c68f59cb06b47f))
+* **parser:** resolve include in multi-document component templates ([#226](https://github.com/eFAILution/gitlab-component-helper/issues/226)) ([b994abc](https://github.com/eFAILution/gitlab-component-helper/commit/b994abc65bc8e4b3f28ec5b01900aa81aff5948c))
+* **validation:** a local include with no spec block is no longer reported as not found ([#228](https://github.com/eFAILution/gitlab-component-helper/issues/228)) ([1d9997b](https://github.com/eFAILution/gitlab-component-helper/commit/1d9997b21bff9eb18f46002a5fc5b297280b34db))
+
 # [0.17.0](https://github.com/eFAILution/gitlab-component-helper/compare/0.16.0...0.17.0) (2026-07-14)
 
 
