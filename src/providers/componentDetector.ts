@@ -97,7 +97,6 @@ export interface Component {
   version?: string;
   source?: string;
   documentationUrl?: string;
-  readme?: string; // Add README content as separate field
   url?: string; // Component URL
   gitlabInstance?: string; // GitLab instance
   sourcePath?: string; // Source path
@@ -326,8 +325,6 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
     if (cachedComponent) {
       logger.debug(`[ComponentDetector] Found matching component in cache: ${cachedComponent.name}`, 'ComponentDetector');
       logger.debug(`[ComponentDetector] Cached version: ${cachedComponent.version}, Requested version: ${requestedVersion || 'unspecified'}`, 'ComponentDetector');
-      logger.debug(`[ComponentDetector] Cached component has README: ${!!cachedComponent.readme}`, 'ComponentDetector');
-      logger.debug(`[ComponentDetector] Cached README length: ${cachedComponent.readme ? cachedComponent.readme.length : 0}`, 'ComponentDetector');
 
       // If the requested version matches the cached version, return cached data — but for mutable branch refs first
       // confirm the branch hasn't moved since we cached it.
@@ -353,7 +350,6 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
             gitlabInstance: cachedComponent.gitlabInstance,
             sourcePath: cachedComponent.sourcePath,
             templatePath: cachedComponent.templatePath,
-            readme: cachedComponent.readme || '', // Include README from cache
             resolvedSha: cachedComponent.resolvedSha,
             context: {
               gitlabInstance: cachedComponent.gitlabInstance,
@@ -377,7 +373,6 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
 
         if (specificVersionComponent) {
           logger.debug(`[ComponentDetector] Successfully fetched specific version ${requestedVersion} for ${cachedComponent.name}`, 'ComponentDetector');
-          logger.debug(`[ComponentDetector] Fetched component has README: ${!!specificVersionComponent.readme}`, 'ComponentDetector');
 
           const cacheVersion = requestedVersion || 'main';
           // Authoritatively classify the ref, then record the branch HEAD + timestamp so the next hover can detect a
@@ -649,25 +644,18 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
       return null;
     }
 
-    // Convert to our Component interface
-    // Use the componentService to get proper description and README data
+    // Convert to our Component interface. The catalog list omits the resolved template path and, for
+    // description-less components, the README-derived description — so fetch the full component to get both.
     let componentDescription = foundComponent.description;
-    let readmeContent = '';
     let resolvedTemplatePath: string | undefined;
 
-    // Always fetch full component metadata for README content, even if we have a description
     try {
       const fullComponentUrl = `https://${gitlabInstance}/${projectPath}/${componentName}@${version}`;
-      logger.debug(`[ComponentDetector] Fetching full component metadata for README: ${fullComponentUrl}`, 'ComponentDetector');
       const fullComponent = await componentService.getComponentFromUrl(fullComponentUrl);
       if (fullComponent) {
-        logger.debug(`[ComponentDetector] Full component fetched successfully, has README: ${!!fullComponent.readme}`, 'ComponentDetector');
-        logger.debug(`[ComponentDetector] README length: ${fullComponent.readme ? fullComponent.readme.length : 0}`, 'ComponentDetector');
-        // Use catalog description if available, otherwise use full component description
         if (!componentDescription) {
           componentDescription = fullComponent.description;
         }
-        readmeContent = fullComponent.readme || '';
         resolvedTemplatePath = fullComponent.templatePath;
       } else {
         logger.debug(`[ComponentDetector] Full component fetch returned null`, 'ComponentDetector');
@@ -676,14 +664,9 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
       logger.debug(`[ComponentDetector] Could not fetch full component metadata: ${error}`, 'ComponentDetector');
     }
 
-    // Apply fallback logic if still no description
-    if (!componentDescription) {
-      componentDescription = 'Component/Project does not have a description';
-    }
-
     const dynamicComponent: Component = {
       name: foundComponent.name,
-      description: componentDescription,
+      description: componentDescription || '',
       summary: foundComponent.summary,
       usage: foundComponent.usage,
       notes: foundComponent.notes,
@@ -703,7 +686,6 @@ async function fetchComponentDynamically(componentUrl: string, originalUrl?: str
       sourcePath: projectPath,
       templatePath: resolvedTemplatePath,
       documentationUrl: foundComponent.documentation_url,
-      readme: readmeContent, // Include README content from full fetch
       context: {
         gitlabInstance: gitlabInstance,
         path: projectPath

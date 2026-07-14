@@ -49,7 +49,7 @@ export class ProjectCache {
 
           return {
             name: c.name,
-            description: c.description || `Component from ${sourceName}`,
+            description: c.description || '',
             parameters: (c.variables || []).map(v => ({
               name: v.name,
               description: v.description || `Parameter: ${v.name}`,
@@ -153,7 +153,7 @@ export class ProjectCache {
       // Create cached component entry
       const cachedComponent: CachedComponent = {
         name: catalogComponent.name,
-        description: catalogComponent.description || `Component from ${sourcePath}`,
+        description: catalogComponent.description || '',
         parameters: (catalogComponent.variables || []).map(v => ({
           name: v.name,
           description: v.description || `Parameter: ${v.name}`,

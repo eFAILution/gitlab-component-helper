@@ -11,6 +11,7 @@ import type { GitLabTreeItem } from '../../types/api';
 import type { ParsedCatalogComponent } from '../../types/gitlab-catalog';
 import type { ComponentParameter } from '../../types/git-component';
 import { GitLabSpecParser } from '../../parsers/specParser';
+import { fetchReadme, firstParagraph, readmeDirForTemplate } from './readmeDescription';
 
 /**
  * Filter a list of repository-tree entries down to the YAML *blobs* (not subdirectories). Used for both the
@@ -171,9 +172,16 @@ export async function buildCatalogComponents(
         const parsedSpec = GitLabSpecParser.parse(content, relativePath);
         if (!parsedSpec.isValidComponent) return null;
 
+        // No spec description → fall back to the component's README (its dir, then repo root).
+        let description = parsedSpec.description?.trim() || '';
+        if (!description) {
+          const readmeDirs = [readmeDirForTemplate(file.path), ''];
+          description = firstParagraph((await fetchReadme(http, apiBaseUrl, projectId, ref, readmeDirs, fetchOptions)) ?? undefined) || '';
+        }
+
         return {
           name,
-          description: parsedSpec.description || `${name} component`,
+          description,
           variables: parsedSpec.variables,
           latest_version: ref,
           templatePath: file.path,

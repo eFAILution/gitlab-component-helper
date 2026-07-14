@@ -52,7 +52,6 @@
       ],
       "version": "2.1.0",
       "source": "gitlab.example.com/components/advanced",
-      "readme": "# Advanced Component\n\nThis is a comprehensive component for advanced deployment scenarios.\n\n## Features\n\n- Multi-environment support\n- Version management\n- Debug capabilities\n- Rollback functionality\n\n## Usage\n\n```yaml\ninclude:\n  - component: https://gitlab.example.com/components/advanced/advanced-component@2.1.0\n    inputs:\n      environment: production\n      version: v1.2.3\n      debug: false\n      replicas: 5\n```",
       "context": {
         "gitlabInstance": "gitlab.example.com",
         "path": "components/advanced"

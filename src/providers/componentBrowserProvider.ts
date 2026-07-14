@@ -9,6 +9,8 @@ import type { HoverContext } from './hoverContentBuilder';
 import { containsGitLabVariables } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
+import { escapeHtml, renderInlineMarkdown } from '../webview/inlineMarkdown';
+import { serializeForScript } from '../webview/scriptData';
 import { generateComponentText } from './componentBrowserGenerate';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
 import { transformCachedComponentsToGroups } from './componentBrowserTransform';
@@ -243,7 +245,7 @@ export class ComponentBrowserProvider {
             if (catalogData && catalogData.components && catalogData.components.length > 0) {
               const components = catalogData.components.map((c: GitLabCatalogComponent) => ({
                 name: c.name,
-                description: c.description || `Component from ${contextPath}`,
+                description: c.description || '',
                 summary: c.summary,
                 usage: c.usage,
                 notes: c.notes,
@@ -704,7 +706,7 @@ export class ComponentBrowserProvider {
       return acc;
     }, {});
 
-    const versionDataJson = JSON.stringify(versionData);
+    const versionDataJson = serializeForScript(versionData);
 
     // Build error section HTML
     const hasAuthError = Object.values(cacheErrors).some(error => this.classifySourceError(error).isAuth);
@@ -741,7 +743,7 @@ export class ComponentBrowserProvider {
               const hasVersions = component.availableVersions && component.availableVersions.length > 0;
 
               return `
-              <div class="component-card" data-name="${component.name}" data-description="${component.description}" data-component-name="${component.name}" data-project-id="${projectId}" data-source-path="${component.sourcePath}" data-gitlab-instance="${component.gitlabInstance}" id="component-${componentKey}">
+              <div class="component-card" data-name="${component.name}" data-description="${this.escapeHtml(component.description || '')}" data-component-name="${component.name}" data-project-id="${projectId}" data-source-path="${component.sourcePath}" data-gitlab-instance="${component.gitlabInstance}" id="component-${componentKey}">
                 <div class="component-header">
                   <span class="component-title">
                     ${component.name}
@@ -762,7 +764,7 @@ export class ComponentBrowserProvider {
                     `}
                   </div>
                 </div>
-                <div class="component-description" id="desc-${component.name}-${projectId}">${component.description}</div>
+                <div class="component-description" id="desc-${component.name}-${projectId}">${this.renderInlineMarkdown(component.description || '')}</div>
                 ${hasVersions && component.availableVersions.length > 1 ? `
                   <div class="version-info" id="version-info-${component.name}-${projectId}">
                     <small>Default version: ${component.defaultVersion}</small>
@@ -1134,6 +1136,8 @@ export class ComponentBrowserProvider {
         <script>
           const vscode = acquireVsCodeApi();
 
+          ${this.clientRenderInlineMarkdownSource()}
+
           // Inject component version data for client-side version switching
           window.componentVersionData = ${versionDataJson};
 
@@ -1284,7 +1288,7 @@ export class ComponentBrowserProvider {
             // Update the description
             const descElement = document.getElementById('desc-' + componentName + '-' + projectId);
             if (descElement) {
-              descElement.textContent = versionData.description;
+              descElement.innerHTML = renderInlineMarkdown(versionData.description);
             }
 
             // Update version info
@@ -1736,7 +1740,7 @@ export class ComponentBrowserProvider {
         <h1 id="componentName">${component.name}</h1>
 
         <div class="description" id="componentDescription">
-          ${component.description}
+          ${this.renderInlineMarkdown(component.description || '')}
         </div>
 
         <div class="metadata" id="componentContext" style="display: ${hasContext ? 'block' : 'none'};">
@@ -1844,8 +1848,10 @@ export class ComponentBrowserProvider {
 
         <script>
           const vscode = acquireVsCodeApi();
-          let currentVersions = ${JSON.stringify(availableVersions)};
+          let currentVersions = ${serializeForScript(availableVersions)};
           let versionsLoaded = ${availableVersions.length > 1};
+
+          ${this.clientRenderInlineMarkdownSource()}
 
           function insertComponent() {
             const selectedVersion = document.getElementById('versionSelect').value;
@@ -1944,7 +1950,7 @@ export class ComponentBrowserProvider {
             document.getElementById('componentName').textContent = component.name;
 
             // Update description
-            document.getElementById('componentDescription').textContent = component.description || 'No description available';
+            document.getElementById('componentDescription').innerHTML = renderInlineMarkdown(component.description || '');
 
             // Update context section (summary/usage/notes) from spec-compliant header comments
             const contextContainer = document.getElementById('componentContext');
@@ -2181,12 +2187,35 @@ export class ComponentBrowserProvider {
   }
 
   private escapeHtml(value: string): string {
-    return value
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+    return escapeHtml(value);
+  }
+
+  private renderInlineMarkdown(value: string): string {
+    return renderInlineMarkdown(value);
+  }
+
+  /**
+   * Source for the client-side twin of {@link renderInlineMarkdown}, injected into every webview `<script>`
+   * that renders a description so all render paths escape and format identically. Kept as one string (not
+   * duplicated per script) so the twins can't drift. `new RegExp(...)` avoids the webview HTML template
+   * literal mangling the pattern escaping; the escape set (incl. `'`) mirrors the server `escapeHtml`.
+   */
+  private clientRenderInlineMarkdownSource(): string {
+    return `
+      function renderInlineMarkdown(text) {
+        const escaped = String(text || '')
+          .replace(new RegExp('&', 'g'), '&amp;')
+          .replace(new RegExp('<', 'g'), '&lt;')
+          .replace(new RegExp('>', 'g'), '&gt;')
+          .replace(new RegExp('"', 'g'), '&quot;')
+          .replace(new RegExp("'", 'g'), '&#39;');
+        return escaped
+          .replace(new RegExp('\`([^\`]+)\`', 'g'), '<code>$1</code>')
+          .replace(new RegExp('\\[([^\\]]+)\\]\\((https?://[^\\s)]+)\\)', 'g'), '<a href="$2">$1</a>')
+          .replace(new RegExp('\\*\\*([^*]+)\\*\\*', 'g'), '<strong>$1</strong>')
+          .replace(new RegExp('(^|[^*])\\*([^*]+)\\*', 'g'), '$1<em>$2</em>');
+      }
+    `;
   }
 
   private buildTemplateFileUrl(component: Component): string | undefined {

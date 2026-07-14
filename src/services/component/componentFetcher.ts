@@ -19,6 +19,7 @@ import {
   buildCatalogComponents,
   fetchAllTemplateFiles,
 } from './componentFetcherTemplates';
+import { fetchReadme, firstParagraph, readmeDirForTemplate } from './readmeDescription';
 
 /**
  * Prompt the user for a GitLab personal access token for `gitlabInstance`.
@@ -199,10 +200,23 @@ export class ComponentFetcher {
               extractedParameters = backfillParameterOptions(extractedParameters, templateResult.parameters);
             }
 
+            // If the catalog omits a description, fall back to the component's README.
+            const readmeDirs = [readmeDirForTemplate(templateResult?.templatePath), ''];
+            const readme =
+              (await fetchReadme(
+                this.httpClient,
+                apiBaseUrl,
+                encodedProjectPath,
+                version,
+                readmeDirs,
+                catalogFetchOptions
+              )) ?? undefined;
+            const summary = catalogComponent.description?.trim() || firstParagraph(readme) || '';
+
             const component = {
               name: componentName,
               description:
-                `# ${componentName}\n\n${catalogComponent.description || ''}\n\n` +
+                `# ${componentName}\n\n${summary}\n\n` +
                 `**From GitLab CI/CD Catalog**\n` +
                 `**Project:** [${projectPath}](https://${gitlabInstance}/${projectPath})\n` +
                 `**Version:** ${version}\n\n` +
@@ -273,14 +287,14 @@ export class ComponentFetcher {
         this.logger.debug(`Found component template with ${parameters.length} parameters at ${templatePath}`);
       }
 
-      // Build component description with proper fallbacks
-      let cleanDescription = '';
+      // A component's README sits next to its template; fall back to the repo root for flat layouts.
+      const readmeDirs = [readmeDirForTemplate(resolvedTemplatePath), ''];
+      const readme =
+        (await fetchReadme(this.httpClient, apiBaseUrl, encodedProjectPath, version, readmeDirs, fetchOptions)) ??
+        undefined;
 
-      if (project.description && project.description.trim()) {
-        cleanDescription = project.description.trim();
-      } else {
-        cleanDescription = `Component/Project does not have a description`;
-      }
+      // Prefer the project description; when absent, fall back to the README's first meaningful paragraph.
+      const cleanDescription = project.description?.trim() || firstParagraph(readme) || '';
 
       // Construct the component
       const component: Component = {
