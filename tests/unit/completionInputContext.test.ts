@@ -365,7 +365,7 @@ include:
 
   test('resolves an in-progress name slot in a multi-document template (regression)', () => {
     // The half-typed name blanks the cursor line before re-parsing; that retry must still locate the
-    // `include`-bearing document past the `spec:` header rather than treating the whole stream as unparseable.
+    // `include`-bearing document past the `spec:` header rather than treating the whole stream as unparsable.
     const text = `spec:
   inputs:
     debug:
