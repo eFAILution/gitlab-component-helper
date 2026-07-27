@@ -38,7 +38,7 @@ include:
     assert.deepStrictEqual(docs, []);
   });
 
-  test('returns [] on unparsable input', () => {
+  test('returns [] on unparseable input', () => {
     assert.deepStrictEqual(parseYamlDocuments('key: "unterminated', true), []);
   });
 });
