@@ -3,6 +3,26 @@ import * as yaml from 'js-yaml';
 /** Loose object shape returned by `js-yaml`. Callers narrow via property checks before reading fields. */
 export type YamlNode = Record<string, unknown>;
 
+/**
+ * `!reference [.job, script]` — GitLab's own tag for splicing another job's key into this one. It belongs to no YAML
+ * schema, so a stock parser throws on it and the *whole file* — `include:` block included — yields nothing, killing
+ * completion/hover/validation for any pipeline that uses one. Resolving a reference needs the merged pipeline, which
+ * this extension never builds, so the tag constructs to its path sequence: enough for the surrounding document to
+ * parse, and a caller that reads one sees the target it points at rather than `undefined`.
+ */
+const referenceTag = yaml.defineSequenceTag<unknown[]>('!reference', {
+  create: () => [],
+  addItem: (carrier, item) => {
+    carrier.push(item);
+  },
+  // Load-only. `identify` selects the tag when *dumping*; returning false stops it claiming the plain arrays this
+  // constructs, which would re-emit unrelated sequences as `!reference`.
+  identify: () => false,
+});
+
+/** The core schema plus GitLab's CI-only tags, so a `.gitlab-ci.yml` using them still parses structurally. */
+export const GITLAB_CI_SCHEMA = yaml.CORE_SCHEMA.withTags(referenceTag);
+
 /** Type-guard: a parsed YAML value is a non-null object (i.e. a mapping). Use to narrow `unknown` results. */
 export function isYamlNode(value: unknown): value is YamlNode {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -34,7 +54,7 @@ export function parseYaml(text: string, silent = false): unknown {
     }
 
     // Parse and cache
-    const parsed = yaml.load(text);
+    const parsed = yaml.load(text, { schema: GITLAB_CI_SCHEMA });
     parseCache.set(contentHash, { content: text, parsed, timestamp: now });
 
     // Clean old cache entries periodically
@@ -68,7 +88,7 @@ export function parseYaml(text: string, silent = false): unknown {
  */
 export function parseYamlDocuments(text: string, silent = false): YamlNode[] {
   try {
-    const docs = yaml.loadAll(text);
+    const docs = yaml.loadAll(text, { schema: GITLAB_CI_SCHEMA });
     return docs.filter(isYamlNode);
   } catch (e) {
     if (!silent) {
