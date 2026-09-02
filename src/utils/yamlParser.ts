@@ -15,6 +15,9 @@ const referenceTag = yaml.defineSequenceTag<unknown[]>('!reference', {
   addItem: (carrier, item) => {
     carrier.push(item);
   },
+  // Load-only. `identify` selects the tag when *dumping*; returning false stops it claiming the plain arrays this
+  // constructs, which would re-emit unrelated sequences as `!reference`.
+  identify: () => false,
 });
 
 /** The core schema plus GitLab's CI-only tags, so a `.gitlab-ci.yml` using them still parses structurally. */
