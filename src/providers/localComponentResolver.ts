@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { Component, ComponentParameter } from './componentDetector';
 import { Logger } from '../utils/logger';
-import { isYamlNode } from '../utils/yamlParser';
+import { isYamlNode, GITLAB_CI_SCHEMA } from '../utils/yamlParser';
 import type { ParameterDefault } from '../types/git-component';
 
 // Pure parser helpers live in their own module so the unit suite can exercise them under plain Node. Re-exported
@@ -229,7 +229,7 @@ export async function resolveLocalIncludeOutcome(
   }
   let docs: unknown[];
   try {
-    docs = yaml.loadAll(text);
+    docs = yaml.loadAll(text, { schema: GITLAB_CI_SCHEMA });
   } catch (err) {
     logger.debug(`[LocalComponentResolver] Failed to parse ${uri.fsPath}: ${err}`, 'LocalComponentResolver');
     // The file exists and was read; it just isn't valid YAML. That's a plain include we can't extract inputs from,
