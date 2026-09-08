@@ -4,24 +4,50 @@ import * as yaml from 'js-yaml';
 export type YamlNode = Record<string, unknown>;
 
 /**
- * `!reference [.job, script]` — GitLab's own tag for splicing another job's key into this one. It belongs to no YAML
- * schema, so a stock parser throws on it and the *whole file* — `include:` block included — yields nothing, killing
- * completion/hover/validation for any pipeline that uses one. Resolving a reference needs the merged pipeline, which
- * this extension never builds, so the tag constructs to its path sequence: enough for the surrounding document to
- * parse, and a caller that reads one sees the target it points at rather than `undefined`.
+ * Shared options for the local-tag catch-alls below. A local tag (`!reference`, `!custom`, …) belongs to no schema,
+ * so a stock parse throws and the whole file — `include:` and all — yields nothing. Matching by prefix on `!`
+ * degrades any such tag to the value it wraps: this extension reads only `include:` and `spec.inputs`, never the
+ * tagged values. `identify` is dump-side only; false keeps these load-only.
  */
-const referenceTag = yaml.defineSequenceTag<unknown[]>('!reference', {
+const loadOnly = { matchByTagPrefix: true, identify: () => false } as const;
+
+/** One catch-all per node kind, since a tag is selected by the shape of the node it decorates. */
+const anyLocalScalarTag = yaml.defineScalarTag<string>('!', { ...loadOnly, resolve: (source) => source });
+
+const anyLocalSequenceTag = yaml.defineSequenceTag<unknown[]>('!', {
+  ...loadOnly,
   create: () => [],
   addItem: (carrier, item) => {
     carrier.push(item);
   },
-  // Load-only. `identify` selects the tag when *dumping*; returning false stops it claiming the plain arrays this
-  // constructs, which would re-emit unrelated sequences as `!reference`.
-  identify: () => false,
 });
 
-/** The core schema plus GitLab's CI-only tags, so a `.gitlab-ci.yml` using them still parses structurally. */
-export const GITLAB_CI_SCHEMA = yaml.CORE_SCHEMA.withTags(referenceTag);
+const anyLocalMappingTag = yaml.defineMappingTag<Map<unknown, unknown>, YamlNode>('!', {
+  ...loadOnly,
+  // Map carrier so non-string keys survive; finalized to a plain object, which is what every reader here expects.
+  create: () => new Map(),
+  addPair: (carrier, key, value) => {
+    carrier.set(key, value);
+    return ''; // Success; a non-empty string is an error message.
+  },
+  has: (carrier, key) => carrier.has(key),
+  keys: (result) => Object.keys(result),
+  get: (result, key) => result[String(key)],
+  finalize: (carrier) => {
+    const result: YamlNode = {};
+    for (const [key, value] of carrier) {
+      result[String(key)] = value;
+    }
+    return result;
+  },
+});
+
+/** The core schema plus tolerated local tags, so a `.gitlab-ci.yml` using them still parses structurally. */
+export const GITLAB_CI_SCHEMA = yaml.CORE_SCHEMA.withTags(
+  anyLocalScalarTag,
+  anyLocalSequenceTag,
+  anyLocalMappingTag
+);
 
 /** Type-guard: a parsed YAML value is a non-null object (i.e. a mapping). Use to narrow `unknown` results. */
 export function isYamlNode(value: unknown): value is YamlNode {

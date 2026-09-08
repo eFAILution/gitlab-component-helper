@@ -11,6 +11,13 @@ spec:
       description: The name of the CI job
       type: string
 ---
+# The `!reference` here is load-bearing: it exercises the local include's own parse in localComponentResolver, which
+# reads this file's `spec:` block. Without it, that parse path is never given a tag to choke on.
+.deploy-setup:
+  script:
+    - echo "authenticating against $[[ inputs.region ]]"
+
 $[[ inputs.job_name ]]:
   script:
+    - !reference [.deploy-setup, script]
     - echo "deploy $[[ inputs.job_name ]] to $[[ inputs.environment ]]/$[[ inputs.region ]]"
