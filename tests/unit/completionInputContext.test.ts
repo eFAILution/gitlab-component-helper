@@ -383,6 +383,25 @@ include:
       existingInputNames: [],
     });
   });
+
+  // A `!reference` anywhere in the file used to fail the parse outright, so an empty inputs slot offered nothing.
+  test('resolves the inputs slot when a later job uses a !reference tag', () => {
+    // The slot line carries the indentation the user has typed into it, hence the explicit spaces.
+    const text = `include:
+  - component: ${FULL_PIPELINE_URL}
+    inputs:
+${'      '}
+test:
+    script:
+        - !reference [.pnpm-setup, script]`;
+    const ctx = findCompletionInputContextAtLine(text, 3, 6);
+    assert.deepStrictEqual(ctx, {
+      componentUrl: FULL_PIPELINE_URL,
+      includeKind: 'component',
+      slot: 'name',
+      existingInputNames: [],
+    });
+  });
 });
 
 suite('buildInputInsertValue', () => {
