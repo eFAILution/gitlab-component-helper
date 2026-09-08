@@ -9,7 +9,7 @@
  */
 
 import * as assert from 'node:assert/strict';
-import { parseYamlDocuments, findDocumentWith, isYamlNode } from '../../src/utils/yamlParser';
+import { parseYaml, parseYamlDocuments, findDocumentWith, isYamlNode } from '../../src/utils/yamlParser';
 
 suite('parseYamlDocuments', () => {
   test('returns every mapping document of a multi-document stream', () => {
@@ -110,6 +110,65 @@ job:
     assert.ok(isYamlNode(spec));
     assert.ok(isYamlNode(spec.inputs));
     assert.deepStrictEqual(Object.keys(spec.inputs), ['y', 'n', 'yes', 'no', 'on', 'off']);
+  });
+
+  // Any local tag is fatal to a stock parse, not just a sequence-position `!reference`. Each of these forms took the
+  // whole document down while only the sequence form was handled, so the tags match by prefix on `!` instead.
+  test('tolerates a local tag in every node position', () => {
+    const cases: [string, string, unknown][] = [
+      ['scalar', 'key: !reference foo', { key: 'foo' }],
+      ['sequence', 'key: !reference [.setup, script]', { key: ['.setup', 'script'] }],
+      ['mapping', 'key: !reference\n  nested: value', { key: { nested: 'value' } }],
+    ];
+    for (const [position, text, expected] of cases) {
+      assert.deepStrictEqual(parseYamlDocuments(text, true)[0], expected, `${position} position`);
+    }
+  });
+
+  // The shape a user is mid-way through typing: `!reference` with no argument yet. Losing the parse here blanks
+  // completion at exactly the moment it is wanted.
+  test('tolerates a half-typed tag with no value yet', () => {
+    const text = `include:
+  - component: https://gitlab.com/c/x@1.0.0
+    inputs:
+      stage: build
+
+test:
+  script:
+    - !reference
+`;
+    const doc = findDocumentWith(parseYamlDocuments(text, true), 'include');
+    assert.ok(doc, 'the include must still resolve while a tag is half-typed');
+  });
+
+  test('tolerates an unknown tag that is not !reference', () => {
+    assert.deepStrictEqual(parseYamlDocuments('a: !custom [1, 2]', true)[0], { a: [1, 2] });
+  });
+
+  // The tolerated tags must not disturb ordinary YAML: core scalars keep their types rather than becoming strings.
+  test('leaves untagged YAML and its scalar types alone', () => {
+    const text = 'num: 1\nbool: true\nnul: null\nstr: plain\nlist:\n  - a\n';
+    assert.deepStrictEqual(parseYamlDocuments(text, true)[0], {
+      num: 1,
+      bool: true,
+      nul: null,
+      str: 'plain',
+      list: ['a'],
+    });
+  });
+});
+
+// `parseYaml` is the single-document path (the completion round-trip probe, the component browser's wrapped-include
+// parse). It takes the same schema, but the tests above all go through `parseYamlDocuments`.
+suite('parseYaml', () => {
+  test('tolerates a local tag in every node position', () => {
+    assert.deepStrictEqual(parseYaml('key: !reference foo', true), { key: 'foo' });
+    assert.deepStrictEqual(parseYaml('key: !reference [.setup, script]', true), { key: ['.setup', 'script'] });
+    assert.deepStrictEqual(parseYaml('key: !reference\n  nested: value', true), { key: { nested: 'value' } });
+  });
+
+  test('still returns null on genuinely malformed YAML', () => {
+    assert.strictEqual(parseYaml('key: "unterminated', true), null);
   });
 });
 
