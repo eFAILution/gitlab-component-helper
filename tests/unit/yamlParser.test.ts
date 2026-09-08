@@ -9,7 +9,7 @@
  */
 
 import * as assert from 'node:assert/strict';
-import { parseYaml, parseYamlDocuments, findDocumentWith } from '../../src/utils/yamlParser';
+import { parseYaml, parseYamlDocuments, findDocumentWith, isYamlNode } from '../../src/utils/yamlParser';
 
 suite('parseYamlDocuments', () => {
   test('returns every mapping document of a multi-document stream', () => {
@@ -65,6 +65,51 @@ test:
   test('constructs !reference as the path sequence it points at', () => {
     const docs = parseYamlDocuments('test:\n  script:\n    - !reference [.setup, script]\n', true);
     assert.deepStrictEqual(docs[0].test, { script: [['.setup', 'script']] });
+  });
+
+  // GitLab parses with Psych, where `<<: *anchor` merges. Left unmerged, an input inheriting its `default` through
+  // an anchor reads as required, and a merged `spec.inputs` offers an input named `<<`.
+  test('merges `<<:` into the surrounding mapping', () => {
+    const text = `.defaults: &defaults
+  stage:
+    type: string
+    default: build
+spec:
+  inputs:
+    <<: *defaults
+    extra:
+      type: string
+`;
+    const docs = parseYamlDocuments(text, true);
+    assert.deepStrictEqual(findDocumentWith(docs, 'spec')?.spec, {
+      inputs: {
+        stage: { type: 'string', default: 'build' },
+        extra: { type: 'string' },
+      },
+    });
+  });
+
+  test('merges a sequence of anchors, earlier entries winning', () => {
+    const text = `.a: &a
+  x: 1
+  y: one
+.b: &b
+  y: two
+  z: 3
+job:
+  <<: [*a, *b]
+`;
+    const docs = parseYamlDocuments(text, true);
+    assert.deepStrictEqual(docs[0].job, { x: 1, y: 'one', z: 3 });
+  });
+
+  // YAML 1.1 scalar resolution would make these booleans; all are plausible job or input names.
+  test('keeps `y`, `n`, `yes`, `no`, `on`, `off` as string keys', () => {
+    const text = 'spec:\n  inputs:\n    y: 1\n    n: 2\n    yes: 3\n    no: 4\n    on: 5\n    off: 6\n';
+    const spec = findDocumentWith(parseYamlDocuments(text, true), 'spec')?.spec;
+    assert.ok(isYamlNode(spec));
+    assert.ok(isYamlNode(spec.inputs));
+    assert.deepStrictEqual(Object.keys(spec.inputs), ['y', 'n', 'yes', 'no', 'on', 'off']);
   });
 
   // Any local tag is fatal to a stock parse, not just a sequence-position `!reference`. Each of these forms took the

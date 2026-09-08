@@ -42,8 +42,14 @@ const anyLocalMappingTag = yaml.defineMappingTag<Map<unknown, unknown>, YamlNode
   },
 });
 
-/** The core schema plus tolerated local tags, so a `.gitlab-ci.yml` using them still parses structurally. */
+/**
+ * The core schema plus tolerated local tags, so a `.gitlab-ci.yml` using them still parses structurally.
+ *
+ * `mergeTag` gives `<<: *anchor` its YAML 1.1 meaning — merge the anchored mapping in — which is how GitLab's own
+ * parser (Ruby's Psych) reads it, and how anchors are shared between jobs in practice.
+ */
 export const GITLAB_CI_SCHEMA = yaml.CORE_SCHEMA.withTags(
+  yaml.mergeTag,
   anyLocalScalarTag,
   anyLocalSequenceTag,
   anyLocalMappingTag
