@@ -20,8 +20,8 @@ const referenceTag = yaml.defineSequenceTag<unknown[]>('!reference', {
   identify: () => false,
 });
 
-/** The core schema plus GitLab's CI-only tags, so a `.gitlab-ci.yml` using them still parses structurally. */
-export const GITLAB_CI_SCHEMA = yaml.CORE_SCHEMA.withTags(referenceTag);
+/** The core schema plus GitLab's CI-only tags and YAML merge keys (`<<:`), so a `.gitlab-ci.yml` parses structurally. */
+export const GITLAB_CI_SCHEMA = yaml.CORE_SCHEMA.withTags(yaml.mergeTag, referenceTag);
 
 /** Type-guard: a parsed YAML value is a non-null object (i.e. a mapping). Use to narrow `unknown` results. */
 export function isYamlNode(value: unknown): value is YamlNode {

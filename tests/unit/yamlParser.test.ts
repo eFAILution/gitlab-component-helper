@@ -66,6 +66,30 @@ test:
     const docs = parseYamlDocuments('test:\n  script:\n    - !reference [.setup, script]\n', true);
     assert.deepStrictEqual(docs[0].test, { script: [['.setup', 'script']] });
   });
+
+  test('merges YAML merge keys (<<:) and preserves y/no/on as string keys', () => {
+    const text = `
+a: &common
+  image: alpine
+  y: 10
+  no: false
+  on: true
+
+b:
+  <<: *common
+  stage: test
+`;
+    const docs = parseYamlDocuments(text, true);
+    assert.strictEqual(docs.length, 1);
+    assert.deepStrictEqual(docs[0].b, {
+      image: 'alpine',
+      y: 10,
+      no: false,
+      on: true,
+      stage: 'test',
+    });
+    assert.strictEqual(typeof Object.keys(docs[0].b as Record<string, unknown>).find(k => k === 'y'), 'string');
+  });
 });
 
 suite('findDocumentWith', () => {
