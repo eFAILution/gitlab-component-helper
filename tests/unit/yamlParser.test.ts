@@ -41,6 +41,31 @@ include:
   test('returns [] on unparseable input', () => {
     assert.deepStrictEqual(parseYamlDocuments('key: "unterminated', true), []);
   });
+
+  // A stock schema throws on GitLab's `!reference`, taking the whole document — `include:` and all — down with it.
+  test('parses a document using GitLab\'s !reference tag', () => {
+    const text = `include:
+  - component: https://gitlab.com/c/x@1.0.0
+    inputs:
+      stage: build
+
+test:
+  script:
+    - !reference [.pnpm-setup, script]
+`;
+    const docs = parseYamlDocuments(text, true);
+    assert.strictEqual(docs.length, 1);
+    const doc = findDocumentWith(docs, 'include');
+    assert.ok(doc, 'the include-bearing document should survive the !reference tag');
+    assert.deepStrictEqual(doc.include, [
+      { component: 'https://gitlab.com/c/x@1.0.0', inputs: { stage: 'build' } },
+    ]);
+  });
+
+  test('constructs !reference as the path sequence it points at', () => {
+    const docs = parseYamlDocuments('test:\n  script:\n    - !reference [.setup, script]\n', true);
+    assert.deepStrictEqual(docs[0].test, { script: [['.setup', 'script']] });
+  });
 });
 
 suite('findDocumentWith', () => {
