@@ -89,7 +89,6 @@ export class ComponentBrowserProvider {
         enableScripts: true,
         retainContextWhenHidden: true,
         localResourceRoots: [
-          vscode.Uri.joinPath(this.context.extensionUri, 'media'),
           vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview')
         ]
       }

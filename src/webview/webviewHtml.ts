@@ -45,15 +45,18 @@ export function assetUri(
 
 /**
  * Builds the Content-Security-Policy meta tag for a webview document.
- * Styles are allowed inline (VS Code theming relies on it) and from the
- * webview's own origin; scripts are restricted to the supplied nonce.
+ *
+ * Styles and scripts must come from files under the webview's own origin — no inline `<style>`, no `style=`
+ * attribute, and scripts only with the supplied nonce. Theme colours reach an external stylesheet as CSS custom
+ * properties (`var(--vscode-*)`), so nothing here needs inline style capability. A document that inlines a style
+ * will be blocked, which is the signal to move it into a stylesheet.
  */
 export function cspMetaTag(webview: vscode.Webview, nonce: string): string {
   const source = webview.cspSource;
   return [
     `<meta http-equiv="Content-Security-Policy" content="`,
     `default-src 'none'; `,
-    `style-src ${source} 'unsafe-inline'; `,
+    `style-src ${source}; `,
     `img-src ${source} https: data:; `,
     `font-src ${source}; `,
     `script-src 'nonce-${nonce}';`,
