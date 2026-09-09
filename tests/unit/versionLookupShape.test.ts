@@ -20,6 +20,13 @@ const detailsPanelComponent: Component = {
   version: 'deploy-1.0.0',
 };
 
+/** The fixture minus one field, for the "what happens when this is missing" cases. */
+function without(field: keyof Component): Component {
+  const component = { ...detailsPanelComponent };
+  delete component[field];
+  return component;
+}
+
 suite('isVersionLookupShape', () => {
   test('accepts the details panel component, which has no url', () => {
     assert.strictEqual('url' in detailsPanelComponent, false, 'fixture should model the missing url');
@@ -27,8 +34,7 @@ suite('isVersionLookupShape', () => {
   });
 
   test('accepts a component with no source, which the lookup never reads', () => {
-    const { source: _source, ...withoutSource } = detailsPanelComponent;
-    assert.strictEqual(isVersionLookupShape(withoutSource), true);
+    assert.strictEqual(isVersionLookupShape(without('source')), true);
   });
 
   test('still accepts a fully populated cache entry', () => {
@@ -37,17 +43,14 @@ suite('isVersionLookupShape', () => {
   });
 
   test('rejects a component with no sourcePath', () => {
-    const { sourcePath: _sourcePath, ...withoutSourcePath } = detailsPanelComponent;
-    assert.strictEqual(isVersionLookupShape(withoutSourcePath), false);
+    assert.strictEqual(isVersionLookupShape(without('sourcePath')), false);
   });
 
   test('rejects a component with no gitlabInstance', () => {
-    const { gitlabInstance: _gitlabInstance, ...withoutInstance } = detailsPanelComponent;
-    assert.strictEqual(isVersionLookupShape(withoutInstance), false);
+    assert.strictEqual(isVersionLookupShape(without('gitlabInstance')), false);
   });
 
   test('rejects a component with no version', () => {
-    const { version: _version, ...withoutVersion } = detailsPanelComponent;
-    assert.strictEqual(isVersionLookupShape(withoutVersion), false);
+    assert.strictEqual(isVersionLookupShape(without('version')), false);
   });
 });
