@@ -10,28 +10,13 @@ import { getComponentCacheManager, ComponentCacheManager } from './services/cach
 import { Logger } from './utils/logger';
 import { ValidationProvider } from './providers/validationProvider';
 import type { CachedComponent } from './types/cache';
+import { isVersionLookupShape } from './services/component/versionLookupShape';
 import type { GitLabYamlFragment } from './types/gitlab-catalog';
 import type { HoverContext } from './providers/hoverContentBuilder';
 
 /** Component payload passed to the `detachHover` command. Adds the hover-builder's location context. */
 type DetachableComponent = Component & { _hoverContext?: HoverContext };
 
-/**
- * Type-guard narrowing a `Component`-shaped value to one that also satisfies `CachedComponent`.
- *
- * @param component  A `Component` (typically `activeComponent` in the detach-hover panel) that may
- *                   or may not have been enriched with cache details.
- * @returns          `true` if all `CachedComponent` required fields are present and string-typed,
- *                   narrowing `component` to `Component & CachedComponent` in the truthy branch.
- *                   `false` if any field is missing.
- */
-function isCachedComponentShape(component: Component): component is Component & CachedComponent {
-  return typeof component.source === 'string'
-    && typeof component.sourcePath === 'string'
-    && typeof component.gitlabInstance === 'string'
-    && typeof component.version === 'string'
-    && typeof component.url === 'string';
-}
 import { getPerformanceMonitor } from './utils/performanceMonitor';
 import { isGitLabCIFile, invalidateFileGlobsCache } from './utils/gitlabCiFileMatcher';
 
@@ -509,29 +494,33 @@ export function activate(context: vscode.ExtensionContext) {
               break;
             case 'fetchVersions':
               try {
-                if (!isCachedComponentShape(activeComponent)) {
-                  throw new Error('Component is missing required fields (source, sourcePath, gitlabInstance, version) for version lookup.');
+                if (!isVersionLookupShape(activeComponent)) {
+                  throw new Error(`Cannot look up versions for ${activeComponent.name}: missing source path or GitLab instance.`);
                 }
-                const versions = await cacheManager.fetchComponentVersions(activeComponent);
+                // Bind the narrowed value: `activeComponent` is reassignable, so TS widens it back across the await.
+                const lookupTarget = activeComponent;
+                const versions = await cacheManager.fetchComponentVersions(lookupTarget);
                 // For a monorepo source, map each full tag to its stripped {version} so the dropdown shows short
                 // labels while keeping the full tag as the option value (the inserted ref).
                 let versionLabels: Record<string, string> | undefined;
-                if (activeComponent.tagPattern) {
+                if (lookupTarget.tagPattern) {
                   versionLabels = {};
                   for (const v of versions) {
-                    versionLabels[v] = stripTagPrefix(v, activeComponent.name, activeComponent.tagPattern);
+                    versionLabels[v] = stripTagPrefix(v, lookupTarget.name, lookupTarget.tagPattern);
                   }
                 }
                 panel.webview.postMessage({
                   command: 'versionsLoaded',
                   versions: versions,
                   versionLabels,
-                  currentVersion: activeComponent.version
+                  currentVersion: lookupTarget.version
                 });
               } catch (error) {
+                const reason = error instanceof Error ? error.message : String(error);
+                logger.error(`[Extension] Error fetching versions for detached details panel: ${reason}`, 'Extension');
                 panel.webview.postMessage({
                   command: 'versionsError',
-                  error: error instanceof Error ? error.message : String(error)
+                  error: reason
                 });
               }
               break;
