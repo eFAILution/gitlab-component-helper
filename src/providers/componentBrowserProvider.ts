@@ -34,8 +34,7 @@ function isCachedComponentShape(component: Component): component is Component & 
   return typeof component.source === 'string'
     && typeof component.sourcePath === 'string'
     && typeof component.gitlabInstance === 'string'
-    && typeof component.version === 'string'
-    && typeof component.url === 'string';
+    && typeof component.version === 'string';
 }
 
 /**
@@ -557,12 +556,21 @@ export class ComponentBrowserProvider {
               throw new Error('Component is missing required fields (source, sourcePath, gitlabInstance, version) for version lookup.');
             }
             const versions = await this.cacheManager.fetchComponentVersions(component);
+            let versionLabels: Record<string, string> | undefined;
+            if (component.tagPattern) {
+              versionLabels = {};
+              for (const v of versions) {
+                versionLabels[v] = stripTagPrefix(v, component.name, component.tagPattern);
+              }
+            }
             detailsPanel.webview.postMessage({
               command: 'versionsLoaded',
               versions: versions,
+              versionLabels,
               currentVersion: component.version
             });
           } catch (error) {
+            this.logger.error(`[ComponentBrowser] Error fetching versions: ${error}`, 'ComponentBrowser');
             detailsPanel.webview.postMessage({
               command: 'versionsError',
               error: error instanceof Error ? error.message : String(error)
@@ -1541,7 +1549,7 @@ export class ComponentBrowserProvider {
       gitlabInstance?: string;
       context?: { gitlabInstance: string; path: string };
     },
-  ): Promise<{ availableVersions?: string[]; tagPattern?: string }> {
+  ): Promise<{ availableVersions?: string[]; tagPattern?: string; url?: string; source?: string }> {
     try {
       // Hover-detected components carry their location under `context`; browser components use the flat fields.
       const sourcePath = component.sourcePath || component.context?.path;
@@ -1555,12 +1563,18 @@ export class ComponentBrowserProvider {
       );
       if (!match) return {};
 
-      const enriched: { availableVersions?: string[]; tagPattern?: string } = {};
+      const enriched: { availableVersions?: string[]; tagPattern?: string; url?: string; source?: string } = {};
       if (match.availableVersions && match.availableVersions.length > 0) {
         enriched.availableVersions = match.availableVersions;
       }
       if (match.tagPattern) {
         enriched.tagPattern = match.tagPattern;
+      }
+      if (match.url) {
+        enriched.url = match.url;
+      }
+      if (match.source) {
+        enriched.source = match.source;
       }
       return enriched;
     } catch {
@@ -1632,6 +1646,10 @@ export class ComponentBrowserProvider {
           .version-loading {
             font-size: 0.9em;
             color: var(--vscode-disabledForeground);
+          }
+          .version-error {
+            font-size: 0.9em;
+            color: var(--vscode-errorForeground);
           }
           .parameters {
             border: 1px solid var(--vscode-panel-border);
@@ -1786,6 +1804,7 @@ export class ComponentBrowserProvider {
               })()}
             </select>
             <span class="version-loading" id="versionLoading" style="display: none;">Loading version details...</span>
+            <span class="version-error" id="versionError" style="display: none;"></span>
           </div>
           ${component.documentationUrl ?
             `<div><strong>Project URL:</strong> <a href="${component.documentationUrl}" target="_blank" id="componentDocUrl">${component.documentationUrl}</a></div>` : ''}
@@ -1910,6 +1929,8 @@ export class ComponentBrowserProvider {
           function onVersionChange() {
             const selectedVersion = document.getElementById('versionSelect').value;
             const loading = document.getElementById('versionLoading');
+            const errorEl = document.getElementById('versionError');
+            if (errorEl) errorEl.style.display = 'none';
 
             console.log('Version changed to:', selectedVersion);
 
@@ -1926,6 +1947,8 @@ export class ComponentBrowserProvider {
           function refreshVersions() {
             const loading = document.getElementById('versionLoading');
             const select = document.getElementById('versionSelect');
+            const errorEl = document.getElementById('versionError');
+            if (errorEl) errorEl.style.display = 'none';
 
             loading.style.display = 'inline';
             select.disabled = true;
@@ -2101,19 +2124,29 @@ export class ComponentBrowserProvider {
 
             switch (message.command) {
               case 'versionsLoaded':
+                const errorEl = document.getElementById('versionError');
+                if (errorEl) errorEl.style.display = 'none';
                 updateVersionDropdown(message.versions, message.currentVersion, message.versionLabels);
                 break;
               case 'versionsError':
                 document.getElementById('versionLoading').style.display = 'none';
                 document.getElementById('versionSelect').disabled = false;
-                // Could show error message here
+                const errSpan = document.getElementById('versionError');
+                if (errSpan) {
+                  errSpan.textContent = message.error ? ' (' + message.error + ')' : ' (Failed to load versions)';
+                  errSpan.style.display = 'inline';
+                }
                 break;
               case 'componentDetailsUpdated':
                 updateComponentDetails(message.component);
                 break;
               case 'versionChangeError':
                 document.getElementById('versionLoading').style.display = 'none';
-                // Could show error message here
+                const changeErrSpan = document.getElementById('versionError');
+                if (changeErrSpan) {
+                  changeErrSpan.textContent = message.error ? ' (' + message.error + ')' : ' (Failed to change version)';
+                  changeErrSpan.style.display = 'inline';
+                }
                 console.error('Version change error:', message.error);
                 break;
             }

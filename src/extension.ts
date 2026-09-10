@@ -29,8 +29,7 @@ function isCachedComponentShape(component: Component): component is Component & 
   return typeof component.source === 'string'
     && typeof component.sourcePath === 'string'
     && typeof component.gitlabInstance === 'string'
-    && typeof component.version === 'string'
-    && typeof component.url === 'string';
+    && typeof component.version === 'string';
 }
 import { getPerformanceMonitor } from './utils/performanceMonitor';
 import { isGitLabCIFile, invalidateFileGlobsCache } from './utils/gitlabCiFileMatcher';
