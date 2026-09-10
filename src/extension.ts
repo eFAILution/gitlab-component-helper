@@ -5,7 +5,7 @@ import { CompletionProvider } from './providers/completionProvider';
 import { ComponentDocumentLinkProvider } from './providers/documentLinkProvider';
 import { ComponentBrowserProvider } from './providers/componentBrowserProvider';
 import { detectIncludeComponent, Component } from './providers/componentDetector';
-import { stripTagPrefix } from './services/component/tagScoping';
+import { buildVersionLabels } from './services/component/tagScoping';
 import { getComponentCacheManager, ComponentCacheManager } from './services/cache/componentCacheManager';
 import { Logger } from './utils/logger';
 import { ValidationProvider } from './providers/validationProvider';
@@ -502,13 +502,7 @@ export function activate(context: vscode.ExtensionContext) {
                 const versions = await cacheManager.fetchComponentVersions(lookupTarget);
                 // For a monorepo source, map each full tag to its stripped {version} so the dropdown shows short
                 // labels while keeping the full tag as the option value (the inserted ref).
-                let versionLabels: Record<string, string> | undefined;
-                if (lookupTarget.tagPattern) {
-                  versionLabels = {};
-                  for (const v of versions) {
-                    versionLabels[v] = stripTagPrefix(v, lookupTarget.name, lookupTarget.tagPattern);
-                  }
-                }
+                const versionLabels = buildVersionLabels(versions, lookupTarget.name, lookupTarget.tagPattern);
                 panel.webview.postMessage({
                   command: 'versionsLoaded',
                   versions: versions,

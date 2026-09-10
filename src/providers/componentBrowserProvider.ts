@@ -14,7 +14,7 @@ import { serializeForScript } from '../webview/scriptData';
 import { generateComponentText } from './componentBrowserGenerate';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
 import { transformCachedComponentsToGroups } from './componentBrowserTransform';
-import { compileTagTemplate, stripTagPrefix } from '../services/component/tagScoping';
+import { buildVersionLabels, compileTagTemplate, stripTagPrefix } from '../services/component/tagScoping';
 
 /**
  * Component shape carried through the detach-hover webview's "Open in Detailed View" round trip.
@@ -544,9 +544,13 @@ export class ComponentBrowserProvider {
               throw new Error(`Cannot look up versions for ${component.name}: missing source path or GitLab instance.`);
             }
             const versions = await this.cacheManager.fetchComponentVersions(component);
+            // Same monorepo labelling as the detached panel: the webview can't reach the template matcher, so the
+            // full tag → stripped {version} map is built here. Without it a refresh reverts the dropdown to full tags.
+            const versionLabels = buildVersionLabels(versions, component.name, component.tagPattern);
             detailsPanel.webview.postMessage({
               command: 'versionsLoaded',
               versions: versions,
+              versionLabels,
               currentVersion: component.version
             });
           } catch (error) {
@@ -1905,7 +1909,9 @@ export class ComponentBrowserProvider {
 
             console.log('Version changed to:', selectedVersion);
 
-            // Show loading state
+            // Show loading state, clearing any error left by a previous attempt.
+            loading.textContent = 'Loading version details...';
+            loading.classList.remove('version-error');
             loading.style.display = 'inline';
 
             // Send message to fetch details for this version
@@ -2111,11 +2117,16 @@ export class ComponentBrowserProvider {
               case 'componentDetailsUpdated':
                 updateComponentDetails(message.component);
                 break;
-              case 'versionChangeError':
-                document.getElementById('versionLoading').style.display = 'none';
-                // Could show error message here
+              case 'versionChangeError': {
+                // Same treatment as versionsError: a failed version switch used to hide the spinner and say nothing,
+                // which reads as the dropdown simply not working.
+                const changeStatus = document.getElementById('versionLoading');
+                changeStatus.textContent = 'Could not load that version: ' + (message.error || 'unknown error');
+                changeStatus.classList.add('version-error');
+                changeStatus.style.display = 'inline';
                 console.error('Version change error:', message.error);
                 break;
+              }
             }
           });
 
@@ -2801,16 +2812,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
 
       // For a monorepo source, precompute display labels (full tag → stripped {version}) server-side, since the
       // webview can't reach the template matcher. Non-monorepo sources send no labels (value == label).
-      let versionLabels: Record<string, string> | undefined;
-      if (updatedComponent.tagPattern) {
-        const matcher = compileTagTemplate(updatedComponent.tagPattern, componentName);
-        if (matcher) {
-          versionLabels = {};
-          for (const v of availableVersions) {
-            versionLabels[v] = matcher.extractVersion(v) ?? v;
-          }
-        }
-      }
+      const versionLabels = buildVersionLabels(availableVersions, componentName, updatedComponent.tagPattern);
 
       // Send versions to webview
       if (this.panel) {
