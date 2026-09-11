@@ -3,7 +3,7 @@ import { getComponentService } from '../services/component';
 import { ComponentCacheManager } from '../services/cache/componentCacheManager';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
 import type { ComponentParameter, Component } from './componentDetector';
-import type { CachedComponent } from '../types/cache';
+import { isVersionLookupShape } from '../services/component/versionLookupShape';
 import type { SourceGroup, ComponentGroup, ComponentVersion } from './componentBrowserTypes';
 import type { HoverContext } from './hoverContentBuilder';
 import { containsGitLabVariables } from '../utils/gitlabVariables';
@@ -14,7 +14,8 @@ import { serializeForScript } from '../webview/scriptData';
 import { generateComponentText } from './componentBrowserGenerate';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
 import { transformCachedComponentsToGroups } from './componentBrowserTransform';
-import { compileTagTemplate, stripTagPrefix } from '../services/component/tagScoping';
+import { buildVersionLabels, compileTagTemplate, stripTagPrefix } from '../services/component/tagScoping';
+import { assetUri, createNonce, cspMetaTag } from '../webview/webviewHtml';
 
 /**
  * Component shape carried through the detach-hover webview's "Open in Detailed View" round trip.
@@ -24,19 +25,6 @@ import { compileTagTemplate, stripTagPrefix } from '../services/component/tagSco
  */
 type DetachableComponent = Component & { _hoverContext?: HoverContext };
 
-/**
- * Type-guard narrowing a `Component`-shaped value to one that also satisfies `CachedComponent`.
- * `Component` carries `source`/`sourcePath`/`gitlabInstance`/`version`/`url` as optional; cache
- * methods like `fetchComponentVersions` require them. The guard checks all five before the call so
- * we don't pass a half-populated `Component` into a function expecting the full cache shape.
- */
-function isCachedComponentShape(component: Component): component is Component & CachedComponent {
-  return typeof component.source === 'string'
-    && typeof component.sourcePath === 'string'
-    && typeof component.gitlabInstance === 'string'
-    && typeof component.version === 'string'
-    && typeof component.url === 'string';
-}
 
 /**
  * Pre-existing component shape parsed out of a `.gitlab-ci.yml` include line by
@@ -88,13 +76,13 @@ export class ComponentBrowserProvider {
         enableScripts: true,
         retainContextWhenHidden: true,
         localResourceRoots: [
-          vscode.Uri.joinPath(this.context.extensionUri, 'media')
+          vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview')
         ]
       }
     );
 
     // Set initial HTML content with loading message
-    this.panel.webview.html = this.getLoadingHtml();
+    this.panel.webview.html = this.getLoadingHtml(this.panel.webview);
 
     // Handle panel disposal
     this.panel.onDidDispose(() => {
@@ -165,7 +153,7 @@ export class ComponentBrowserProvider {
 
     try {
       // Show loading state
-      this.panel.webview.html = this.getLoadingHtml();
+      this.panel.webview.html = this.getLoadingHtml(this.panel.webview);
 
       this.logger.debug(`[ComponentBrowser] Loading components, forceRefresh: ${forceRefresh}`, 'ComponentBrowser');
 
@@ -553,19 +541,25 @@ export class ComponentBrowserProvider {
         } else if (message.command === 'fetchVersions') {
           // Fetch available versions for the component
           try {
-            if (!isCachedComponentShape(component)) {
-              throw new Error('Component is missing required fields (source, sourcePath, gitlabInstance, version) for version lookup.');
+            if (!isVersionLookupShape(component)) {
+              throw new Error(`Cannot look up versions for ${component.name}: missing source path or GitLab instance.`);
             }
             const versions = await this.cacheManager.fetchComponentVersions(component);
+            // Same monorepo labelling as the detached panel: the webview can't reach the template matcher, so the
+            // full tag → stripped {version} map is built here. Without it a refresh reverts the dropdown to full tags.
+            const versionLabels = buildVersionLabels(versions, component.name, component.tagPattern);
             detailsPanel.webview.postMessage({
               command: 'versionsLoaded',
               versions: versions,
+              versionLabels,
               currentVersion: component.version
             });
           } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            this.logger.error(`[ComponentBrowser] Error fetching versions: ${reason}`, 'ComponentBrowser');
             detailsPanel.webview.postMessage({
               command: 'versionsError',
-              error: error instanceof Error ? error.message : String(error)
+              error: reason
             });
           }
         } else if (message.command === 'versionChanged') {
@@ -612,39 +606,18 @@ export class ComponentBrowserProvider {
     );
   }
 
-  private getLoadingHtml(): string {
+  private getLoadingHtml(webview: vscode.Webview): string {
+    const nonce = createNonce();
+    const styleUri = assetUri(webview, this.context.extensionUri, 'styles/loading.css');
     return `
       <!DOCTYPE html>
       <html lang="en">
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        ${cspMetaTag(webview, nonce)}
+        <link rel="stylesheet" href="${styleUri}">
         <title>GitLab CI/CD Components</title>
-        <style>
-          body {
-            font-family: var(--vscode-font-family);
-            color: var(--vscode-editor-foreground);
-            padding: 20px;
-            background-color: var(--vscode-editor-background);
-          }
-          .loading {
-            text-align: center;
-            padding: 40px;
-          }
-          .spinner {
-            border: 4px solid rgba(0, 0, 0, 0.1);
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            border-left-color: var(--vscode-button-background);
-            animation: spin 1s linear infinite;
-            margin: 0 auto 20px;
-          }
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-        </style>
       </head>
       <body>
         <div class="loading">
@@ -1633,6 +1606,9 @@ export class ComponentBrowserProvider {
             font-size: 0.9em;
             color: var(--vscode-disabledForeground);
           }
+          .version-loading.version-error {
+            color: var(--vscode-errorForeground);
+          }
           .parameters {
             border: 1px solid var(--vscode-panel-border);
             border-radius: 5px;
@@ -1913,7 +1889,9 @@ export class ComponentBrowserProvider {
 
             console.log('Version changed to:', selectedVersion);
 
-            // Show loading state
+            // Show loading state, clearing any error left by a previous attempt.
+            loading.textContent = 'Loading version details...';
+            loading.classList.remove('version-error');
             loading.style.display = 'inline';
 
             // Send message to fetch details for this version
@@ -1927,6 +1905,9 @@ export class ComponentBrowserProvider {
             const loading = document.getElementById('versionLoading');
             const select = document.getElementById('versionSelect');
 
+            // Clear any error left by a previous attempt before starting a new one.
+            loading.textContent = 'Loading version details...';
+            loading.classList.remove('version-error');
             loading.style.display = 'inline';
             select.disabled = true;
 
@@ -2103,19 +2084,29 @@ export class ComponentBrowserProvider {
               case 'versionsLoaded':
                 updateVersionDropdown(message.versions, message.currentVersion, message.versionLabels);
                 break;
-              case 'versionsError':
-                document.getElementById('versionLoading').style.display = 'none';
+              case 'versionsError': {
+                // Reuse the loading slot to report the failure: a refresh that silently does nothing reads as an
+                // inert button, so the user is told rather than left guessing.
+                const versionStatus = document.getElementById('versionLoading');
+                versionStatus.textContent = 'Could not load versions: ' + (message.error || 'unknown error');
+                versionStatus.classList.add('version-error');
+                versionStatus.style.display = 'inline';
                 document.getElementById('versionSelect').disabled = false;
-                // Could show error message here
                 break;
+              }
               case 'componentDetailsUpdated':
                 updateComponentDetails(message.component);
                 break;
-              case 'versionChangeError':
-                document.getElementById('versionLoading').style.display = 'none';
-                // Could show error message here
+              case 'versionChangeError': {
+                // Same treatment as versionsError: a failed version switch used to hide the spinner and say nothing,
+                // which reads as the dropdown simply not working.
+                const changeStatus = document.getElementById('versionLoading');
+                changeStatus.textContent = 'Could not load that version: ' + (message.error || 'unknown error');
+                changeStatus.classList.add('version-error');
+                changeStatus.style.display = 'inline';
                 console.error('Version change error:', message.error);
                 break;
+              }
             }
           });
 
@@ -2140,6 +2131,7 @@ export class ComponentBrowserProvider {
             });
 
             loading.style.display = 'none';
+            loading.classList.remove('version-error');
             select.disabled = false;
             currentVersions = versions;
             versionsLoaded = true;
@@ -2516,7 +2508,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
 
         // Clear the browser and show empty state
         if (this.panel) {
-          this.panel.webview.html = this.getLoadingHtml();
+          this.panel.webview.html = this.getLoadingHtml(this.panel.webview);
         }
 
         // Reload components in the browser (this will fetch fresh data)
@@ -2800,16 +2792,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
 
       // For a monorepo source, precompute display labels (full tag → stripped {version}) server-side, since the
       // webview can't reach the template matcher. Non-monorepo sources send no labels (value == label).
-      let versionLabels: Record<string, string> | undefined;
-      if (updatedComponent.tagPattern) {
-        const matcher = compileTagTemplate(updatedComponent.tagPattern, componentName);
-        if (matcher) {
-          versionLabels = {};
-          for (const v of availableVersions) {
-            versionLabels[v] = matcher.extractVersion(v) ?? v;
-          }
-        }
-      }
+      const versionLabels = buildVersionLabels(availableVersions, componentName, updatedComponent.tagPattern);
 
       // Send versions to webview
       if (this.panel) {

@@ -1,7 +1,7 @@
 import { getComponentService } from '../component';
 import { compileTagTemplate, scopeTagsToComponent } from '../component/tagScoping';
 import { Logger } from '../../utils/logger';
-import { CachedComponent, VersionCacheSnapshot } from '../../types/cache';
+import { VersionCacheSnapshot, VersionLookupComponent } from '../../types/cache';
 
 /**
  * VersionCache - Handles version fetching and caching for components
@@ -30,7 +30,7 @@ export class VersionCache {
    * @param component Component to fetch versions for
    * @returns Array of sorted version strings (full prefixed tags for monorepo sources, plus `main`/`master`)
    */
-  async fetchComponentVersions(component: CachedComponent): Promise<string[]> {
+  async fetchComponentVersions(component: VersionLookupComponent): Promise<string[]> {
     try {
       const cacheKey = `${component.gitlabInstance}|${component.sourcePath}`;
       let projectTags: string[] | undefined = this.projectTagsCache.get(cacheKey);

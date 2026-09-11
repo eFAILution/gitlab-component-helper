@@ -77,14 +77,16 @@ components:
     depends_on:
     - types
     - utils
-  templates:
-    location: src/templates/
-    purpose: HTML template generation for webview UIs
+  webview:
+    location: src/webview/
+    purpose: Helpers and assets for the webview documents rendered by the providers
     files:
-      detachedComponent.ts: Detached component view template
-      helpers/htmlBuilder.ts: HTML construction helper
-      helpers/styleBuilder.ts: CSS style helper
-      index.ts: Public exports
+      webviewHtml.ts: Nonce, Content-Security-Policy and asset-URI helpers for webview documents
+      inlineMarkdown.ts: HTML escaping and inline-Markdown rendering (vscode-free, unit-tested)
+      scriptData.ts: Safe JSON serialization for embedding data in a script block (vscode-free, unit-tested)
+      styles/: Stylesheets built to out/webview/styles/ and loaded via a CSP'd link
+    notes: Assets under styles/ (and client/ as scripts are extracted) are built by the webview esbuild
+      context and resolved at runtime through assetUri; they are not bundled into out/extension.js.
     depends_on:
     - types
   constants:

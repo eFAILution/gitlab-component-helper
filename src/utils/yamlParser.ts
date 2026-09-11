@@ -3,6 +3,58 @@ import * as yaml from 'js-yaml';
 /** Loose object shape returned by `js-yaml`. Callers narrow via property checks before reading fields. */
 export type YamlNode = Record<string, unknown>;
 
+/**
+ * Shared options for the local-tag catch-alls below. A local tag (`!reference`, `!custom`, …) belongs to no schema,
+ * so a stock parse throws and the whole file — `include:` and all — yields nothing. Matching by prefix on `!`
+ * degrades any such tag to the value it wraps: this extension reads only `include:` and `spec.inputs`, never the
+ * tagged values. `identify` is dump-side only; false keeps these load-only.
+ */
+const loadOnly = { matchByTagPrefix: true, identify: () => false } as const;
+
+/** One catch-all per node kind, since a tag is selected by the shape of the node it decorates. */
+const anyLocalScalarTag = yaml.defineScalarTag<string>('!', { ...loadOnly, resolve: (source) => source });
+
+const anyLocalSequenceTag = yaml.defineSequenceTag<unknown[]>('!', {
+  ...loadOnly,
+  create: () => [],
+  addItem: (carrier, item) => {
+    carrier.push(item);
+  },
+});
+
+const anyLocalMappingTag = yaml.defineMappingTag<Map<unknown, unknown>, YamlNode>('!', {
+  ...loadOnly,
+  // Map carrier so non-string keys survive; finalized to a plain object, which is what every reader here expects.
+  create: () => new Map(),
+  addPair: (carrier, key, value) => {
+    carrier.set(key, value);
+    return ''; // Success; a non-empty string is an error message.
+  },
+  has: (carrier, key) => carrier.has(key),
+  keys: (result) => Object.keys(result),
+  get: (result, key) => result[String(key)],
+  finalize: (carrier) => {
+    const result: YamlNode = {};
+    for (const [key, value] of carrier) {
+      result[String(key)] = value;
+    }
+    return result;
+  },
+});
+
+/**
+ * The core schema plus tolerated local tags, so a `.gitlab-ci.yml` using them still parses structurally.
+ *
+ * `mergeTag` gives `<<: *anchor` its YAML 1.1 meaning — merge the anchored mapping in — which is how GitLab's own
+ * parser (Ruby's Psych) reads it, and how anchors are shared between jobs in practice.
+ */
+export const GITLAB_CI_SCHEMA = yaml.CORE_SCHEMA.withTags(
+  yaml.mergeTag,
+  anyLocalScalarTag,
+  anyLocalSequenceTag,
+  anyLocalMappingTag
+);
+
 /** Type-guard: a parsed YAML value is a non-null object (i.e. a mapping). Use to narrow `unknown` results. */
 export function isYamlNode(value: unknown): value is YamlNode {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -34,7 +86,7 @@ export function parseYaml(text: string, silent = false): unknown {
     }
 
     // Parse and cache
-    const parsed = yaml.load(text);
+    const parsed = yaml.load(text, { schema: GITLAB_CI_SCHEMA });
     parseCache.set(contentHash, { content: text, parsed, timestamp: now });
 
     // Clean old cache entries periodically
@@ -68,7 +120,7 @@ export function parseYaml(text: string, silent = false): unknown {
  */
 export function parseYamlDocuments(text: string, silent = false): YamlNode[] {
   try {
-    const docs = yaml.loadAll(text);
+    const docs = yaml.loadAll(text, { schema: GITLAB_CI_SCHEMA });
     return docs.filter(isYamlNode);
   } catch (e) {
     if (!silent) {

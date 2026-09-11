@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { getComponentService } from '../component';
 import { Logger } from '../../utils/logger';
 import { getPerformanceMonitor } from '../../utils/performanceMonitor';
-import { CachedComponent, PersistentCacheData } from '../../types/cache';
+import { CachedComponent, PersistentCacheData, VersionLookupComponent } from '../../types/cache';
 import { ComponentSource } from '../../types/api';
 import { reconcileComponentSource } from './sourceReconciliation';
 import { ProjectCache } from './projectCache';
@@ -424,9 +424,12 @@ export class ComponentCacheManager implements vscode.Disposable {
   }
 
   /**
-   * Fetch and cache all available versions for a specific component
+   * Fetch and cache all available versions for a specific component.
+   *
+   * Takes the narrow {@link VersionLookupComponent} rather than a full cache entry: the lookup is driven entirely by
+   * the project coordinates, so callers holding a partial component (the details panel) can use it too.
    */
-  public async fetchComponentVersions(component: CachedComponent): Promise<string[]> {
+  public async fetchComponentVersions(component: VersionLookupComponent): Promise<string[]> {
     try {
       const sortedVersions = await this.versionCache.fetchComponentVersions(component);
 

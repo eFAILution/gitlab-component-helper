@@ -132,3 +132,29 @@ export function stripTagPrefix(tag: string, componentName: string, template?: st
   const matcher = compileTagTemplate(template, componentName);
   return matcher?.extractVersion(tag) ?? tag;
 }
+
+/**
+ * Build the display-label map the version dropdown uses: full tag → stripped `{version}`.
+ *
+ * Returns `undefined` when the source is not a tag-per-component monorepo (no template, or one that doesn't
+ * compile), which is the "no labels — value is the label" signal the webview already falls back on. The template is
+ * compiled once for the whole list rather than per tag.
+ *
+ * @param versions      The full tags to label.
+ * @param componentName The component name substituted for `{name}`.
+ * @param template      The per-source tag-version template. Absent for ordinary sources.
+ */
+export function buildVersionLabels(
+  versions: string[],
+  componentName: string,
+  template?: string
+): Record<string, string> | undefined {
+  if (!template) {
+    return undefined;
+  }
+  const matcher = compileTagTemplate(template, componentName);
+  if (!matcher) {
+    return undefined;
+  }
+  return Object.fromEntries(versions.map((tag) => [tag, matcher.extractVersion(tag) ?? tag]));
+}
