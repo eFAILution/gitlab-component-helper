@@ -51,7 +51,8 @@ deploy-job:
     const debug = parsed.variables.find((v) => v.name === 'debug');
     assert.ok(debug, 'debug input missing');
     assert.strictEqual(debug.type, 'boolean');
-    assert.strictEqual(debug.default, 'false');
+    // The boolean `false`, not the string "false" — a stringified default renders back as a quoted `"false"`.
+    assert.strictEqual(debug.default, false);
 
     const names = parsed.variables.map((v) => v.name);
     for (const unwanted of ['ENV_VAR', 'ANOTHER_VAR', 'script', 'after_script']) {
@@ -107,6 +108,8 @@ $[[ inputs.job-name ]]:
     assert.strictEqual(byName['architecture'].description, 'Target CPU architecture');
     assert.strictEqual(byName['architecture'].default, 'amd64');
     assert.strictEqual(byName['skip-find-images'].description, 'Skip image discovery');
+    // No `type:` on this input, so GitLab resolves it as a string — the default stays the text it appears as.
+    assert.strictEqual(byName['skip-find-images'].default, 'false');
 
     // A hyphenated input with no default is marked required, same as a non-hyphenated one.
     assert.strictEqual(byName['package-name'].default, undefined);
@@ -231,6 +234,190 @@ suite('GitLabSpecParser.parse — options (enum) extraction', () => {
     assert.ok(region, 'region input missing — options list may have swallowed the next input');
     assert.strictEqual(region.default, 'us-east-1');
     assert.strictEqual(region.options, undefined);
+  });
+});
+
+suite('GitLabSpecParser.parse — default value types', () => {
+  // The parser reads the spec line-by-line, so a `default:` arrives as raw text. Keeping it as text turned
+  // `default: false` into the string "false", which completion then inserted as a quoted `"false"` — a string
+  // where GitLab expects a boolean.
+  test('parses scalar defaults as their YAML types, not as strings', () => {
+    const template = `spec:
+  inputs:
+    flag_off:
+      type: boolean
+      default: false
+    flag_on:
+      type: boolean
+      default: true
+    port:
+      type: number
+      default: 8080
+    ratio:
+      type: number
+      default: 0.5
+    name:
+      type: string
+      default: production
+    empty:
+      type: string
+      default:`;
+
+    const parsed = GitLabSpecParser.parse(template);
+    const byName = Object.fromEntries(parsed.variables.map((v) => [v.name, v]));
+
+    assert.strictEqual(byName['flag_off'].default, false);
+    assert.strictEqual(byName['flag_on'].default, true);
+    assert.strictEqual(byName['port'].default, 8080);
+    assert.strictEqual(byName['ratio'].default, 0.5);
+    assert.strictEqual(byName['name'].default, 'production');
+    // An explicit but empty `default:` is an empty string, so the input is not required.
+    assert.strictEqual(byName['empty'].default, '');
+    assert.strictEqual(byName['empty'].required, false);
+  });
+
+  test('keeps a quoted "false" a string, so it round-trips as a quoted scalar', () => {
+    const template = `spec:
+  inputs:
+    literal:
+      type: string
+      default: "false"
+    numeric_string:
+      type: string
+      default: "8080"`;
+
+    const parsed = GitLabSpecParser.parse(template);
+    const byName = Object.fromEntries(parsed.variables.map((v) => [v.name, v]));
+
+    assert.strictEqual(byName['literal'].default, 'false');
+    assert.strictEqual(byName['numeric_string'].default, '8080');
+  });
+
+  test('treats an omitted type as string, leaving the default as written', () => {
+    // GitLab resolves an untyped input as StringInput and coerces the default with `to_s`, so an untyped default
+    // is text whatever it looks like. Sending it through YAML instead would renumber it: `0755` loses its leading
+    // zero, `1.0` becomes `1`, `1e5` becomes `100000` — silent value corruption.
+    const template = `spec:
+  inputs:
+    file_mode:
+      default: 0755
+    version:
+      default: 1.0
+    scientific:
+      default: 1e5
+    padded:
+      default: 007
+    flag:
+      description: no type declared
+      default: false
+    untyped_nothing:
+      description: no type and no default`;
+
+    const parsed = GitLabSpecParser.parse(template);
+    const byName = Object.fromEntries(parsed.variables.map((v) => [v.name, v]));
+
+    assert.strictEqual(byName['file_mode'].default, '0755');
+    assert.strictEqual(byName['version'].default, '1.0');
+    assert.strictEqual(byName['scientific'].default, '1e5');
+    assert.strictEqual(byName['padded'].default, '007');
+    assert.strictEqual(byName['flag'].default, 'false');
+    for (const name of ['file_mode', 'version', 'scientific', 'padded', 'flag', 'untyped_nothing']) {
+      assert.strictEqual(byName[name].type, 'string', `${name} should resolve as a string input`);
+    }
+  });
+
+  test('a valueless `default:` at input-name indentation is not read as an input', () => {
+    // On a spec indented `inputs:` at 0, an input's keys sit at 4 and match the input-name pattern — a bare
+    // `default:` would otherwise open a phantom input named `default` and swallow the real input's value.
+    const template = `spec:
+inputs:
+  flag:
+    type: boolean
+    default:`;
+
+    const parsed = GitLabSpecParser.parse(template);
+
+    assert.deepStrictEqual(parsed.variables.map((v) => v.name), ['flag']);
+    assert.strictEqual(parsed.variables[0].default, '');
+    assert.strictEqual(parsed.variables[0].required, false);
+  });
+
+  test('an explicit `type: string` keeps a numeric-looking default as text', () => {
+    // The declared type wins over what YAML would make of the text: `1.0` must not become the number 1, and
+    // `0755` must keep its leading zero.
+    const template = `spec:
+  inputs:
+    ratio:
+      type: string
+      default: 1.0
+    mode:
+      type: string
+      default: 0755`;
+
+    const parsed = GitLabSpecParser.parse(template);
+    const byName = Object.fromEntries(parsed.variables.map((v) => [v.name, v]));
+
+    assert.strictEqual(byName['ratio'].default, '1.0');
+    assert.strictEqual(byName['mode'].default, '0755');
+  });
+
+  test('types options entries like defaults, so a default matches the option naming it', () => {
+    // Options parsed as strings while defaults are typed would leave `false` unable to match `'false'` — the
+    // default would not pre-select, and the choice would insert quoted values into a boolean/number input.
+    const template = `spec:
+  inputs:
+    mode:
+      type: boolean
+      default: false
+      options: [true, false]
+    size:
+      type: number
+      default: 2
+      options: [1, 2, 3]`;
+
+    const parsed = GitLabSpecParser.parse(template);
+    const byName = Object.fromEntries(parsed.variables.map((v) => [v.name, v]));
+
+    assert.deepStrictEqual(byName['mode'].options, [true, false]);
+    assert.strictEqual(byName['mode'].default, false);
+    assert.deepStrictEqual(byName['size'].options, [1, 2, 3]);
+    assert.strictEqual(byName['size'].default, 2);
+  });
+
+  test('types options against a `type:` declared after the options block', () => {
+    const template = `spec:
+  inputs:
+    size:
+      options: [1, 2]
+      type: number`;
+
+    const parsed = GitLabSpecParser.parse(template);
+
+    assert.deepStrictEqual(parsed.variables[0].options, [1, 2]);
+  });
+
+  test('an explicit `type: string` keeps numeric-looking options as text', () => {
+    const template = `spec:
+  inputs:
+    version:
+      type: string
+      options: ["1.0", "2.0"]`;
+
+    const parsed = GitLabSpecParser.parse(template);
+
+    assert.deepStrictEqual(parsed.variables[0].options, ['1.0', '2.0']);
+  });
+
+  test('an input with a false default is optional, not required', () => {
+    const template = `spec:
+  inputs:
+    debug:
+      type: boolean
+      default: false`;
+
+    const parsed = GitLabSpecParser.parse(template);
+
+    assert.strictEqual(parsed.variables[0].required, false);
   });
 });
 

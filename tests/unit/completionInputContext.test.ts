@@ -13,6 +13,7 @@ import * as assert from 'node:assert/strict';
 import {
   findCompletionInputContextAtLine,
   buildInputInsertValue,
+  allowedValuesFor,
 } from '../../src/providers/completionInputContext';
 import type { ComponentParameter } from '../../src/types/git-component';
 
@@ -410,7 +411,6 @@ suite('buildInputInsertValue', () => {
   test('renders a string default bare and stringifies a non-string default', () => {
     assert.strictEqual(buildInputInsertValue({ ...base, default: 'dev' }), 'dev');
     assert.strictEqual(buildInputInsertValue({ ...base, type: 'number', default: 42 }), '42');
-    assert.strictEqual(buildInputInsertValue({ ...base, type: 'boolean', default: true }), 'true');
   });
 
   test('quotes a string default only when a bare scalar would not round-trip', () => {
@@ -437,9 +437,44 @@ suite('buildInputInsertValue', () => {
     assert.strictEqual(buildInputInsertValue({ ...base, type: 'array', default: ['a,b', 'c'] }), '["a,b", c]');
   });
 
-  test('offers both boolean values, leading with the safer one by requiredness', () => {
+  test('offers both boolean values in conventional order when there is no default', () => {
+    // `true, false` reads the way someone scanning the dropdown expects, regardless of requiredness.
     assert.strictEqual(buildInputInsertValue({ ...base, type: 'boolean', required: true }), '${1|true,false|}');
-    assert.strictEqual(buildInputInsertValue({ ...base, type: 'boolean', required: false }), '${1|false,true|}');
+    assert.strictEqual(buildInputInsertValue({ ...base, type: 'boolean', required: false }), '${1|true,false|}');
+  });
+
+  test('offers both boolean values when the input has a default, pre-selecting the default', () => {
+    // A boolean is a closed two-value enum, so a default pre-fills the choice rather than replacing it.
+    assert.strictEqual(buildInputInsertValue({ ...base, type: 'boolean', default: false }), '${1|false,true|}');
+    assert.strictEqual(buildInputInsertValue({ ...base, type: 'boolean', default: true }), '${1|true,false|}');
+    // A default always leads, overriding the conventional true-first order.
+    assert.strictEqual(
+      buildInputInsertValue({ ...base, type: 'boolean', required: true, default: false }),
+      '${1|false,true|}'
+    );
+  });
+
+  test('allowedValuesFor covers the value slot, where a boolean has no literal options list', () => {
+    // The value slot (cursor after `test:`) offers `allowedValuesFor`, so a boolean must yield true/false there
+    // even though the spec declares no `options:` — otherwise typing after `test:` suggests nothing.
+    assert.deepStrictEqual(allowedValuesFor({ ...base, type: 'boolean' }), [true, false]);
+    assert.deepStrictEqual(allowedValuesFor({ ...base, type: 'boolean', required: true }), [true, false]);
+    // An explicit options list is used as declared, and a free-text input offers nothing.
+    assert.deepStrictEqual(allowedValuesFor({ ...base, options: ['aws', 'gcp'] }), ['aws', 'gcp']);
+    assert.strictEqual(allowedValuesFor({ ...base, type: 'string' }), undefined);
+  });
+
+  test('offers the choice for a boolean input whose type was inferred from an untyped default', () => {
+    // A spec that declares `default: false` with no `type:` is a boolean input; the parser infers the type, so
+    // the snippet builder sees `type: 'boolean'` and offers the choice like any other boolean.
+    assert.strictEqual(buildInputInsertValue({ ...base, type: 'boolean', default: false }), '${1|false,true|}');
+  });
+
+  test('inserts a boolean default unquoted, so GitLab reads it as a boolean', () => {
+    // Regression: a stringified `"false"` default (from the line-based spec parser) inserted `p: "false"` — a
+    // string where a boolean was declared. The choice list must carry bare `false`, never `"false"`.
+    const built = buildInputInsertValue({ ...base, type: 'boolean', default: false });
+    assert.ok(!built.includes('"'), `boolean choice must not be quoted, got ${built}`);
   });
 
   test('seeds empty literals for array and object inputs', () => {
