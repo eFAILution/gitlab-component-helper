@@ -3,17 +3,116 @@ import { Logger } from '../utils/logger';
 // Import direct from errors/types (not the barrel) so this module can load from plain Node — the barrel re-exports
 // from errors/handler.ts which imports `vscode` at module load. Required for the Mocha unit suite.
 import { ParseError } from '../errors/types';
+import type { ParameterDefault } from '../types/git-component';
+import { isParameterDefault } from './parameterDefaultShape';
+import { parseYaml, isYamlNode } from '../utils/yamlParser';
 
 const logger = Logger.getInstance();
+
+/**
+ * Parse the text after `default:` into the value YAML says it is.
+ *
+ * This parser reads the spec line-by-line rather than as a document, so a `default:` value arrives as raw text. Left
+ * as text, `default: false` becomes the string `"false"`, which downstream renders back as a quoted `"false"` — a
+ * string where GitLab expects a boolean. Round-tripping the scalar through the YAML parser keeps booleans, numbers
+ * and `null` as themselves, while quoted forms (`default: "false"`) stay strings.
+ *
+ * @param rawValue - The text following `default:` on the line, e.g. `false`, `"0"`, `[a, b]`.
+ * @returns The parsed value, or the trimmed raw text when it doesn't parse as a YAML scalar.
+ */
+function parseScalar(trimmed: string): ParameterDefault {
+  try {
+    const parsed = parseYaml(`probe: ${trimmed}`, true);
+    if (isYamlNode(parsed) && isParameterDefault(parsed.probe)) {
+      return parsed.probe;
+    }
+  } catch {
+    // Not valid YAML on its own (an unquoted `*`, a stray `{`, …) — fall back to the literal text.
+  }
+  return trimmed.replace(/^["']|["']$/g, '').trim();
+}
+
+/**
+ * Parse the text after `default:` into the value YAML says it is.
+ *
+ * This parser reads the spec line-by-line rather than as a document, so a `default:` value arrives as raw text. Left
+ * as text, `default: false` becomes the string `"false"`, which downstream renders back as a quoted `"false"` — a
+ * string where GitLab expects a boolean. Round-tripping the scalar through the YAML parser keeps booleans, numbers
+ * and `null` as themselves, while quoted forms (`default: "false"`) stay strings.
+ *
+ * @param rawValue - The text following `default:` on the line, e.g. `false`, `"0"`, `[a, b]`.
+ * @param declaredType - The input's `type:` as the spec states it, or `null` when the spec omits it.
+ * @returns The parsed value, or the trimmed raw text when it doesn't parse as a YAML scalar.
+ */
+function parseDefaultValue(rawValue: string, declaredType: string | null): ParameterDefault {
+  const trimmed = rawValue.trim();
+  // An empty `default:` is an explicit empty string, not an absent default — absent inputs are marked required.
+  if (trimmed.length === 0) {
+    return '';
+  }
+  // An explicit `type: string` makes the default text by declaration, so don't let YAML renumber it: `default: 1.0`
+  // must stay "1.0" and `default: 0755` must keep its leading zero. Strip surrounding quotes only.
+  //
+  // This applies only when the spec actually says `type: string`. GitLab infers an omitted type from the default, so
+  // an untyped `default: false` is a boolean input and must parse as one — treating the fallback type as a
+  // declaration would strand every untyped boolean back as the string "false".
+  if (declaredType === 'string') {
+    return trimmed.replace(/^["']|["']$/g, '').trim();
+  }
+  return parseScalar(trimmed);
+}
+
+/**
+ * Parse one `options:` entry into the value YAML says it is.
+ *
+ * Kept in step with {@link parseDefaultValue}: an entry and a default that read the same in the spec must produce
+ * the same value, or a `default: false` never matches the `false` in `options: [true, false]` and fails to
+ * pre-select. A declared `type: string` keeps entries literal for the same reason defaults do.
+ *
+ * @param entry - One option's raw text, quotes and surrounding whitespace included.
+ * @param declaredType - The input's `type:` as the spec states it, or `null` when the spec omits it.
+ * @returns The entry as a string, number, or boolean.
+ */
+function parseOptionEntry(entry: string, declaredType: string | null): string | number | boolean {
+  const trimmed = entry.trim();
+  if (declaredType === 'string') {
+    return trimmed.replace(/^["']|["']$/g, '').trim();
+  }
+  const parsed = parseScalar(trimmed);
+  // `options:` entries are scalars; a null or nested-array entry isn't meaningful, so keep those as their text.
+  return parsed === null || Array.isArray(parsed) ? trimmed.replace(/^["']|["']$/g, '').trim() : parsed;
+}
+
+/**
+ * Infer an input's type from its default, for a spec that declares `default:` but no `type:`.
+ *
+ * Mirrors GitLab, which infers an omitted type from the default rather than assuming `string`.
+ *
+ * @param value - The input's parsed default.
+ * @returns The GitLab input type name the default implies; `'string'` for text and for `null`, which implies nothing.
+ */
+function inferTypeFromDefault(value: ParameterDefault): string {
+  if (typeof value === 'boolean') return 'boolean';
+  if (typeof value === 'number') return 'number';
+  if (Array.isArray(value)) return 'array';
+  return 'string';
+}
 
 export interface ComponentVariable {
   name: string;
   description: string;
   required: boolean;
   type: string;
-  default?: string;
-  /** Allowed values from the input's `options:` list, in declaration order; absent when no `options:` is given. */
-  options?: string[];
+  /**
+   * The input's `default:`, as the value YAML says it is — `default: false` is the boolean `false`, not `"false"`.
+   * Consumers render it back to YAML by type, so a string default here must be a genuine string.
+   */
+  default?: ParameterDefault;
+  /**
+   * Allowed values from the input's `options:` list, in declaration order; absent when no `options:` is given.
+   * Entries carry their YAML types, so they compare equal to a `default` that names one of them.
+   */
+  options?: Array<string | number | boolean>;
 }
 
 export interface ParsedSpec {
@@ -26,11 +125,12 @@ export interface ParsedSpec {
  * Parse the inline form of an `options:` value (`options: [a, "b", c]`).
  *
  * Returns an empty array for the expanded form (`options:` with the values on following `- item` lines), which the
- * caller then fills in as it reads those lines. Surrounding brackets and per-entry quotes are stripped; blank entries
- * (e.g. a trailing comma) are dropped.
+ * caller then fills in as it reads those lines. Surrounding brackets are stripped and blank entries (e.g. a trailing
+ * comma) are dropped, but each entry stays raw text — {@link parseOptionEntry} types it once the input's `type:` is
+ * known, which may be declared after `options:`.
  *
  * @param rawValue - The text after `options:` on the same line, e.g. `[a, "b", c]` (or empty for the expanded form).
- * @returns The parsed option values, or an empty array when the value isn't an inline `[...]` list.
+ * @returns The raw option entries, or an empty array when the value isn't an inline `[...]` list.
  */
 function parseInlineOptions(rawValue: string): string[] {
   if (!rawValue.startsWith('[')) {
@@ -39,7 +139,7 @@ function parseInlineOptions(rawValue: string): string[] {
   return rawValue
     .replace(/^\[|\]$/g, '')
     .split(',')
-    .map(entry => entry.trim().replace(/^["']|["']$/g, '').trim())
+    .map(entry => entry.trim())
     .filter(entry => entry.length > 0);
 }
 
@@ -146,6 +246,40 @@ export class GitLabSpecParser {
       .filter(line => line.trim() && !line.trim().startsWith('#'));
 
     let currentInput: ComponentVariable | null = null;
+    // The `default:` text for `currentInput`, held until the input ends so the declared `type:` can steer the parse.
+    let rawDefault: string | null = null;
+    // Whether the spec stated `type:` for `currentInput`. `ComponentVariable.type` falls back to 'string', which
+    // would otherwise be indistinguishable from a declared one.
+    let declaredType: string | null = null;
+    // Raw `options:` entries for `currentInput`, typed by `finalizeInput` for the same reason as `rawDefault`.
+    let rawOptions: string[] | null = null;
+
+    /**
+     * Resolve the pending `default:` and `options:` against the now-known type, infer an omitted type, and mark a
+     * defaultless input required. Deferred to here because `type:` may be declared after either of them.
+     */
+    const finalizeInput = (input: ComponentVariable): ComponentVariable => {
+      if (rawDefault !== null) {
+        input.default = parseDefaultValue(rawDefault, declaredType);
+        // GitLab infers an omitted `type:` from the default's type, so mirror that rather than leaving the
+        // 'string' fallback in place — consumers key off `type`, and an untyped `default: false` is a boolean
+        // input that should be offered as a true/false choice.
+        if (declaredType === null) {
+          input.type = inferTypeFromDefault(input.default);
+        }
+      } else {
+        // GitLab CI/CD component behavior: an input with no default is required.
+        input.required = true;
+      }
+      if (rawOptions !== null) {
+        // Typed against the input's resolved type so an entry matches a `default` naming the same value.
+        input.options = rawOptions.map(entry => parseOptionEntry(entry, declaredType ?? input.type));
+      }
+      rawDefault = null;
+      rawOptions = null;
+      declaredType = null;
+      return input;
+    };
 
     for (const line of inputLines) {
       const trimmedLine = line.trim();
@@ -165,11 +299,7 @@ export class GitLabSpecParser {
       if (line.match(/^\s{2,4}[a-zA-Z_][a-zA-Z0-9_-]*:\s*$/)) {
         // If we have a current input, finalize it before starting a new one
         if (currentInput) {
-          // Mark as required if no default was specified (GitLab CI/CD component behavior)
-          if (currentInput.default === undefined) {
-            currentInput.required = true;
-          }
-          extractedVariables.push(currentInput);
+          extractedVariables.push(finalizeInput(currentInput));
         }
         const inputName = trimmedLine.split(':')[0];
         currentInput = {
@@ -186,27 +316,26 @@ export class GitLabSpecParser {
         if (trimmedLine.startsWith('description:')) {
           currentInput.description = trimmedLine.substring(12).replace(/^["']|["']$/g, '').trim();
         } else if (trimmedLine.startsWith('default:')) {
-          currentInput.default = trimmedLine.substring(8).replace(/^["']|["']$/g, '').trim();
+          // Kept as text until the input is complete: `type:` may follow `default:`, and the declared type decides
+          // whether the value is parsed as YAML or kept literal. Resolved by `finalizeInput`.
+          rawDefault = trimmedLine.substring(8);
         } else if (trimmedLine.startsWith('type:')) {
-          currentInput.type = trimmedLine.substring(5).replace(/^["']|["']$/g, '').trim();
+          declaredType = trimmedLine.substring(5).replace(/^["']|["']$/g, '').trim();
+          currentInput.type = declaredType;
         } else if (trimmedLine.startsWith('options:')) {
           // Open the options list. An inline form (`options: [a, b]`) carries its values on the same line;
           // the expanded form leaves them for the `- item` lines below.
-          currentInput.options = parseInlineOptions(trimmedLine.substring(8).trim());
-        } else if (trimmedLine.startsWith('- ') && currentInput.options) {
+          rawOptions = parseInlineOptions(trimmedLine.substring(8).trim());
+        } else if (trimmedLine.startsWith('- ') && rawOptions) {
           // Expanded list item belonging to the open `options:` block.
-          currentInput.options.push(trimmedLine.substring(2).replace(/^["']|["']$/g, '').trim());
+          rawOptions.push(trimmedLine.substring(2).trim());
         }
       }
     }
 
     // Add the last input
     if (currentInput) {
-      // Mark as required if no default was specified (GitLab CI/CD component behavior)
-      if (currentInput.default === undefined) {
-        currentInput.required = true;
-      }
-      extractedVariables.push(currentInput);
+      extractedVariables.push(finalizeInput(currentInput));
     }
 
     logger.debug(`${logPrefix} Extracted ${extractedVariables.length} input parameters from spec`, 'SpecParser');
@@ -274,7 +403,8 @@ export class GitLabSpecParser {
           description: `Parameter: ${varName}`,
           required: false,
           type: 'string',
-          default: defaultValue || undefined
+          // The legacy format declares no per-variable type, so values stay the text they appear as.
+          default: defaultValue ? parseDefaultValue(defaultValue, 'string') : undefined
         };
       });
 

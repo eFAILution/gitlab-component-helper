@@ -198,23 +198,33 @@ export async function buildCatalogComponents(
 }
 
 /**
- * Backfill `options` from template-parsed parameters onto catalog-derived parameters, matched by name.
+ * Take an input's type signature (`options`, `type`, `default`) from the locally-parsed template, which the Catalog
+ * API reports less completely: it omits `options` entirely, often omits `type` (collapsing to the `'string'`
+ * fallback), and can return a default stringified — so a `default: false` input arrives as a `'string'` holding
+ * `"false"`, and completion offers no true/false choice.
  *
- * The GitLab catalog API doesn't return per-input `options`, but the parsed template spec does. When we keep the
- * catalog's parameters (e.g. for their descriptions) we still want their `options` so completion can offer the
- * allowed values — so we graft `options` from the template parse onto the catalog parameter of the same name.
+ * Both sides read the same `spec.inputs`, so a disagreement is API loss rather than a real difference. `description`
+ * and `required` stay with the catalog, which resolves them where our parser only infers them.
  *
- * Only template parameters that actually declare `options` contribute; catalog parameters without a matching
- * template entry are returned unchanged. The input arrays are not mutated.
+ * @param catalogParams - Parameters built from the Catalog API response; the base each result is merged onto.
+ * @param templateParams - Parameters from the locally-parsed template, matched to the above by `name`.
+ * @returns A new array in `catalogParams` order, each entry carrying the template's type signature where it has
+ *   one. Catalog parameters with no matching template entry are passed through unchanged; neither input is mutated.
  */
-export function backfillParameterOptions(
+export function backfillParameterSpecDetail(
   catalogParams: readonly ComponentParameter[],
   templateParams: readonly ComponentParameter[]
 ): ComponentParameter[] {
-  const optionsByName = new Map(
-    templateParams.filter((p) => p.options?.length).map((p) => [p.name, p.options])
-  );
-  return catalogParams.map((p) =>
-    optionsByName.has(p.name) ? { ...p, options: optionsByName.get(p.name) } : p
-  );
+  const templateByName = new Map(templateParams.map((p) => [p.name, p]));
+  return catalogParams.map((p) => {
+    const fromTemplate = templateByName.get(p.name);
+    if (!fromTemplate) return p;
+
+    return {
+      ...p,
+      ...(fromTemplate.options?.length ? { options: fromTemplate.options } : {}),
+      ...(fromTemplate.type ? { type: fromTemplate.type } : {}),
+      ...(fromTemplate.default !== undefined ? { default: fromTemplate.default } : {}),
+    };
+  });
 }
