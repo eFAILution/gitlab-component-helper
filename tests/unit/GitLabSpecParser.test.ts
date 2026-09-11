@@ -108,9 +108,8 @@ $[[ inputs.job-name ]]:
     assert.strictEqual(byName['architecture'].description, 'Target CPU architecture');
     assert.strictEqual(byName['architecture'].default, 'amd64');
     assert.strictEqual(byName['skip-find-images'].description, 'Skip image discovery');
-    assert.strictEqual(byName['skip-find-images'].default, false);
-    // Two dots isn't a number to YAML, so a version-like default stays the string it looks like.
-    assert.strictEqual(byName['package-version'].default, '0.0.1');
+    // No `type:` on this input, so GitLab resolves it as a string — the default stays the text it appears as.
+    assert.strictEqual(byName['skip-find-images'].default, 'false');
 
     // A hyphenated input with no default is marked required, same as a non-hyphenated one.
     assert.strictEqual(byName['package-name'].default, undefined);
@@ -294,33 +293,53 @@ suite('GitLabSpecParser.parse — default value types', () => {
     assert.strictEqual(byName['numeric_string'].default, '8080');
   });
 
-  test('infers an omitted type from the default, as GitLab does', () => {
-    // Without this, an untyped `default: false` keeps the 'string' type fallback, and completion offers no
-    // true/false choice because it has no way to tell the input is a boolean.
+  test('treats an omitted type as string, leaving the default as written', () => {
+    // GitLab resolves an untyped input as StringInput and coerces the default with `to_s`, so an untyped default
+    // is text whatever it looks like. Sending it through YAML instead would renumber it: `0755` loses its leading
+    // zero, `1.0` becomes `1`, `1e5` becomes `100000` — silent value corruption.
     const template = `spec:
   inputs:
-    untyped_bool:
+    file_mode:
+      default: 0755
+    version:
+      default: 1.0
+    scientific:
+      default: 1e5
+    padded:
+      default: 007
+    flag:
       description: no type declared
       default: false
-    untyped_number:
-      default: 8080
-    untyped_string:
-      default: production
-    untyped_array:
-      default: [a, b]
     untyped_nothing:
       description: no type and no default`;
 
     const parsed = GitLabSpecParser.parse(template);
     const byName = Object.fromEntries(parsed.variables.map((v) => [v.name, v]));
 
-    assert.strictEqual(byName['untyped_bool'].type, 'boolean');
-    assert.strictEqual(byName['untyped_bool'].default, false);
-    assert.strictEqual(byName['untyped_number'].type, 'number');
-    assert.strictEqual(byName['untyped_string'].type, 'string');
-    assert.strictEqual(byName['untyped_array'].type, 'array');
-    // Nothing to infer from, so the 'string' fallback stands.
-    assert.strictEqual(byName['untyped_nothing'].type, 'string');
+    assert.strictEqual(byName['file_mode'].default, '0755');
+    assert.strictEqual(byName['version'].default, '1.0');
+    assert.strictEqual(byName['scientific'].default, '1e5');
+    assert.strictEqual(byName['padded'].default, '007');
+    assert.strictEqual(byName['flag'].default, 'false');
+    for (const name of ['file_mode', 'version', 'scientific', 'padded', 'flag', 'untyped_nothing']) {
+      assert.strictEqual(byName[name].type, 'string', `${name} should resolve as a string input`);
+    }
+  });
+
+  test('a valueless `default:` at input-name indentation is not read as an input', () => {
+    // On a spec indented `inputs:` at 0, an input's keys sit at 4 and match the input-name pattern — a bare
+    // `default:` would otherwise open a phantom input named `default` and swallow the real input's value.
+    const template = `spec:
+inputs:
+  flag:
+    type: boolean
+    default:`;
+
+    const parsed = GitLabSpecParser.parse(template);
+
+    assert.deepStrictEqual(parsed.variables.map((v) => v.name), ['flag']);
+    assert.strictEqual(parsed.variables[0].default, '');
+    assert.strictEqual(parsed.variables[0].required, false);
   });
 
   test('an explicit `type: string` keeps a numeric-looking default as text', () => {

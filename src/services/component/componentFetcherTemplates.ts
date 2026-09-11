@@ -206,6 +206,11 @@ export async function buildCatalogComponents(
  * Both sides read the same `spec.inputs`, so a disagreement is API loss rather than a real difference. `description`
  * and `required` stay with the catalog, which resolves them where our parser only infers them.
  *
+ * `type` is the one field the template does not always win: both sides fall back to `'string'`, so a template
+ * `'string'` may mean "the spec said string" or "the line-based parse missed the `type:` line". Overwriting with it
+ * would downgrade a catalog-typed `number` on a spec layout the parser doesn't match, so the template's `type` is
+ * taken only when it is more specific than that shared fallback.
+ *
  * @param catalogParams - Parameters built from the Catalog API response; the base each result is merged onto.
  * @param templateParams - Parameters from the locally-parsed template, matched to the above by `name`.
  * @returns A new array in `catalogParams` order, each entry carrying the template's type signature where it has
@@ -220,10 +225,11 @@ export function backfillParameterSpecDetail(
     const fromTemplate = templateByName.get(p.name);
     if (!fromTemplate) return p;
 
+    const typeIsMoreSpecific = Boolean(fromTemplate.type) && fromTemplate.type !== 'string';
     return {
       ...p,
       ...(fromTemplate.options?.length ? { options: fromTemplate.options } : {}),
-      ...(fromTemplate.type ? { type: fromTemplate.type } : {}),
+      ...(typeIsMoreSpecific ? { type: fromTemplate.type } : {}),
       ...(fromTemplate.default !== undefined ? { default: fromTemplate.default } : {}),
     };
   });

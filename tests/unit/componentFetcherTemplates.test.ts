@@ -200,6 +200,17 @@ suite('backfillParameterSpecDetail', () => {
     assert.strictEqual(merged[0].default, 'staging');
   });
 
+  test('does not downgrade a catalog type to the template parse fallback', () => {
+    // Both sides fall back to 'string', so a template 'string' may just mean the line-based parse missed the
+    // `type:` line. Overwriting with it would lose a type the catalog got right.
+    const catalog = [param('count', { type: 'number' })];
+    const template = [param('count', { type: 'string' })];
+
+    const merged = backfillParameterSpecDetail(catalog, template);
+
+    assert.strictEqual(merged[0].type, 'number');
+  });
+
   test('keeps a catalog default the template parse does not have', () => {
     const catalog = [param('env', { default: 'production' })];
     const template = [param('env')]; // no default parsed
