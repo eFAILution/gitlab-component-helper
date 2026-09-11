@@ -145,6 +145,7 @@ common_commands:
   debug: F5 (in VS Code)
   package: npm run package
   lint: npm run lint
+  lint_ci: npm run lint:ci (eslint + stylelint with GitHub annotation formatters; run by CI)
 git_workflow:
   branch_naming: feature/description or fix/description
   commit_format: 'type(scope): description'
