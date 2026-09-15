@@ -88,8 +88,7 @@ export class ComponentDocumentLinkProvider implements vscode.DocumentLinkProvide
         (c) =>
           c.gitlabInstance === parsed.gitlabInstance &&
           c.sourcePath === parsed.path &&
-          c.name === parsed.name &&
-          (!parsed.version || c.version === parsed.version)
+          c.name === parsed.name
       );
 
       // Only produce a link when the cache has a resolved templatePath for the component. Uncached components are

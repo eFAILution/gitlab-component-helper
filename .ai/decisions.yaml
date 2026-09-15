@@ -124,6 +124,42 @@ decisions:
     - .release-it/vscode-version.js
     - package.json (release:main, release:beta scripts)
     title: Release It
+  DEPENDABOT_TARGETS_BETA:
+    date: '2026-09-14'
+    status: accepted
+    context: Dependabot defaulted to the repository default branch (main), which is the stable
+      release line. Bumps opened there duplicated what had already landed on beta, and a merge
+      to main auto-cuts a stable release.
+    decision: 'Set target-branch: "beta" on every ecosystem in .github/dependabot.yml (npm,
+      github-actions, pip)'
+    rationale:
+    - A push to main runs release-it with .release-it.json and cuts a stable GitHub release, so
+      a routine dependency bump merged there ships a release out of band
+    - main trails beta by everything not yet released, so bumps against main duplicate versions
+      beta already carries (e.g. #291/#292/#295 re-proposed bumps merged weeks earlier)
+    - Retargeting such a PR to beta conflicts on package-lock.json, since beta has moved
+    - Updates reach main the same way every other change does, through the beta -> main release PR
+    implementation:
+      config: '.github/dependabot.yml, target-branch: "beta" on each of the three package-ecosystem
+        entries'
+      flow: dependabot -> beta -> release PR -> main
+    alternatives_considered:
+    - name: leave_targeting_main
+      rejected_because: Ships stable releases from dependency bumps and produces duplicate PRs
+    - name: retarget_each_pr_by_hand
+      rejected_because: Lockfile conflicts on every npm PR; recurring manual work
+    consequences:
+      positive:
+      - Dependency updates follow the same path as feature work
+      - No stable release cut by a dependency bump
+      - No duplicate bumps against a stale branch
+      negative:
+      - A security fix reaches main only when the next release PR merges
+    references:
+    - .github/dependabot.yml
+    - .release-it.json
+    - .release-it.beta.json
+    title: Dependabot Targets Beta
   MODULAR_SERVICE_SPLIT:
     date: '2026'
     status: accepted

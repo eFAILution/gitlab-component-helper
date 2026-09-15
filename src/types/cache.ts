@@ -111,6 +111,17 @@ export interface CachedComponent {
 }
 
 /**
+ * The subset of {@link CachedComponent} a version lookup actually needs: the project coordinates to query, the
+ * current ref to fall back on, and the monorepo template used to scope the returned tags.
+ *
+ * Version fetching is reachable from surfaces that hold less than a full cache entry — the details panel receives a
+ * `ComponentVersion` built in the webview, which carries no `url`. Naming the real requirement lets those callers
+ * through instead of failing a `CachedComponent` check on fields the lookup never reads.
+ */
+export type VersionLookupComponent = Pick<CachedComponent, 'name' | 'sourcePath' | 'gitlabInstance' | 'version'>
+  & Pick<CachedComponent, 'tagPattern'>;
+
+/**
  * Serialized form of the per-project version caches, persisted in global state.
  *
  * Holds both maps so they survive a session restart together: the raw tag list and the resolved default branch.
