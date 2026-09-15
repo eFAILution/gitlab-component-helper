@@ -26,6 +26,15 @@ import { assetUri, createNonce, cspMetaTag } from '../webview/webviewHtml';
  */
 type DetachableComponent = Component & { _hoverContext?: HoverContext };
 
+/** Per-entry-point behaviour for the shared details-panel message handler. */
+interface DetailsPanelOptions {
+  /**
+   * Set by the detached (hover) entry point to the editor the panel was opened from. Its presence means an insert
+   * refocuses that editor first and closes the panel afterwards; the Component Browser's own panel does neither,
+   * since it already tracks the originating editor and stays open.
+   */
+  detachedFrom?: vscode.TextEditor;
+}
 
 /**
  * Pre-existing component shape parsed out of a `.gitlab-ci.yml` include line by
@@ -469,11 +478,6 @@ export class ComponentBrowserProvider {
     vscode.window.showInformationMessage(message);
   }
 
-  // Public method to insert component from detached view (called from extension.ts)
-  public async insertComponentFromDetached(component: Component, includeInputs: boolean = false, selectedInputs?: string[]) {
-    return this.insertComponent(component, includeInputs, selectedInputs);
-  }
-
   public async showComponentDetails(component: DetachableComponent) {
     // Create a new webview panel for component details
     const detailsPanel = vscode.window.createWebviewPanel(
@@ -492,97 +496,125 @@ export class ComponentBrowserProvider {
     // Show component details
     detailsPanel.webview.html = this.getComponentDetailsHtml({ ...component, ...enriched });
 
-    // Handle messages from the details panel
-    detailsPanel.webview.onDidReceiveMessage(
-      async message => {
-        if (message.command === 'insertComponent') {
-          // Handle different insertion options
-          const { version, includeInputs, selectedInputs } = message;
+    this.registerDetailsPanelMessageHandler(detailsPanel, { ...component, ...enriched });
+  }
 
-          // Update component version if specified
-          if (version && version !== component.version) {
-            if (!component.sourcePath || !component.gitlabInstance) {
-              vscode.window.showErrorMessage('Cannot fetch version: component is missing source path or GitLab instance.');
-              return;
-            }
-            const updatedComponent = await this.cacheManager.fetchSpecificVersion(
-              component.name,
-              component.sourcePath,
-              component.gitlabInstance,
-              version
-            );
-            if (updatedComponent) {
-              if (component._hoverContext) {
-                await this.editExistingComponentFromDetached(
-                  updatedComponent,
-                  component._hoverContext.documentUri,
-                  component._hoverContext.position,
-                  includeInputs || false,
-                  selectedInputs || []
-                );
-              } else {
-                await this.insertComponent(updatedComponent, includeInputs, selectedInputs);
+  /**
+   * Wires the details panel's message handling. Both entry points — the Component Browser's Details button and the
+   * hover's "Open in Detailed View" — render the same HTML and speak the same protocol, so they share this handler;
+   * `options.detachedFrom` carries the only behavioural difference between them.
+   *
+   * @param panel     The details webview panel to attach to.
+   * @param component The component being shown. Held mutably: a `versionChanged` round trip replaces it so later
+   *                  `fetchVersions`/`insertComponent` messages act on the version the user is actually looking at.
+   * @param options   Per-entry-point behaviour; see {@link DetailsPanelOptions}.
+   */
+  public registerDetailsPanelMessageHandler(
+    panel: vscode.WebviewPanel,
+    component: DetachableComponent,
+    options: DetailsPanelOptions = {}
+  ): void {
+    let active = component;
+
+    if (options.detachedFrom) {
+      this.adoptOriginalEditor(options.detachedFrom);
+    }
+
+    panel.webview.onDidReceiveMessage(async message => {
+      switch (message.command) {
+        case 'insertComponent': {
+          const { version, includeInputs, selectedInputs } = message;
+          try {
+            let target = active;
+            if (version && version !== active.version) {
+              if (!active.sourcePath || !active.gitlabInstance) {
+                vscode.window.showErrorMessage('Cannot fetch version: component is missing source path or GitLab instance.');
+                return;
               }
-            } else {
-              vscode.window.showErrorMessage(`Failed to fetch version ${version} of component ${component.name}`);
+              const updatedComponent = await this.cacheManager.fetchSpecificVersion(
+                active.name,
+                active.sourcePath,
+                active.gitlabInstance,
+                version
+              );
+              if (!updatedComponent) {
+                vscode.window.showErrorMessage(`Failed to fetch version ${version} of component ${active.name}`);
+                return;
+              }
+              target = updatedComponent;
             }
-          } else {
-            if (component._hoverContext) {
+
+            if (active._hoverContext) {
               await this.editExistingComponentFromDetached(
-                component,
-                component._hoverContext.documentUri,
-                component._hoverContext.position,
+                target,
+                active._hoverContext.documentUri,
+                active._hoverContext.position,
                 includeInputs || false,
                 selectedInputs || []
               );
             } else {
-              await this.insertComponent(component, includeInputs, selectedInputs);
+              await this.insertComponent(target, includeInputs || false, selectedInputs || []);
             }
+
+            // The detached panel is a one-shot view opened from a hover, so it closes once it has done its job.
+            if (options.detachedFrom) {
+              panel.dispose();
+            }
+          } catch (error) {
+            this.logger.error(`[ComponentBrowser] Error inserting component from details panel: ${error}`, 'ComponentBrowser');
+            vscode.window.showErrorMessage(`Error inserting component: ${error}`);
           }
-        } else if (message.command === 'fetchVersions') {
-          // Fetch available versions for the component
+          break;
+        }
+
+        case 'fetchVersions': {
           try {
-            if (!isVersionLookupShape(component)) {
-              throw new Error(`Cannot look up versions for ${component.name}: missing source path or GitLab instance.`);
+            if (!isVersionLookupShape(active)) {
+              throw new Error(`Cannot look up versions for ${active.name}: missing source path or GitLab instance.`);
             }
-            const versions = await this.cacheManager.fetchComponentVersions(component);
+            // Bind the narrowed value: `active` is reassignable, so TS widens it back across the await below.
+            const lookupTarget = active;
+            const versions = await this.cacheManager.fetchComponentVersions(lookupTarget);
             // Same monorepo labelling as the detached panel: the webview can't reach the template matcher, so the
             // full tag → stripped {version} map is built here. Without it a refresh reverts the dropdown to full tags.
-            const versionLabels = buildVersionLabels(versions, component.name, component.tagPattern);
-            detailsPanel.webview.postMessage({
+            panel.webview.postMessage({
               command: 'versionsLoaded',
-              versions: versions,
-              versionLabels,
-              currentVersion: component.version
+              versions,
+              versionLabels: buildVersionLabels(versions, lookupTarget.name, lookupTarget.tagPattern),
+              currentVersion: lookupTarget.version
             });
           } catch (error) {
             const reason = error instanceof Error ? error.message : String(error);
             this.logger.error(`[ComponentBrowser] Error fetching versions: ${reason}`, 'ComponentBrowser');
-            detailsPanel.webview.postMessage({
+            panel.webview.postMessage({
               command: 'versionsError',
               error: reason
             });
           }
-        } else if (message.command === 'versionChanged') {
-          // Fetch details for the selected version and update the display
+          break;
+        }
+
+        case 'versionChanged': {
           const { selectedVersion } = message;
           try {
             this.logger.debug(`[ComponentBrowser] Version changed to ${selectedVersion}, fetching details...`, 'ComponentBrowser');
 
-            if (!component.sourcePath || !component.gitlabInstance) {
+            if (!active.sourcePath || !active.gitlabInstance) {
               vscode.window.showErrorMessage('Cannot change version: component is missing source path or GitLab instance.');
               return;
             }
             const updatedComponent = await this.cacheManager.fetchSpecificVersion(
-              component.name,
-              component.sourcePath,
-              component.gitlabInstance,
+              active.name,
+              active.sourcePath,
+              active.gitlabInstance,
               selectedVersion
             );
             if (updatedComponent) {
+              // Carry the hover context forward so a later insert still edits in place rather than inserting anew.
+              active = { ...updatedComponent, _hoverContext: active._hoverContext };
               // Send the updated component details to the webview, with the template-file URL precomputed
               // server-side so the webview never has to do its own URL routing.
-              detailsPanel.webview.postMessage({
+              panel.webview.postMessage({
                 command: 'componentDetailsUpdated',
                 component: {
                   ...updatedComponent,
@@ -590,21 +622,30 @@ export class ComponentBrowserProvider {
                 }
               });
             } else {
-              detailsPanel.webview.postMessage({
+              panel.webview.postMessage({
                 command: 'versionChangeError',
                 error: `Failed to fetch details for version ${selectedVersion}`
               });
             }
           } catch (error) {
             this.logger.error(`[ComponentBrowser] Error fetching version details: ${error}`, 'ComponentBrowser');
-            detailsPanel.webview.postMessage({
+            panel.webview.postMessage({
               command: 'versionChangeError',
               error: error instanceof Error ? error.message : String(error)
             });
           }
+          break;
         }
       }
-    );
+    });
+  }
+
+  /**
+   * Adopts `editor` as the insertion target for a panel opened outside `show()`. The detached (hover) panel builds its
+   * own provider, so nothing has populated `originalEditor` and `insertComponent` would otherwise refuse to insert.
+   */
+  private adoptOriginalEditor(editor: vscode.TextEditor): void {
+    this.originalEditor = editor;
   }
 
   private getLoadingHtml(webview: vscode.Webview): string {
