@@ -22,12 +22,12 @@ components:
       validationProvider.ts: Input validation with Quick Fixes
       componentBrowserProvider.ts: Component browser webview UI
       componentDetector.ts: Detect GitLab CI component usage in YAML
-      componentHtmlRenderer.ts: Render component docs as HTML
+      hoverContentBuilder.ts: Build the hover popup's markdown body (vscode-free, unit-tested)
     depends_on:
     - services
     - utils
     - types
-    - templates
+    - webview
   services:
     location: src/services/
     purpose: Business logic and data management
@@ -84,6 +84,7 @@ components:
       webviewHtml.ts: Nonce, Content-Security-Policy and asset-URI helpers for webview documents
       inlineMarkdown.ts: HTML escaping and inline-Markdown rendering (vscode-free, unit-tested)
       scriptData.ts: Safe JSON serialization for embedding data in a script block (vscode-free, unit-tested)
+      clientInlineMarkdown.ts: Source text for the browser-side twin of renderInlineMarkdown (vscode-free, unit-tested)
       styles/: Stylesheets built to out/webview/styles/ and loaded via a CSP'd link
     notes: Assets under styles/ (and client/ as scripts are extracted) are built by the webview esbuild
       context and resolved at runtime through assetUri; they are not bundled into out/extension.js.
@@ -215,8 +216,8 @@ data_flow:
     component: componentService
     action: Fetch component details (cache-first)
   - step: 4
-    component: componentHtmlRenderer
-    action: Render documentation as HTML using templates/helpers
+    component: hoverContentBuilder
+    action: Build the hover markdown body (a MarkdownString, not HTML)
   - step: 5
     component: hoverProvider
     action: Display hover card
