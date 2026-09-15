@@ -19,7 +19,9 @@ permissions:
 jobs:
   argus-hardening:
     name: Argus Reusable Hardening
-    # Pinned to the commit for Argus v1.11.0 for supply-chain safety.
+    # SHA-pinned rather than tag-pinned for supply-chain safety: a tag can be moved, a commit cannot.
+    # Dependabot bumps this SHA and names the tag it resolves to in the PR title, so read the version there
+    # rather than trusting a hand-written one here (this comment claimed v1.11.0 through three bumps past it).
     uses: huntridge-labs/argus/.github/workflows/reusable-security-hardening.yml@cc7ef8e7de85340368bf74e7c617e1a8f08ff5bb
     with:
       scanners: codeql,gitleaks,osv,dependency-review
