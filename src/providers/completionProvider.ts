@@ -5,7 +5,7 @@ import { getVariableCompletions, containsGitLabVariables, expandComponentUrl } f
 import { Logger } from '../utils/logger';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { resolveLocalComponent } from './localComponentResolver';
-import { findCompletionInputContextAtLine, buildInputInsertValue, renderOptionValue } from './completionInputContext';
+import { findCompletionInputContextAtLine, buildInputInsertValue, renderOptionValue, allowedValuesFor } from './completionInputContext';
 import type { ComponentParameter } from '../types/git-component';
 import type { CachedComponent } from '../types/cache';
 
@@ -389,16 +389,21 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       // it also declares a default — the default is just the pre-filled choice, not a reason to hide the others.
       if (context.slot === 'value') {
         const param = component.parameters.find((p: ComponentParameter) => p.name === context.inputName);
-        if (!param?.options?.length) {
+        // A `boolean` input is a closed two-value enum, so offer `true`/`false` even though it declares no `options:`.
+        const values = param ? allowedValuesFor(param) : undefined;
+        if (!values?.length) {
           this.logger.debug(`[CompletionProvider] Value slot for ${context.inputName} has no options to offer`, 'CompletionProvider');
           return null;
         }
-        return param.options.map((value, index) => {
+        return values.map((value, index) => {
           const rendered = renderOptionValue(value);
           const item = new vscode.CompletionItem(String(value), vscode.CompletionItemKind.EnumMember);
           item.insertText = rendered;
-          item.detail = `${param.type || 'string'} option`;
-          // Preserve the declared order of `options:` in the dropdown.
+          // Flag the declared default rather than reordering around it — the list stays in a stable, scannable
+          // order (`true` before `false`, or the spec's own `options:` order) whatever the default happens to be.
+          const isDefault = param?.default !== undefined && param.default === value;
+          item.detail = `${param?.type || 'string'} option${isDefault ? ' (default)' : ''}`;
+          // Preserve the declared order of the allowed values in the dropdown.
           item.sortText = String(index).padStart(4, '0');
           return item;
         });
