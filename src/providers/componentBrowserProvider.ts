@@ -10,6 +10,7 @@ import { containsGitLabVariables } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
 import { escapeHtml, renderInlineMarkdown } from '../webview/inlineMarkdown';
+import { clientRenderInlineMarkdownSource } from '../webview/clientInlineMarkdown';
 import { serializeForScript } from '../webview/scriptData';
 import { generateComponentText } from './componentBrowserGenerate';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
@@ -2186,28 +2187,8 @@ export class ComponentBrowserProvider {
     return renderInlineMarkdown(value);
   }
 
-  /**
-   * Source for the client-side twin of {@link renderInlineMarkdown}, injected into every webview `<script>`
-   * that renders a description so all render paths escape and format identically. Kept as one string (not
-   * duplicated per script) so the twins can't drift. `new RegExp(...)` avoids the webview HTML template
-   * literal mangling the pattern escaping; the escape set (incl. `'`) mirrors the server `escapeHtml`.
-   */
   private clientRenderInlineMarkdownSource(): string {
-    return `
-      function renderInlineMarkdown(text) {
-        const escaped = String(text || '')
-          .replace(new RegExp('&', 'g'), '&amp;')
-          .replace(new RegExp('<', 'g'), '&lt;')
-          .replace(new RegExp('>', 'g'), '&gt;')
-          .replace(new RegExp('"', 'g'), '&quot;')
-          .replace(new RegExp("'", 'g'), '&#39;');
-        return escaped
-          .replace(new RegExp('\`([^\`]+)\`', 'g'), '<code>$1</code>')
-          .replace(new RegExp('\\[([^\\]]+)\\]\\((https?://[^\\s)]+)\\)', 'g'), '<a href="$2">$1</a>')
-          .replace(new RegExp('\\*\\*([^*]+)\\*\\*', 'g'), '<strong>$1</strong>')
-          .replace(new RegExp('(^|[^*])\\*([^*]+)\\*', 'g'), '$1<em>$2</em>');
-      }
-    `;
+    return clientRenderInlineMarkdownSource();
   }
 
   private buildTemplateFileUrl(component: Component): string | undefined {
