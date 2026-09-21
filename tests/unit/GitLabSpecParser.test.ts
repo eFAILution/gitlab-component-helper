@@ -326,6 +326,49 @@ suite('GitLabSpecParser.parse — default value types', () => {
     }
   });
 
+  test('parses inputs whose names collide with an input field key', () => {
+    // `type`, `default` and `options` are ordinary input names as far as GitLab is concerned. Telling them apart
+    // from an input's own keys by name would drop the input entirely; sibling indentation settles it instead.
+    const template = `spec:
+  inputs:
+    type:
+      description: deployment type
+      default: blue-green
+    default:
+      description: the default profile
+      default: standard
+    options:
+      default: "--verbose"
+    region:
+      default: us-east-1`;
+
+    const parsed = GitLabSpecParser.parse(template);
+    const byName = Object.fromEntries(parsed.variables.map((v) => [v.name, v]));
+
+    assert.deepStrictEqual(parsed.variables.map((v) => v.name), ['type', 'default', 'options', 'region']);
+    assert.strictEqual(byName['type'].default, 'blue-green');
+    assert.strictEqual(byName['type'].description, 'deployment type');
+    assert.strictEqual(byName['default'].default, 'standard');
+    assert.strictEqual(byName['options'].default, '--verbose');
+    assert.strictEqual(byName['region'].default, 'us-east-1');
+  });
+
+  test('a valueless `default:` deeper than the input names is not read as an input', () => {
+    // The mirror of the shallow case below: with `inputs:` indented, an input's keys sit at six spaces and never
+    // match the name pattern. Both layouts must land on the same result.
+    const template = `spec:
+  inputs:
+    flag:
+      type: boolean
+      default:`;
+
+    const parsed = GitLabSpecParser.parse(template);
+
+    assert.deepStrictEqual(parsed.variables.map((v) => v.name), ['flag']);
+    assert.strictEqual(parsed.variables[0].default, '');
+    assert.strictEqual(parsed.variables[0].type, 'boolean');
+  });
+
   test('a valueless `default:` at input-name indentation is not read as an input', () => {
     // On a spec indented `inputs:` at 0, an input's keys sit at 4 and match the input-name pattern — a bare
     // `default:` would otherwise open a phantom input named `default` and swallow the real input's value.

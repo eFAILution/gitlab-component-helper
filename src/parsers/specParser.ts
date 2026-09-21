@@ -10,9 +10,6 @@ import { isYamlNode, GITLAB_CI_SCHEMA } from '../utils/yamlParser';
 
 const logger = Logger.getInstance();
 
-/** An input's own keys, which are never input names however the spec happens to be indented. */
-const INPUT_FIELD_KEYS = new Set(['description', 'default', 'type', 'options', 'regex']);
-
 /**
  * Resolve one already-trimmed scalar to the value YAML reads it as.
  *
@@ -230,6 +227,10 @@ export class GitLabSpecParser {
       .filter(line => line.trim() && !line.trim().startsWith('#'));
 
     let currentInput: ComponentVariable | null = null;
+    // Indentation of the first input name seen, which every sibling input shares. Input names and their own keys are
+    // told apart by depth rather than by name: an input may legitimately be called `type` or `default`, and a spec
+    // indented `inputs:` at column 0 puts both at four spaces.
+    let inputIndent: number | null = null;
     // The `default:` text for `currentInput`, held until the input ends so the declared `type:` can steer the parse.
     let rawDefault: string | null = null;
     // Raw `options:` entries for `currentInput`, typed by `finalizeInput` for the same reason as `rawDefault`.
@@ -266,14 +267,21 @@ export class GitLabSpecParser {
         break;
       }
 
+      const indent = line.length - line.trimStart().length;
+
       // New input parameter (indented under inputs) - handle both 2-space and 4-space indentation.
       // Match lines like "    name:" where the input name ends with ":" and has only whitespace after.
       // The name class includes `-`: GitLab input names are commonly hyphenated (e.g. `job-name`). Without
       // it, a hyphenated key isn't recognised as a new input, so its `description:`/`default:` lines bleed
       // onto the previous (non-hyphenated) input and mis-map every field after it (issue #211).
-      // An input's own keys are excluded by name: on a spec indented `inputs:` at 0, they sit at 4 and would
-      // otherwise match, so a valueless `default:` would open a phantom input and swallow the real one's value.
-      if (line.match(/^\s{2,4}[a-zA-Z_][a-zA-Z0-9_-]*:\s*$/) && !INPUT_FIELD_KEYS.has(trimmedLine.slice(0, -1))) {
+      //
+      // Siblings must share the first input's indentation. A valueless `default:` under a spec indented `inputs:`
+      // at column 0 sits at four spaces and matches the shape of an input name, so without the depth check it
+      // opens a phantom input named `default` and swallows the real input's value. Depth rather than a list of
+      // reserved key names, because `type`, `default` and `options` are all legal input names.
+      const looksLikeInputName = /^\s{2,4}[a-zA-Z_][a-zA-Z0-9_-]*:\s*$/.test(line);
+      if (looksLikeInputName && (inputIndent === null || indent === inputIndent)) {
+        inputIndent = indent;
         // If we have a current input, finalize it before starting a new one
         if (currentInput) {
           extractedVariables.push(finalizeInput(currentInput));
@@ -288,8 +296,8 @@ export class GitLabSpecParser {
         };
         logger.debug(`${logPrefix} Found input parameter: ${inputName}`, 'SpecParser');
       }
-      // Property of current input (more deeply indented) - handle 4+ spaces of indentation
-      else if (currentInput && line.match(/^\s{4,}/)) {
+      // Property of the current input: anything indented deeper than the input names themselves.
+      else if (currentInput && inputIndent !== null && indent > inputIndent) {
         if (trimmedLine.startsWith('description:')) {
           currentInput.description = trimmedLine.substring(12).replace(/^["']|["']$/g, '').trim();
         } else if (trimmedLine.startsWith('default:')) {
