@@ -4,7 +4,7 @@ import * as yaml from 'js-yaml';
 import { Component, ComponentParameter } from './componentDetector';
 import { Logger } from '../utils/logger';
 import { isYamlNode, GITLAB_CI_SCHEMA } from '../utils/yamlParser';
-import type { ParameterDefault } from '../types/git-component';
+import { isParameterDefault } from '../parsers/parameterDefaultShape';
 
 // Pure parser helpers live in their own module so the unit suite can exercise them under plain Node. Re-exported
 // here so existing callers (e.g. validationProvider) keep their import path.
@@ -140,20 +140,6 @@ function isOptionsList(value: unknown): value is Array<string | number | boolean
       return t === 'string' || t === 'number' || t === 'boolean';
     })
   );
-}
-
-/** Narrow an unknown value to {@link ParameterDefault} (the union accepted by `inputs.*.default`). */
-function isParameterDefault(value: unknown): value is ParameterDefault {
-  if (value === null) return true;
-  const t = typeof value;
-  if (t === 'string' || t === 'number' || t === 'boolean') return true;
-  if (Array.isArray(value)) {
-    return value.every(v => {
-      const vt = typeof v;
-      return vt === 'string' || vt === 'number' || vt === 'boolean';
-    });
-  }
-  return false;
 }
 
 /**
