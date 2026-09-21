@@ -29,9 +29,16 @@ type DetachableComponent = Component & { _hoverContext?: HoverContext };
 /** Per-entry-point behaviour for the shared details-panel message handler. */
 interface DetailsPanelOptions {
   /**
-   * Set by the detached (hover) entry point to the editor the panel was opened from. Its presence means an insert
-   * refocuses that editor first and closes the panel afterwards; the Component Browser's own panel does neither,
-   * since it already tracks the originating editor and stays open.
+   * Set by the detached (hover) entry point to the editor the panel was opened from. Two effects, both of which
+   * exist because that entry point constructs its own provider rather than going through `show()`:
+   *
+   * 1. The editor is adopted as this provider's insertion target at registration, since nothing else has populated
+   *    it and `insertComponent` refuses to insert without one.
+   * 2. The panel is disposed once an insert completes — it is a one-shot view, where the Component Browser's own
+   *    details panel stays open.
+   *
+   * Refocusing the target editor is not one of them: `insertComponent` and `editExistingComponentFromDetached` each
+   * focus and verify their own document, on both entry points.
    */
   detachedFrom?: vscode.TextEditor;
 }
