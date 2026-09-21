@@ -1,36 +1,27 @@
 import * as vscode from 'vscode';
 
 /**
- * Shared helpers for rendering webview HTML with a Content-Security-Policy,
- * a per-render nonce, and webview-safe asset URIs.
+ * Webview-safe asset URIs and resource roots.
  *
- * VS Code webviews cannot load extension files by path: every <link>/<script>
- * src must be passed through webview.asWebviewUri, and a CSP restricts which
- * origins and inline content are allowed. A nonce permits exactly the scripts
- * we emit while still blocking arbitrary inline script injection.
+ * VS Code webviews cannot load extension files by path: every `<link>`/`<script>` src must be passed through
+ * `webview.asWebviewUri`, and the panel must declare the roots it may load from. The CSP and nonce helpers live in
+ * `./csp` so they stay `vscode`-free and unit-testable; they are re-exported here so callers have one import.
  */
 
-const NONCE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-const NONCE_LENGTH = 32;
+export { createNonce, cspMetaTag } from './csp';
 
-/**
- * Generates a random nonce for the CSP `script-src 'nonce-...'` directive.
- * `crypto.getRandomValues` is available in the extension host runtime and is
- * preferred over Math.random for a value that gates script execution.
- */
-export function createNonce(): string {
-  const bytes = new Uint8Array(NONCE_LENGTH);
-  crypto.getRandomValues(bytes);
-  let nonce = '';
-  for (const byte of bytes) {
-    nonce += NONCE_CHARS[byte % NONCE_CHARS.length];
-  }
-  return nonce;
-}
+/** Directory the webview build emits to, relative to the extension root. */
+const ASSET_ROOT = ['out', 'webview'];
 
 /**
  * Resolves an asset under the webview output directory to a webview-safe URI.
- * `relativePath` is relative to `out/webview` (e.g. 'styles/loading.css').
+ *
+ * @param webview      The webview the URI is being resolved for.
+ * @param extensionUri The extension's root URI, from the activation context.
+ * @param relativePath Path under `out/webview`, e.g. `styles/loading.css`. `.` and `..` segments are rejected so a
+ *                     computed path cannot escape the asset root the panel declares.
+ * @returns            A `vscode-webview://` URI the document can load the asset from.
+ * @throws             If `relativePath` is empty or contains a `.` or `..` segment.
  */
 export function assetUri(
   webview: vscode.Webview,
@@ -38,28 +29,23 @@ export function assetUri(
   relativePath: string
 ): vscode.Uri {
   const parts = relativePath.split('/').filter(Boolean);
+  if (parts.length === 0 || parts.some(part => part === '.' || part === '..')) {
+    throw new Error(`Invalid webview asset path: ${relativePath}`);
+  }
   return webview.asWebviewUri(
-    vscode.Uri.joinPath(extensionUri, 'out', 'webview', ...parts)
+    vscode.Uri.joinPath(extensionUri, ...ASSET_ROOT, ...parts)
   );
 }
 
 /**
- * Builds the Content-Security-Policy meta tag for a webview document.
+ * The `localResourceRoots` a panel needs to load anything {@link assetUri} resolves.
  *
- * Styles and scripts must come from files under the webview's own origin — no inline `<style>`, no `style=`
- * attribute, and scripts only with the supplied nonce. Theme colours reach an external stylesheet as CSS custom
- * properties (`var(--vscode-*)`), so nothing here needs inline style capability. A document that inlines a style
- * will be blocked, which is the signal to move it into a stylesheet.
+ * A webview may only load local files from the roots its panel declares, and an empty array permits nothing. Every
+ * panel rendering a document with a `<link>` or `<script>` asset must pass this.
+ *
+ * @param extensionUri The extension's root URI, from the activation context.
+ * @returns            The roots to pass as a panel's `localResourceRoots`.
  */
-export function cspMetaTag(webview: vscode.Webview, nonce: string): string {
-  const source = webview.cspSource;
-  return [
-    `<meta http-equiv="Content-Security-Policy" content="`,
-    `default-src 'none'; `,
-    `style-src ${source}; `,
-    `img-src ${source} https: data:; `,
-    `font-src ${source}; `,
-    `script-src 'nonce-${nonce}';`,
-    `">`,
-  ].join('');
+export function assetRoots(extensionUri: vscode.Uri): vscode.Uri[] {
+  return [vscode.Uri.joinPath(extensionUri, ...ASSET_ROOT)];
 }

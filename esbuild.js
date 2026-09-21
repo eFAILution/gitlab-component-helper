@@ -115,7 +115,7 @@ const webviewConfig = {
   entryPoints: webviewEntryPoints(),
   bundle: true,
   minify: production,
-  sourcemap: !production,
+  sourcemap: production ? false : 'inline',
   platform: 'browser',
   // Pin the syntax level: webview assets run in the Electron renderer, not Node, so they must not inherit
   // esbuild's `esnext` default.

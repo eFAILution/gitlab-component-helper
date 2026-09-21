@@ -6,6 +6,7 @@ import { ComponentDocumentLinkProvider } from './providers/documentLinkProvider'
 import { ComponentBrowserProvider } from './providers/componentBrowserProvider';
 import { detectIncludeComponent, Component } from './providers/componentDetector';
 import { getComponentCacheManager, ComponentCacheManager } from './services/cache/componentCacheManager';
+import { assetRoots } from './webview/webviewHtml';
 import { Logger } from './utils/logger';
 import { ValidationProvider } from './providers/validationProvider';
 import type { CachedComponent } from './types/cache';
@@ -318,7 +319,7 @@ export function activate(context: vscode.ExtensionContext) {
           {
             enableScripts: true,
             retainContextWhenHidden: true,
-            localResourceRoots: []
+            localResourceRoots: assetRoots(context.extensionUri)
           }
         );
 
