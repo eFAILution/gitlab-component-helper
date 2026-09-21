@@ -16,7 +16,7 @@ import { generateComponentText } from './componentBrowserGenerate';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
 import { transformCachedComponentsToGroups } from './componentBrowserTransform';
 import { buildVersionLabels, compileTagTemplate, stripTagPrefix } from '../services/component/tagScoping';
-import { assetUri, createNonce, cspMetaTag } from '../webview/webviewHtml';
+import { assetRoots, assetUri, createNonce, cspMetaTag } from '../webview/webviewHtml';
 
 /**
  * Component shape carried through the detach-hover webview's "Open in Detailed View" round trip.
@@ -92,9 +92,7 @@ export class ComponentBrowserProvider {
       {
         enableScripts: true,
         retainContextWhenHidden: true,
-        localResourceRoots: [
-          vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview')
-        ]
+        localResourceRoots: assetRoots(this.context.extensionUri)
       }
     );
 
@@ -492,7 +490,8 @@ export class ComponentBrowserProvider {
       `Component: ${component.name}`,
       vscode.ViewColumn.Beside,
       {
-        enableScripts: true
+        enableScripts: true,
+        localResourceRoots: assetRoots(this.context.extensionUri)
       }
     );
 
@@ -664,7 +663,7 @@ export class ComponentBrowserProvider {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        ${cspMetaTag(webview, nonce)}
+        ${cspMetaTag(webview.cspSource, nonce)}
         <link rel="stylesheet" href="${styleUri}">
         <title>GitLab CI/CD Components</title>
       </head>

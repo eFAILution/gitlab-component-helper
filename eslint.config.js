@@ -40,4 +40,15 @@ module.exports = [
       ...js.configs.recommended.rules,
     },
   },
+  {
+    // Webview client scripts run in the Electron renderer, not the extension host
+    files: ['src/webview/client/**/*.ts'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        // Injected by VS Code into the webview; not a browser global.
+        acquireVsCodeApi: 'readonly',
+      },
+    },
+  },
 ];
