@@ -20,7 +20,7 @@ jobs:
   argus-hardening:
     name: Argus Reusable Hardening
     # Pinned to the commit for Argus v1.11.0 for supply-chain safety.
-    uses: huntridge-labs/argus/.github/workflows/reusable-security-hardening.yml@9b444d8975f4a2253cc53e09a7c5837e5b509d24
+    uses: huntridge-labs/argus/.github/workflows/reusable-security-hardening.yml@6040db47e31f4db533967c3a5b70f4a208afead3
     with:
       scanners: codeql,gitleaks,osv,dependency-review
       enable_code_security: true
