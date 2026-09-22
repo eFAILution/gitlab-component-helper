@@ -2,22 +2,21 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": ".",
+    "typeRoots": [
+      "./node_modules/@types"
+    ],
     "types": [
-      "node",
-      "mocha"
+      "vscode-webview"
     ]
   },
   "include": [
-    "src/**/*",
-    "tests/unit/**/*.ts"
+    "src/webview/client/**/*"
   ],
   "exclude": [
     "node_modules",
     ".vscode-test",
     "out",
     "out-test",
-    "tests/extension-host",
-    "src/webview/client"
+    "tests"
   ]
 }

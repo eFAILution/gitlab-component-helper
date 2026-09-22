@@ -12,7 +12,6 @@ import { sameCachedComponent } from '../../utils/cachedComponentEquality';
 import {
   CACHE_LOCATION_GLOBAL_STATE,
   CACHE_LOCATION_MEMORY_ONLY,
-  SOURCE_LOCAL,
   DEFAULT_COMPONENT_TYPE_PROJECT,
 } from '../../constants/cache';
 
@@ -265,11 +264,9 @@ export class ComponentCacheManager implements vscode.Disposable {
 
       if (sources.length === 0) {
         this.logger.debug(
-          '[ComponentCache] No sources configured, using local components',
+          '[ComponentCache] No sources configured, leaving the cache empty',
           'ComponentCache'
         );
-        // Add local fallback components
-        newComponents.push(...this.getLocalFallbackComponents());
       } else {
         // Fetch from all configured sources in parallel
         const fetchPromises = sources.map(async source => {
@@ -804,61 +801,6 @@ export class ComponentCacheManager implements vscode.Disposable {
     };
   }
 
-  /**
-   * Get local fallback components when no sources are configured
-   */
-  private getLocalFallbackComponents(): CachedComponent[] {
-    return [
-      {
-        name: 'deploy-component',
-        description: 'Deploys the application to the specified environment',
-        parameters: [
-          {
-            name: 'environment',
-            description: 'Target environment for deployment',
-            required: true,
-            type: 'string',
-          },
-          {
-            name: 'version',
-            description: 'Version to deploy',
-            required: false,
-            type: 'string',
-            default: 'latest',
-          },
-        ],
-        source: SOURCE_LOCAL,
-        sourcePath: 'local',
-        gitlabInstance: 'local',
-        version: 'latest',
-        url: 'deploy-component',
-      },
-      {
-        name: 'test-component',
-        description: 'Runs tests for the application',
-        parameters: [
-          {
-            name: 'test_type',
-            description: 'Type of tests to run',
-            required: true,
-            type: 'string',
-          },
-          {
-            name: 'coverage',
-            description: 'Whether to collect coverage information',
-            required: false,
-            type: 'boolean',
-            default: false,
-          },
-        ],
-        source: SOURCE_LOCAL,
-        sourcePath: 'local',
-        gitlabInstance: 'local',
-        version: 'latest',
-        url: 'test-component',
-      },
-    ];
-  }
 }
 
 // Singleton instance

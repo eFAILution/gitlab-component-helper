@@ -323,13 +323,13 @@ export class ComponentBrowserProvider {
 
       // If no sources configured and no components in cache, show guidance
       if (sources.length === 0 && allComponents.length === 0) {
-        this.panel.webview.html = this.getNoSourcesHtml();
+        this.panel.webview.html = this.getNoSourcesHtml(this.panel.webview);
         return;
       }
 
       // If no components found but we have cache errors, show errors
       if (allComponents.length === 0 && Object.keys(cacheErrors).length > 0) {
-        this.panel.webview.html = this.getErrorsHtml(cacheErrors);
+        this.panel.webview.html = this.getErrorsHtml(this.panel.webview, cacheErrors);
         return;
       }
 
@@ -355,7 +355,7 @@ export class ComponentBrowserProvider {
     } catch (error) {
       this.logger.error(`[ComponentBrowser] Error in loadComponents: ${error}`, 'ComponentBrowser');
       if (this.panel) {
-        this.panel.webview.html = this.getErrorHtml(error);
+        this.panel.webview.html = this.getErrorHtml(this.panel.webview, error);
       }
     }
   }
@@ -2250,43 +2250,20 @@ export class ComponentBrowserProvider {
     });
   }
 
-  private getNoSourcesHtml(): string {
+  private getNoSourcesHtml(webview: vscode.Webview): string {
+    const nonce = createNonce();
+    const styleUri = assetUri(webview, this.context.extensionUri, 'styles/noSources.css');
+    const scriptUri = assetUri(webview, this.context.extensionUri, 'client/noSources.js');
+
     return `
       <!DOCTYPE html>
       <html lang="en">
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        ${cspMetaTag(webview.cspSource, nonce)}
         <title>GitLab CI/CD Components</title>
-        <style>
-          body {
-            font-family: var(--vscode-font-family);
-            color: var(--vscode-editor-foreground);
-            padding: 20px;
-            background-color: var(--vscode-editor-background);
-          }
-          .guidance {
-            background-color: var(--vscode-panel-background);
-            padding: 20px;
-            border-radius: 5px;
-            margin: 20px 0;
-          }
-          pre {
-            background-color: var(--vscode-textCodeBlock-background);
-            padding: 10px;
-            border-radius: 3px;
-            overflow-x: auto;
-          }
-          button {
-            background-color: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            border: none;
-            padding: 8px 16px;
-            border-radius: 2px;
-            cursor: pointer;
-            margin-top: 10px;
-          }
-        </style>
+        <link rel="stylesheet" href="${styleUri}">
       </head>
       <body>
         <h1>Configure Component Sources</h1>
@@ -2317,15 +2294,9 @@ export class ComponentBrowserProvider {
   ]</pre>
         </div>
 
-        <button onclick="openSettings()">Open Settings</button>
+        <button data-action="openSettings">Open Settings</button>
 
-        <script>
-          const vscode = acquireVsCodeApi();
-
-          function openSettings() {
-            vscode.postMessage({ command: 'openSettings' });
-          }
-        </script>
+        <script nonce="${nonce}" src="${scriptUri}"></script>
       </body>
       </html>
     `;
@@ -2340,7 +2311,11 @@ export class ComponentBrowserProvider {
    * @param errors  Map of source name to its error message (as stored by the cache manager).
    * @returns       A complete HTML document string for the webview panel.
    */
-  private getErrorsHtml(errors: Record<string, string>): string {
+  private getErrorsHtml(webview: vscode.Webview, errors: Record<string, string>): string {
+    const nonce = createNonce();
+    const styleUri = assetUri(webview, this.context.extensionUri, 'styles/errors.css');
+    const scriptUri = assetUri(webview, this.context.extensionUri, 'client/errors.js');
+
     const entries = Object.entries(errors);
     const hasAuthError = entries.some(([, error]) => this.classifySourceError(error).isAuth);
 
@@ -2351,8 +2326,8 @@ export class ComponentBrowserProvider {
         <div class="error-item">
           <div class="error-source">${this.escapeHtml(source)}</div>
           <div class="error-summary">${this.escapeHtml(summary)}</div>
-          <button class="link-button" onclick="toggleDetails('${detailsId}', this)">Show details</button>
-          <pre class="error-raw" id="${detailsId}" style="display: none;">${this.escapeHtml(error)}</pre>
+          <button class="link-button" data-action="toggleDetails" data-details-id="${detailsId}">Show details</button>
+          <pre class="error-raw is-hidden" id="${detailsId}">${this.escapeHtml(error)}</pre>
         </div>
       `;
     }).join('');
@@ -2363,61 +2338,9 @@ export class ComponentBrowserProvider {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        ${cspMetaTag(webview.cspSource, nonce)}
         <title>GitLab CI/CD Components</title>
-        <style>
-          body {
-            font-family: var(--vscode-font-family);
-            color: var(--vscode-editor-foreground);
-            padding: 20px;
-            background-color: var(--vscode-editor-background);
-          }
-          .errors {
-            background-color: var(--vscode-inputValidation-errorBackground);
-            border: 1px solid var(--vscode-inputValidation-errorBorder);
-            padding: 10px;
-            border-radius: 5px;
-            margin: 20px 0;
-          }
-          .error-item {
-            margin: 12px 0;
-          }
-          .error-item:not(:last-child) {
-            border-bottom: 1px solid var(--vscode-inputValidation-errorBorder);
-            padding-bottom: 12px;
-          }
-          .error-source {
-            font-weight: 600;
-            margin-bottom: 4px;
-          }
-          .error-summary {
-            color: var(--vscode-errorForeground);
-          }
-          .error-raw {
-            margin: 8px 0 0;
-            padding: 8px;
-            white-space: pre-wrap;
-            word-break: break-word;
-            font-size: 0.85em;
-            background-color: var(--vscode-textCodeBlock-background);
-            border-radius: 3px;
-          }
-          button {
-            background-color: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            border: none;
-            padding: 8px 16px;
-            border-radius: 2px;
-            cursor: pointer;
-            margin-right: 8px;
-          }
-          .link-button {
-            background: none;
-            color: var(--vscode-textLink-foreground);
-            padding: 0;
-            margin: 4px 0 0;
-            text-decoration: underline;
-          }
-        </style>
+        <link rel="stylesheet" href="${styleUri}">
       </head>
       <body>
         <h1>Component Loading Errors</h1>
@@ -2429,33 +2352,12 @@ export class ComponentBrowserProvider {
         </div>
 
         <div>
-          ${hasAuthError ? '<button onclick="updateToken()">Update Token</button>' : ''}
-          <button onclick="refresh()">Try Again</button>
-          <button onclick="openSettings()">Open Settings</button>
+          ${hasAuthError ? '<button data-action="updateToken">Update Token</button>' : ''}
+          <button data-action="refresh">Try Again</button>
+          <button data-action="openSettings">Open Settings</button>
         </div>
 
-        <script>
-          const vscode = acquireVsCodeApi();
-
-          function refresh() {
-            vscode.postMessage({ command: 'refreshComponents' });
-          }
-
-          function openSettings() {
-            vscode.postMessage({ command: 'openSettings' });
-          }
-
-          function updateToken() {
-            vscode.postMessage({ command: 'updateToken' });
-          }
-
-          function toggleDetails(id, btn) {
-            const el = document.getElementById(id);
-            const showing = el.style.display !== 'none';
-            el.style.display = showing ? 'none' : 'block';
-            btn.textContent = showing ? 'Show details' : 'Hide details';
-          }
-        </script>
+        <script nonce="${nonce}" src="${scriptUri}"></script>
       </body>
       </html>
     `;
@@ -2572,57 +2474,21 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
    * @param error  The thrown value caught while loading components (typed `unknown` at the catch site).
    * @returns      A complete HTML document string for the webview panel.
    */
-  private getErrorHtml(error: unknown): string {
+  private getErrorHtml(webview: vscode.Webview, error: unknown): string {
     const message = error instanceof Error ? error.message : String(error);
     const { isAuth, summary } = this.classifySourceError(message);
+    const nonce = createNonce();
+    const styleUri = assetUri(webview, this.context.extensionUri, 'styles/errors.css');
+    const scriptUri = assetUri(webview, this.context.extensionUri, 'client/errors.js');
     return `
       <!DOCTYPE html>
       <html lang="en">
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        ${cspMetaTag(webview.cspSource, nonce)}
         <title>GitLab CI/CD Components - Error</title>
-        <style>
-          body {
-            font-family: var(--vscode-font-family);
-            color: var(--vscode-editor-foreground);
-            padding: 20px;
-            background-color: var(--vscode-editor-background);
-          }
-          .error {
-            color: var(--vscode-errorForeground);
-            background-color: var(--vscode-inputValidation-errorBackground);
-            border: 1px solid var(--vscode-inputValidation-errorBorder);
-            padding: 15px;
-            border-radius: 5px;
-            margin: 20px 0;
-          }
-          .error-raw {
-            margin: 8px 0 0;
-            padding: 8px;
-            white-space: pre-wrap;
-            word-break: break-word;
-            font-size: 0.85em;
-            background-color: var(--vscode-textCodeBlock-background);
-            border-radius: 3px;
-          }
-          button {
-            background-color: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            border: none;
-            padding: 8px 16px;
-            border-radius: 2px;
-            cursor: pointer;
-            margin-right: 8px;
-          }
-          .link-button {
-            background: none;
-            color: var(--vscode-textLink-foreground);
-            padding: 0;
-            margin: 4px 0 0;
-            text-decoration: underline;
-          }
-        </style>
+        <link rel="stylesheet" href="${styleUri}">
       </head>
       <body>
         <h1>Component Loading Error</h1>
@@ -2630,39 +2496,18 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
         <div class="error">
           ${isAuth
             ? `${this.escapeHtml(summary)}
-               <button class="link-button" onclick="toggleDetails('error-raw', this)">Show details</button>
-               <pre class="error-raw" id="error-raw" style="display: none;">${this.escapeHtml(message)}</pre>`
+               <button class="link-button" data-action="toggleDetails" data-details-id="error-raw">Show details</button>
+               <pre class="error-raw" id="error-raw" class="is-hidden">${this.escapeHtml(message)}</pre>`
             : `<strong>Error:</strong> ${this.escapeHtml(message)}`}
         </div>
 
         <div>
-          ${isAuth ? '<button onclick="updateToken()">Update Token</button>' : ''}
-          <button onclick="refresh()">Try Again</button>
-          <button onclick="openSettings()">Open Settings</button>
+          ${isAuth ? '<button data-action="updateToken">Update Token</button>' : ''}
+          <button data-action="refresh">Try Again</button>
+          <button data-action="openSettings">Open Settings</button>
         </div>
 
-        <script>
-          const vscode = acquireVsCodeApi();
-
-          function refresh() {
-            vscode.postMessage({ command: 'refreshComponents' });
-          }
-
-          function openSettings() {
-            vscode.postMessage({ command: 'openSettings' });
-          }
-
-          function updateToken() {
-            vscode.postMessage({ command: 'updateToken' });
-          }
-
-          function toggleDetails(id, btn) {
-            const el = document.getElementById(id);
-            const showing = el.style.display !== 'none';
-            el.style.display = showing ? 'none' : 'block';
-            btn.textContent = showing ? 'Show details' : 'Hide details';
-          }
-        </script>
+        <script nonce="${nonce}" src="${scriptUri}"></script>
       </body>
       </html>
     `;
