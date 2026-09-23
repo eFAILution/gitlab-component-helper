@@ -2497,7 +2497,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
           ${isAuth
             ? `${this.escapeHtml(summary)}
                <button class="link-button" data-action="toggleDetails" data-details-id="error-raw">Show details</button>
-               <pre class="error-raw" id="error-raw" class="is-hidden">${this.escapeHtml(message)}</pre>`
+               <pre class="error-raw is-hidden" id="error-raw">${this.escapeHtml(message)}</pre>`
             : `<strong>Error:</strong> ${this.escapeHtml(message)}`}
         </div>
 
