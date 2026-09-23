@@ -101,7 +101,8 @@ function webviewEntryPoints() {
     }
     return fs
       .readdirSync(dir, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && entry.name.endsWith(ext))
+      // `.d.ts` files declare ambient types for the client scripts; they emit nothing and are not assets.
+      .filter((entry) => entry.isFile() && entry.name.endsWith(ext) && !entry.name.endsWith('.d.ts'))
       .map((entry) => `${dir}/${entry.name}`);
   });
 }
