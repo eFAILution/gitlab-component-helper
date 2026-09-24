@@ -41,3 +41,21 @@ suite('componentBrowserProvider markup', () => {
     assert.deepEqual(offenders, [], `duplicate attributes:\n${offenders.join('\n')}`);
   });
 });
+
+suite('component details link handling', () => {
+  const client = fs.readFileSync(
+    path.resolve(__dirname, '..', '..', 'src', 'webview', 'client', 'componentDetails.ts'), 'utf8',
+  );
+  const provider = fs.readFileSync(PROVIDER, 'utf8');
+
+  test('the client script never assigns a URL to a navigable property', () => {
+    // Component metadata reaches this script by message and is attacker-influenced (`documentation_url` is set by
+    // whoever publishes the component). Links are opened by the extension host instead, so there must be no sink here.
+    assert.doesNotMatch(client, /\.(href|src|action)\s*=/);
+    assert.doesNotMatch(client, /\b(location|window\.open)\b/);
+  });
+
+  test('the builder never interpolates a metadata URL into an href', () => {
+    assert.doesNotMatch(provider, /href="\$\{[^}]*(documentationUrl|templateFileUrl|safeDocUrl|safeTemplateUrl)/);
+  });
+});
