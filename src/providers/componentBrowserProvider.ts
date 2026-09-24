@@ -1962,8 +1962,7 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     const confirmation = await vscode.window.showWarningMessage(
       'Are you sure you want to reset the cache? This will clear all cached components and force them to be re-downloaded.',
       { modal: true },
-      'Reset Cache',
-      'Cancel'
+      'Reset Cache'
     );
 
     if (confirmation === 'Reset Cache') {
