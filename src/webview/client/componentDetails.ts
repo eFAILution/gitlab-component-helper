@@ -96,31 +96,6 @@ function elementById<T extends HTMLElement>(id: string, construct: new () => T):
 }
 
 /**
- * Accept a URL only if it is `http(s)`, so a component's catalog entry cannot turn a link into `javascript:` or
- * `data:`.
- *
- * @param value Candidate URL, typically from a component's metadata.
- * @returns     The URL when its scheme is http or https, otherwise undefined.
- */
-function httpUrl(value: string | undefined): string | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return undefined;
-    }
-    // Re-serialise rather than returning the input: the href carries only what `URL` produced from a scheme this
-    // function accepted.
-    return parsed.toString();
-  } catch {
-    return undefined;
-  }
-}
-
-/**
  * Show or hide an element.
  *
  * @param element Target, or null when the document does not carry it.
@@ -370,11 +345,11 @@ function updateComponentDetails(component: ComponentDetails): void {
     setText('componentInstance', component.gitlabInstance);
   }
 
-  const docUrl = elementById('componentDocUrl', HTMLAnchorElement);
-  const safeDocUrl = httpUrl(component.documentationUrl);
-  if (docUrl && safeDocUrl) {
-    docUrl.href = safeDocUrl;
-    docUrl.textContent = safeDocUrl;
+  // Link text only. The anchors carry no URL: clicking one asks the extension host to open the link, and the host
+  // opens the URL it holds for the active component rather than anything this document sends. So nothing a
+  // component's metadata supplies ever reaches an `href` here. The server sanitised these before posting them.
+  if (component.documentationUrl) {
+    setText('componentDocUrl', component.documentationUrl);
   }
 
   if (component.url) {
@@ -382,14 +357,12 @@ function updateComponentDetails(component: ComponentDetails): void {
   }
 
   // The server precomputes templateFileUrl; its absence means no resolved templatePath, so the row is hidden.
-  const templateFileUrl = elementById('templateFileUrl', HTMLAnchorElement);
-  const safeTemplateUrl = httpUrl(component.templateFileUrl);
+  const templateFileUrl = document.getElementById('templateFileUrl');
   if (templateFileUrl) {
-    if (safeTemplateUrl) {
-      templateFileUrl.href = safeTemplateUrl;
-      templateFileUrl.textContent = safeTemplateUrl;
+    if (component.templateFileUrl) {
+      templateFileUrl.textContent = component.templateFileUrl;
     }
-    setVisible(templateFileUrl, Boolean(safeTemplateUrl));
+    setVisible(templateFileUrl, Boolean(component.templateFileUrl));
   }
 
   const parameters = component.parameters || [];
@@ -445,6 +418,8 @@ function updateVersionDropdown(
 
 /** Actions a control can request by naming one in `data-action`. */
 const ACTIONS: Record<string, () => void> = {
+  openDocumentation: () => vscode.postMessage({ command: 'openLink', link: 'documentation' }),
+  openTemplateFile: () => vscode.postMessage({ command: 'openLink', link: 'templateFile' }),
   insertComponent,
   refreshVersions,
   toggleRawYaml,
@@ -461,7 +436,11 @@ for (const eventName of ['click', 'change'] as const) {
     }
 
     // Delegated so controls rebuilt by `renderParameters` need no rebinding.
-    const action = target.closest<HTMLElement>('[data-action]')?.dataset.action;
+    const control = target.closest<HTMLElement>('[data-action]');
+    if (control instanceof HTMLAnchorElement) {
+      event.preventDefault();
+    }
+    const action = control?.dataset.action;
     if (action) {
       ACTIONS[action]?.();
     }

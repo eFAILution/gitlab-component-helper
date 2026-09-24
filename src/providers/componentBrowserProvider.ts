@@ -17,6 +17,7 @@ import { findComponentLineRange, parseExistingComponentText } from './componentB
 import { transformCachedComponentsToGroups } from './componentBrowserTransform';
 import { buildVersionLabels, compileTagTemplate, stripTagPrefix } from '../services/component/tagScoping';
 import { assetRoots, assetUri, createNonce, cspMetaTag } from '../webview/webviewHtml';
+import { safeHttpUrl } from '../webview/safeUrl';
 
 /**
  * Component shape carried through the detach-hover webview's "Open in Detailed View" round trip.
@@ -600,6 +601,25 @@ export class ComponentBrowserProvider {
           break;
         }
 
+        case 'openLink': {
+          // The webview names a link; it never supplies the URL. The host resolves it from the component it holds and
+          // validates it again here, so a message from a compromised document cannot open anything the component
+          // metadata did not already name. `openExternal` then applies VS Code's trusted-domain confirmation, which
+          // shows the user the destination before an untrusted host is opened.
+          const target = message.link === 'documentation'
+            ? active.documentationUrl
+            : message.link === 'templateFile'
+              ? this.buildTemplateFileUrl(active)
+              : undefined;
+          const url = safeHttpUrl(target);
+          if (!url) {
+            this.logger.warn(`[ComponentBrowser] Refused to open ${String(message.link)} link: not an http(s) URL`, 'ComponentBrowser');
+            break;
+          }
+          await vscode.env.openExternal(vscode.Uri.parse(url, true));
+          break;
+        }
+
         case 'versionChanged': {
           const { selectedVersion } = message;
           try {
@@ -617,14 +637,21 @@ export class ComponentBrowserProvider {
             );
             if (updatedComponent) {
               // Carry the hover context forward so a later insert still edits in place rather than inserting anew.
-              active = { ...updatedComponent, _hoverContext: active._hoverContext };
+              // Carry the documentation URL forward too: a cached version carries none, and it names the project rather
+              // than a version, so dropping it would silently break the Project URL link after a version switch.
+              active = {
+                ...updatedComponent,
+                documentationUrl: active.documentationUrl,
+                _hoverContext: active._hoverContext,
+              };
               // Send the updated component details to the webview, with the template-file URL precomputed
               // server-side so the webview never has to do its own URL routing.
               panel.webview.postMessage({
                 command: 'componentDetailsUpdated',
                 component: {
                   ...updatedComponent,
-                  templateFileUrl: this.buildTemplateFileUrl(updatedComponent),
+                  documentationUrl: safeHttpUrl(active.documentationUrl),
+                  templateFileUrl: safeHttpUrl(this.buildTemplateFileUrl(updatedComponent)),
                 }
               });
             } else {
@@ -1610,6 +1637,10 @@ export class ComponentBrowserProvider {
     const rawYaml = component.rawYaml || '';
     const hasRawYaml = Boolean(rawYaml);
     const templateFileUrl = this.buildTemplateFileUrl(component);
+    // `documentationUrl` is whatever the component's publisher put in its catalog entry. Validate before display; the
+    // anchors carry no URL, and clicking one has the extension host open it (see `openLink`).
+    const safeDocUrl = safeHttpUrl(component.documentationUrl);
+    const safeTemplateUrl = safeHttpUrl(templateFileUrl);
 
     return `
       <!DOCTYPE html>
@@ -1672,12 +1703,12 @@ export class ComponentBrowserProvider {
             </select>
             <span class="version-loading is-hidden" id="versionLoading">Loading version details...</span>
           </div>
-          ${component.documentationUrl ?
-            `<div><strong>Project URL:</strong> <a href="${component.documentationUrl}" target="_blank" id="componentDocUrl">${component.documentationUrl}</a></div>` : ''}
+          ${safeDocUrl ?
+            `<div><strong>Project URL:</strong> <a href="#" data-action="openDocumentation" id="componentDocUrl">${this.escapeHtml(safeDocUrl)}</a></div>` : ''}
           ${component.url ?
             `<div><strong>Component URL:</strong> <code id="componentUrl">${component.url}</code></div>` : ''}
-          ${templateFileUrl ?
-            `<div><strong>Template File:</strong> <a href="${templateFileUrl}" target="_blank" id="templateFileUrl">${templateFileUrl}</a></div>` : ''}
+          ${safeTemplateUrl ?
+            `<div><strong>Template File:</strong> <a href="#" data-action="openTemplateFile" id="templateFileUrl">${this.escapeHtml(safeTemplateUrl)}</a></div>` : ''}
         </div>
 
         <div class="parameters-header">
