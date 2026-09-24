@@ -500,7 +500,7 @@ export class ComponentBrowserProvider {
     const enriched = await this.lookupComponentDetails(component);
 
     // Show component details
-    detailsPanel.webview.html = this.getComponentDetailsHtml({ ...component, ...enriched });
+    detailsPanel.webview.html = this.getComponentDetailsHtml(detailsPanel.webview, { ...component, ...enriched });
 
     this.registerDetailsPanelMessageHandler(detailsPanel, { ...component, ...enriched });
   }
@@ -1591,11 +1591,16 @@ export class ComponentBrowserProvider {
   }
 
   public getComponentDetailsHtml(
+    webview: vscode.Webview,
     component: Component & {
       availableVersions?: string[];
       tagPattern?: string;
     },
   ): string {
+    const nonce = createNonce();
+    const styleUri = assetUri(webview, this.context.extensionUri, 'styles/componentDetails.css');
+    const scriptUri = assetUri(webview, this.context.extensionUri, 'client/componentDetails.js');
+
     const parameters = component.parameters || [];
     const availableVersions = component.availableVersions || [component.version || 'main'];
     const headerSummary = component.summary;
@@ -1613,152 +1618,8 @@ export class ComponentBrowserProvider {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Component: ${component.name}</title>
-        <style>
-          body {
-            font-family: var(--vscode-font-family);
-            color: var(--vscode-editor-foreground);
-            padding: 20px;
-            background-color: var(--vscode-editor-background);
-          }
-          h1 {
-            border-bottom: 1px solid var(--vscode-panel-border);
-            padding-bottom: 10px;
-          }
-          .description {
-            margin-bottom: 20px;
-          }
-          .metadata {
-            background-color: var(--vscode-panel-background);
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 20px;
-          }
-          .metadata div {
-            margin-bottom: 5px;
-          }
-          .version-control {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 10px;
-          }
-          .version-control select {
-            background-color: var(--vscode-dropdown-background);
-            color: var(--vscode-dropdown-foreground);
-            border: 1px solid var(--vscode-dropdown-border);
-            border-radius: 2px;
-            padding: 4px 8px;
-            min-width: 120px;
-          }
-          .version-loading {
-            font-size: 0.9em;
-            color: var(--vscode-disabledForeground);
-          }
-          .version-loading.version-error {
-            color: var(--vscode-errorForeground);
-          }
-          .parameters {
-            border: 1px solid var(--vscode-panel-border);
-            border-radius: 5px;
-          }
-          .parameter {
-            padding: 10px;
-            border-bottom: 1px solid var(--vscode-panel-border);
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-          }
-          .parameter:last-child {
-            border-bottom: none;
-          }
-          .parameter-content {
-            flex: 1;
-            margin-right: 15px;
-          }
-          .parameter-checkbox {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            margin-top: 5px;
-          }
-          .parameter-name {
-            font-weight: bold;
-          }
-          .parameter-required {
-            color: var(--vscode-errorForeground);
-            font-size: 0.9em;
-          }
-          .parameter-optional {
-            color: var(--vscode-disabledForeground);
-            font-size: 0.9em;
-          }
-          .parameter-default {
-            font-family: monospace;
-            background-color: var(--vscode-textCodeBlock-background);
-            padding: 2px 4px;
-            border-radius: 3px;
-          }
-          .parameters-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-          }
-          .select-all-group {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            font-size: 0.9em;
-          }
-          .insert-options {
-            margin-top: 20px;
-            padding: 15px;
-            background-color: var(--vscode-panel-background);
-            border-radius: 5px;
-          }
-          .insert-options h3 {
-            margin-top: 0;
-            margin-bottom: 15px;
-          }
-          .checkbox-group {
-            margin-bottom: 15px;
-          }
-          .checkbox-group label {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            cursor: pointer;
-          }
-          .checkbox-group input[type="checkbox"] {
-            margin: 0;
-          }
-          button {
-            background-color: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            border: none;
-            padding: 8px 16px;
-            border-radius: 2px;
-            cursor: pointer;
-          }
-          button:hover {
-            background-color: var(--vscode-button-hoverBackground);
-          }
-          button.secondary {
-            background-color: var(--vscode-button-secondaryBackground);
-            color: var(--vscode-button-secondaryForeground);
-          }
-          button.secondary:hover {
-            background-color: var(--vscode-button-secondaryHoverBackground);
-          }
-          #rawYamlContent {
-            white-space: pre;
-            overflow-x: auto;
-            background-color: var(--vscode-textCodeBlock-background);
-            padding: 10px;
-            border-radius: 5px;
-            border: 1px solid var(--vscode-panel-border);
-          }
-        </style>
+        ${cspMetaTag(webview.cspSource, nonce)}
+        <link rel="stylesheet" href="${styleUri}">
       </head>
       <body>
         <h1 id="componentName">${component.name}</h1>
@@ -1767,15 +1628,15 @@ export class ComponentBrowserProvider {
           ${this.renderInlineMarkdown(component.description || '')}
         </div>
 
-        <div class="metadata" id="componentContext" style="display: ${hasContext ? 'block' : 'none'};">
+        <div id="componentContext" class="metadata ${hasContext ? '' : 'is-hidden'}">
           <div><strong>Context</strong></div>
-          <div id="componentSummaryRow" style="display: ${headerSummary ? 'block' : 'none'};">
+          <div id="componentSummaryRow" class="${headerSummary ? '' : 'is-hidden'}">
             <strong>Summary:</strong> <span id="componentSummary">${headerSummary || ''}</span>
           </div>
-          <div id="componentUsageRow" style="display: ${headerUsage ? 'block' : 'none'};">
+          <div id="componentUsageRow" class="${headerUsage ? '' : 'is-hidden'}">
             <strong>Usage:</strong> <span id="componentUsage">${headerUsage || ''}</span>
           </div>
-          <div id="componentNotesRow" style="display: ${headerNotes.length > 0 ? 'block' : 'none'};">
+          <div id="componentNotesRow" class="${headerNotes.length > 0 ? '' : 'is-hidden'}">
             <strong>Notes:</strong>
             <ul id="componentNotes">
               ${headerNotes.map((note: string) => '<li>' + note + '</li>').join('')}
@@ -1783,12 +1644,12 @@ export class ComponentBrowserProvider {
           </div>
         </div>
 
-        <div class="metadata" id="rawYamlSection" style="display: ${hasRawYaml ? 'block' : 'none'};">
-          <div class="parameters-header" style="margin-bottom: 5px;">
-            <h2 style="margin: 0;">Raw YAML</h2>
-            <button class="secondary" id="toggleRawYaml" onclick="toggleRawYaml()">Show</button>
+        <div id="rawYamlSection" class="metadata ${hasRawYaml ? '' : 'is-hidden'}">
+          <div class="parameters-header raw-yaml-header">
+            <h2>Raw YAML</h2>
+            <button class="secondary" id="toggle-raw-yaml" data-action="toggleRawYaml">Show</button>
           </div>
-          <pre id="rawYamlContent" style="display: none;">${this.escapeHtml(rawYaml)}</pre>
+          <pre id="raw-yaml-content" class="is-hidden">${this.escapeHtml(rawYaml)}</pre>
         </div>
 
         <div class="metadata">
@@ -1796,7 +1657,7 @@ export class ComponentBrowserProvider {
           <div><strong>GitLab Instance:</strong> <span id="componentInstance">${component.gitlabInstance || 'gitlab.com'}</span></div>
           <div class="version-control">
             <strong>Version:</strong>
-            <select id="versionSelect" onchange="onVersionChange()">
+            <select id="versionSelect" data-action="onVersionChange">
               ${(() => {
                 // For monorepo tags show the template's {version} capture as the label, keeping the full tag as the
                 // option value (the ref used to fetch and insert the version).
@@ -1809,7 +1670,7 @@ export class ComponentBrowserProvider {
                 }).join('');
               })()}
             </select>
-            <span class="version-loading" id="versionLoading" style="display: none;">Loading version details...</span>
+            <span class="version-loading is-hidden" id="versionLoading">Loading version details...</span>
           </div>
           ${component.documentationUrl ?
             `<div><strong>Project URL:</strong> <a href="${component.documentationUrl}" target="_blank" id="componentDocUrl">${component.documentationUrl}</a></div>` : ''}
@@ -1823,7 +1684,7 @@ export class ComponentBrowserProvider {
           <h2>Parameters</h2>
           ${parameters.length > 0 ? `
             <div class="select-all-group">
-              <input type="checkbox" id="selectAllInputs" onchange="toggleAllInputs()">
+              <input type="checkbox" id="selectAllInputs" data-action="toggleAllInputs">
               <label for="selectAllInputs">Select All</label>
             </div>
           ` : ''}
@@ -1847,7 +1708,7 @@ export class ComponentBrowserProvider {
                       `<div><strong>Default:</strong> <span class="parameter-default">${param.default}</span></div>` : ''}
                   </div>
                   <div class="parameter-checkbox">
-                    <input type="checkbox" id="input-${param.name}" class="input-checkbox" onchange="updateInputSelection()" data-param-name="${param.name}">
+                    <input type="checkbox" id="input-${param.name}" class="input-checkbox" data-action="updateInputSelection" data-param-name="${param.name}">
                     <label for="input-${param.name}">Insert</label>
                   </div>
                 </div>
@@ -1865,333 +1726,15 @@ export class ComponentBrowserProvider {
             </label>
           </div>
           <div class="button-group">
-            <button onclick="insertComponent()">Insert Component</button>
-            <button class="secondary" onclick="refreshVersions()">Refresh Versions</button>
+            <button data-action="insertComponent">Insert Component</button>
+            <button class="secondary" data-action="refreshVersions">Refresh Versions</button>
           </div>
         </div>
 
-        <script>
-          const vscode = acquireVsCodeApi();
-          let currentVersions = ${serializeForScript(availableVersions)};
-          let versionsLoaded = ${availableVersions.length > 1};
-
-          ${this.clientRenderInlineMarkdownSource()}
-
-          function insertComponent() {
-            const selectedVersion = document.getElementById('versionSelect').value;
-            const includeInputs = document.getElementById('includeInputs')?.checked || false;
-
-            // Get selected individual inputs
-            const selectedInputs = [];
-            const inputCheckboxes = document.querySelectorAll('.input-checkbox:checked');
-            inputCheckboxes.forEach(checkbox => {
-              selectedInputs.push(checkbox.getAttribute('data-param-name'));
-            });
-
-            vscode.postMessage({
-              command: 'insertComponent',
-              version: selectedVersion,
-              includeInputs: includeInputs,
-              selectedInputs: selectedInputs
-            });
-          }
-
-          function toggleAllInputs() {
-            const selectAllCheckbox = document.getElementById('selectAllInputs');
-            const inputCheckboxes = document.querySelectorAll('.input-checkbox');
-
-            inputCheckboxes.forEach(checkbox => {
-              checkbox.checked = selectAllCheckbox.checked;
-            });
-
-            updateInputSelection();
-          }
-
-          function updateInputSelection() {
-            const inputCheckboxes = document.querySelectorAll('.input-checkbox');
-            const checkedInputs = document.querySelectorAll('.input-checkbox:checked');
-            const selectAllCheckbox = document.getElementById('selectAllInputs');
-            const includeInputsCheckbox = document.getElementById('includeInputs');
-
-            // Update select all checkbox state
-            if (checkedInputs.length === 0) {
-              selectAllCheckbox.checked = false;
-              selectAllCheckbox.indeterminate = false;
-            } else if (checkedInputs.length === inputCheckboxes.length) {
-              selectAllCheckbox.checked = true;
-              selectAllCheckbox.indeterminate = false;
-            } else {
-              selectAllCheckbox.checked = false;
-              selectAllCheckbox.indeterminate = true;
-            }
-
-            // Auto-check "Include input parameters" if any individual inputs are selected
-            if (checkedInputs.length > 0) {
-              includeInputsCheckbox.checked = true;
-            }
-          }
-
-          function onVersionChange() {
-            const selectedVersion = document.getElementById('versionSelect').value;
-            const loading = document.getElementById('versionLoading');
-
-            console.log('Version changed to:', selectedVersion);
-
-            // Show loading state, clearing any error left by a previous attempt.
-            loading.textContent = 'Loading version details...';
-            loading.classList.remove('version-error');
-            loading.style.display = 'inline';
-
-            // Send message to fetch details for this version
-            vscode.postMessage({
-              command: 'versionChanged',
-              selectedVersion: selectedVersion
-            });
-          }
-
-          function refreshVersions() {
-            const loading = document.getElementById('versionLoading');
-            const select = document.getElementById('versionSelect');
-
-            // Clear any error left by a previous attempt before starting a new one.
-            loading.textContent = 'Loading version details...';
-            loading.classList.remove('version-error');
-            loading.style.display = 'inline';
-            select.disabled = true;
-
-            vscode.postMessage({ command: 'fetchVersions' });
-          }
-
-          function toggleRawYaml() {
-            const rawContent = document.getElementById('rawYamlContent');
-            const toggleButton = document.getElementById('toggleRawYaml');
-            if (!rawContent || !toggleButton) return;
-
-            const isHidden = rawContent.style.display === 'none';
-            rawContent.style.display = isHidden ? 'block' : 'none';
-            toggleButton.textContent = isHidden ? 'Hide' : 'Show';
-          }
-
-          function updateComponentDetails(component) {
-            console.log('Updating component details:', component);
-
-            // Update component name
-            document.getElementById('componentName').textContent = component.name;
-
-            // Update description
-            document.getElementById('componentDescription').innerHTML = renderInlineMarkdown(component.description || '');
-
-            // Update context section (summary/usage/notes) from spec-compliant header comments
-            const contextContainer = document.getElementById('componentContext');
-            const summaryRow = document.getElementById('componentSummaryRow');
-            const usageRow = document.getElementById('componentUsageRow');
-            const notesRow = document.getElementById('componentNotesRow');
-            const summary = component.summary || '';
-            const usage = component.usage || '';
-            const notes = Array.isArray(component.notes) ? component.notes : [];
-            const hasContext = summary || usage || notes.length > 0;
-
-            if (contextContainer) {
-              contextContainer.style.display = hasContext ? 'block' : 'none';
-            }
-
-            if (summaryRow) {
-              summaryRow.style.display = summary ? 'block' : 'none';
-              const summaryEl = document.getElementById('componentSummary');
-              if (summaryEl) summaryEl.textContent = summary;
-            }
-
-            if (usageRow) {
-              usageRow.style.display = usage ? 'block' : 'none';
-              const usageEl = document.getElementById('componentUsage');
-              if (usageEl) usageEl.textContent = usage;
-            }
-
-            if (notesRow) {
-              notesRow.style.display = notes.length > 0 ? 'block' : 'none';
-              const notesEl = document.getElementById('componentNotes');
-              if (notesEl) {
-                notesEl.innerHTML = notes.map(note => '<li>' + note + '</li>').join('');
-              }
-            }
-
-            // Update raw YAML section
-            const rawYamlSection = document.getElementById('rawYamlSection');
-            const rawYamlContent = document.getElementById('rawYamlContent');
-            const rawYamlToggle = document.getElementById('toggleRawYaml');
-            const rawYaml = component.rawYaml || '';
-            const hasRawYaml = rawYaml.length > 0;
-            if (rawYamlSection) {
-              rawYamlSection.style.display = hasRawYaml ? 'block' : 'none';
-            }
-            if (rawYamlContent) {
-              rawYamlContent.textContent = rawYaml;
-              rawYamlContent.style.display = 'none';
-            }
-            if (rawYamlToggle) {
-              rawYamlToggle.textContent = 'Show';
-            }
-
-            // Update source if available
-            if (component.source) {
-              document.getElementById('componentSource').textContent = component.source;
-            }
-
-            // Update GitLab instance if available
-            if (component.gitlabInstance) {
-              document.getElementById('componentInstance').textContent = component.gitlabInstance;
-            }
-
-            // Update documentation URL if available
-            const docUrlElement = document.getElementById('componentDocUrl');
-            if (component.documentationUrl && docUrlElement) {
-              docUrlElement.href = component.documentationUrl;
-              docUrlElement.textContent = component.documentationUrl;
-            }
-
-            // Update component URL
-            const componentUrlElement = document.getElementById('componentUrl');
-            if (component.url && componentUrlElement) {
-              componentUrlElement.textContent = component.url;
-            }
-
-            // Update template file URL. The server precomputes templateFileUrl and includes it in the
-            // payload; if it's absent (no resolved templatePath), the row is hidden.
-            const templateFileUrlElement = document.getElementById('templateFileUrl');
-            if (templateFileUrlElement) {
-              if (component.templateFileUrl) {
-                templateFileUrlElement.href = component.templateFileUrl;
-                templateFileUrlElement.textContent = component.templateFileUrl;
-                templateFileUrlElement.style.display = 'inline';
-              } else {
-                templateFileUrlElement.style.display = 'none';
-              }
-            }
-
-            // Update parameters
-            const parametersContainer = document.getElementById('parametersContainer');
-            const parameters = component.parameters || [];
-
-            if (parameters.length === 0) {
-              parametersContainer.innerHTML = '<p>No parameters documented for this component.</p>';
-            } else {
-              let parametersHtml = '<div class="parameters">';
-              parameters.forEach(param => {
-                parametersHtml += '<div class="parameter">';
-                parametersHtml += '<div class="parameter-content">';
-                parametersHtml += '<div>';
-                parametersHtml += '<span class="parameter-name">' + param.name + '</span>';
-                parametersHtml += '<span class="' + (param.required ? 'parameter-required' : 'parameter-optional') + '">';
-                parametersHtml += '(' + (param.required ? 'required' : 'optional') + ')';
-                parametersHtml += '</span>';
-                parametersHtml += '</div>';
-                parametersHtml += '<div>' + (param.description || ('Parameter: ' + param.name)) + '</div>';
-                parametersHtml += '<div><strong>Type:</strong> ' + (param.type || 'string') + '</div>';
-                if (param.default !== undefined) {
-                  parametersHtml += '<div><strong>Default:</strong> <span class="parameter-default">' + param.default + '</span></div>';
-                }
-                parametersHtml += '</div>';
-                parametersHtml += '<div class="parameter-checkbox">';
-                parametersHtml += '<input type="checkbox" id="input-' + param.name + '" class="input-checkbox" onchange="updateInputSelection()" data-param-name="' + param.name + '">';
-                parametersHtml += '<label for="input-' + param.name + '">Insert</label>';
-                parametersHtml += '</div>';
-                parametersHtml += '</div>';
-              });
-              parametersHtml += '</div>';
-              parametersContainer.innerHTML = parametersHtml;
-            }
-
-            // Update select all checkbox visibility and reset state
-            const selectAllGroup = document.querySelector('.select-all-group');
-            if (selectAllGroup) {
-              selectAllGroup.style.display = parameters.length > 0 ? 'flex' : 'none';
-              // Reset select all checkbox state
-              const selectAllCheckbox = document.getElementById('selectAllInputs');
-              if (selectAllCheckbox) {
-                selectAllCheckbox.checked = false;
-                selectAllCheckbox.indeterminate = false;
-              }
-            }
-
-            // Update checkbox visibility based on parameters
-            const includeInputsCheckbox = document.getElementById('includeInputs');
-            if (includeInputsCheckbox && includeInputsCheckbox.parentElement && includeInputsCheckbox.parentElement.parentElement) {
-              includeInputsCheckbox.parentElement.parentElement.style.display = parameters.length > 0 ? 'block' : 'none';
-            }
-
-            // Hide loading indicator
-            document.getElementById('versionLoading').style.display = 'none';
-          }
-
-          // Handle messages from the extension
-          window.addEventListener('message', event => {
-            const message = event.data;
-            console.log('Received message:', message);
-
-            switch (message.command) {
-              case 'versionsLoaded':
-                updateVersionDropdown(message.versions, message.currentVersion, message.versionLabels);
-                break;
-              case 'versionsError': {
-                // Reuse the loading slot to report the failure: a refresh that silently does nothing reads as an
-                // inert button, so the user is told rather than left guessing.
-                const versionStatus = document.getElementById('versionLoading');
-                versionStatus.textContent = 'Could not load versions: ' + (message.error || 'unknown error');
-                versionStatus.classList.add('version-error');
-                versionStatus.style.display = 'inline';
-                document.getElementById('versionSelect').disabled = false;
-                break;
-              }
-              case 'componentDetailsUpdated':
-                updateComponentDetails(message.component);
-                break;
-              case 'versionChangeError': {
-                // Same treatment as versionsError: a failed version switch used to hide the spinner and say nothing,
-                // which reads as the dropdown simply not working.
-                const changeStatus = document.getElementById('versionLoading');
-                changeStatus.textContent = 'Could not load that version: ' + (message.error || 'unknown error');
-                changeStatus.classList.add('version-error');
-                changeStatus.style.display = 'inline';
-                console.error('Version change error:', message.error);
-                break;
-              }
-            }
-          });
-
-          function updateVersionDropdown(versions, currentVersion, versionLabels) {
-            const select = document.getElementById('versionSelect');
-            const loading = document.getElementById('versionLoading');
-            const labels = versionLabels || {};
-
-            // Clear existing options
-            select.innerHTML = '';
-
-            // Add new options. The option value is the full tag (the inserted ref); the label is the stripped
-            // {version} for monorepo sources (falls back to the full tag when no label is provided).
-            versions.forEach(version => {
-              const option = document.createElement('option');
-              option.value = version;
-              option.textContent = labels[version] || version;
-              if (version === currentVersion) {
-                option.selected = true;
-              }
-              select.appendChild(option);
-            });
-
-            loading.style.display = 'none';
-            loading.classList.remove('version-error');
-            select.disabled = false;
-            currentVersions = versions;
-            versionsLoaded = true;
-          }
-
-          // Auto-fetch versions if not already loaded
-          if (!versionsLoaded) {
-            setTimeout(() => {
-              refreshVersions();
-            }, 500);
-          }
-        </script>
+        <script type="application/json" id="details-bootstrap" nonce="${nonce}">${serializeForScript({
+          loaded: availableVersions.length > 1,
+        })}</script>
+        <script nonce="${nonce}" src="${scriptUri}"></script>
       </body>
       </html>
     `;

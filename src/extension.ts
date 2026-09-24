@@ -404,7 +404,7 @@ export function activate(context: vscode.ExtensionContext) {
         // (cacheManager.fetchComponentVersions) scopes to this component instead of returning every repo tag.
         const enriched = await componentBrowser.lookupComponentDetails(activeComponent);
         activeComponent = { ...activeComponent, ...enriched };
-        panel.webview.html = componentBrowser.getComponentDetailsHtml(activeComponent);
+        panel.webview.html = componentBrowser.getComponentDetailsHtml(panel.webview, activeComponent);
 
         // Ensure the original editor remains focused after panel creation
         setTimeout(async () => {
