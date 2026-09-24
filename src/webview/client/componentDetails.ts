@@ -96,6 +96,31 @@ function elementById<T extends HTMLElement>(id: string, construct: new () => T):
 }
 
 /**
+ * Accept a URL only if it is `http(s)`, so a component's catalog entry cannot turn a link into `javascript:` or
+ * `data:`.
+ *
+ * @param value Candidate URL, typically from a component's metadata.
+ * @returns     The URL when its scheme is http or https, otherwise undefined.
+ */
+function httpUrl(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return undefined;
+    }
+    // Re-serialise rather than returning the input: the href carries only what `URL` produced from a scheme this
+    // function accepted.
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Show or hide an element.
  *
  * @param element Target, or null when the document does not carry it.
@@ -346,9 +371,10 @@ function updateComponentDetails(component: ComponentDetails): void {
   }
 
   const docUrl = elementById('componentDocUrl', HTMLAnchorElement);
-  if (docUrl && component.documentationUrl) {
-    docUrl.href = component.documentationUrl;
-    docUrl.textContent = component.documentationUrl;
+  const safeDocUrl = httpUrl(component.documentationUrl);
+  if (docUrl && safeDocUrl) {
+    docUrl.href = safeDocUrl;
+    docUrl.textContent = safeDocUrl;
   }
 
   if (component.url) {
@@ -357,12 +383,13 @@ function updateComponentDetails(component: ComponentDetails): void {
 
   // The server precomputes templateFileUrl; its absence means no resolved templatePath, so the row is hidden.
   const templateFileUrl = elementById('templateFileUrl', HTMLAnchorElement);
+  const safeTemplateUrl = httpUrl(component.templateFileUrl);
   if (templateFileUrl) {
-    if (component.templateFileUrl) {
-      templateFileUrl.href = component.templateFileUrl;
-      templateFileUrl.textContent = component.templateFileUrl;
+    if (safeTemplateUrl) {
+      templateFileUrl.href = safeTemplateUrl;
+      templateFileUrl.textContent = safeTemplateUrl;
     }
-    setVisible(templateFileUrl, Boolean(component.templateFileUrl));
+    setVisible(templateFileUrl, Boolean(safeTemplateUrl));
   }
 
   const parameters = component.parameters || [];
