@@ -24,67 +24,68 @@ interface ContextMenuData {
   projectId: string;
 }
 
-declare global {
-  interface Window {
-    componentVersionData: Record<string, Record<string, VersionEntry>>;
-  }
-}
-
 const vscode = acquireVsCodeApi();
 
-window.componentVersionData = readVersionData();
+/**
+ * Every version the browser knows about, by component name then version string.
+ *
+ * Maps rather than plain objects: both keys are set by whoever publishes the component, and `__proto__` is a legal
+ * file name and git tag. On an object, `data[name][version] = …` with either key set to `__proto__` writes through
+ * to `Object.prototype`, and reading `data['constructor']` returns a function. A `Map` has no such keys.
+ */
+const versionStore = readVersionData();
 
 let contextMenuData: ContextMenuData | null = null;
 
 /**
  * Read the version map the document embedded as JSON.
  *
- * @returns The map, or an empty one when the block is missing or malformed.
+ * @returns The map, or an empty one when the block is missing or malformed. Only well-formed entries are kept.
  */
-function readVersionData(): Record<string, Record<string, VersionEntry>> {
+function readVersionData(): Map<string, Map<string, VersionEntry>> {
+  const store = new Map<string, Map<string, VersionEntry>>();
   const element = document.getElementById('component-version-data');
   if (!element?.textContent) {
-    return {};
+    return store;
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(element.textContent);
   } catch {
-    return {};
+    return store;
+  }
+  if (!isObject(parsed)) {
+    return store;
   }
 
-  return isVersionData(parsed) ? parsed : {};
+  for (const [componentName, versions] of Object.entries(parsed)) {
+    if (!isObject(versions)) {
+      continue;
+    }
+    const entries = Object.entries(versions).filter((pair): pair is [string, VersionEntry] => isObject(pair[1]));
+    store.set(componentName, new Map(entries));
+  }
+  return store;
 }
 
-/** Narrow a parsed value to the version map: an object whose values are themselves objects. */
-function isVersionData(value: unknown): value is Record<string, Record<string, VersionEntry>> {
-  return typeof value === 'object'
-    && value !== null
-    && Object.values(value).every(entry => typeof entry === 'object' && entry !== null);
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/**
- * Property names that reach `Object.prototype` instead of creating an own key. Component names and version strings are
- * set by whoever publishes the component, and `__proto__` is both a legal file name and a legal git tag.
- */
-const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+/** Record one version of a component. */
+function storeVersion(componentName: string, version: string, entry: VersionEntry): void {
+  let versions = versionStore.get(componentName);
+  if (!versions) {
+    versions = new Map();
+    versionStore.set(componentName, versions);
+  }
+  versions.set(version, entry);
+}
 
-/**
- * Record one version of a component, refusing keys that would write through to `Object.prototype`.
- *
- * @returns Whether the entry was stored.
- */
-function storeVersion(componentName: string, version: string, entry: VersionEntry): boolean {
-  if (UNSAFE_KEYS.has(componentName) || UNSAFE_KEYS.has(version)) {
-    console.warn('Ignoring a component or version with a reserved name', componentName, version);
-    return false;
-  }
-  if (!Object.prototype.hasOwnProperty.call(window.componentVersionData, componentName)) {
-    window.componentVersionData[componentName] = Object.create(null) as Record<string, VersionEntry>;
-  }
-  window.componentVersionData[componentName][version] = entry;
-  return true;
+/** A component's entry at one version, if the browser has it. */
+function findVersion(componentName: string, version: string): VersionEntry | undefined {
+  return versionStore.get(componentName)?.get(version);
 }
 
 /** A card's control, found by the `data-role` both the server and this script put on it. */
@@ -299,8 +300,8 @@ function handleVersionsError(message: {
 
 /** Repoint a component's card, description and action buttons at the newly selected version. */
 function updateComponentVersion(componentName: string, selectedVersion: string, projectId: string): void {
-  const componentData = window.componentVersionData[componentName];
-  if (!componentData || !componentData[selectedVersion]) {
+  const versionData = findVersion(componentName, selectedVersion);
+  if (!versionData) {
     console.warn('Version data not found for', componentName, selectedVersion);
 
     // Try to fetch this version dynamically
@@ -330,7 +331,6 @@ function updateComponentVersion(componentName: string, selectedVersion: string, 
     return;
   }
 
-  const versionData = componentData[selectedVersion];
 
   const descElement = document.getElementById(`desc-${componentName}-${projectId}`);
   if (descElement) {
@@ -369,19 +369,18 @@ function resetCache(): void {
 
 /** Open the details panel for a component at a given version. */
 function viewDetailsById(componentName: string, version: string): void {
-  const componentData = window.componentVersionData[componentName];
-  if (componentData && componentData[version]) {
+  const versionData = findVersion(componentName, version);
+  if (versionData) {
     // Send the raw component data; the server computes the template-file URL when it renders the details panel.
-    const component = { ...componentData[version], name: componentName, version };
+    const component = { ...versionData, name: componentName, version };
     vscode.postMessage({ command: 'viewComponentDetails', component });
   }
 }
 
 /** Insert a component at a given version into the active editor. */
 function insertComponentById(componentName: string, version: string): void {
-  const componentData = window.componentVersionData[componentName];
-  if (componentData && componentData[version]) {
-    const versionData = componentData[version];
+  const versionData = findVersion(componentName, version);
+  if (versionData) {
     vscode.postMessage({
       command: 'insertComponent',
       component: {
@@ -536,9 +535,7 @@ window.addEventListener('message', event => {
     return;
   }
 
-  if (!storeVersion(message.componentName, message.version, message.component)) {
-    return;
-  }
+  storeVersion(message.componentName, message.version, message.component);
 
   const projectId = findProjectIdForComponent(message.componentName);
   if (projectId) {

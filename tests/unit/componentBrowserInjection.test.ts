@@ -72,11 +72,13 @@ suite('Component Browser client script', () => {
     assert.doesNotMatch(client, /setAttribute\(\s*['"`]on[a-z]+/);
   });
 
-  test('refuses prototype keys when storing versions', () => {
-    // `__proto__` is a legal file name and git tag; on a plain object it writes through to Object.prototype.
-    assert.match(client, /UNSAFE_KEYS = new Set\(\['__proto__', 'constructor', 'prototype'\]\)/);
-    // Exactly one write of a version entry, the one inside `storeVersion`, which checks the keys first.
-    const writes = client.match(/window\.componentVersionData\[[^\]]+\]\[[^\]]+\]\s*=(?!=)/g) ?? [];
-    assert.equal(writes.length, 1, 'version entries must be written through storeVersion');
+  test('keys publisher-controlled names only into Maps', () => {
+    // `__proto__` is a legal file name and git tag. On a plain object, `data[name][version] = …` with either set to it
+    // writes through to Object.prototype; a Map has no such keys, so the class of bug is gone rather than filtered.
+    assert.match(client, /const versionStore = readVersionData\(\)/);
+    assert.match(client, /function readVersionData\(\): Map<string, Map<string, VersionEntry>>/);
+    assert.doesNotMatch(client, /componentVersionData/, 'the old object-keyed store must not come back');
+    const code = client.split('\n').filter(line => !/^\s*(\*|\/\/)/.test(line)).join('\n');
+    assert.doesNotMatch(code, /\w+\[[^\]\n]+\]\[[^\]\n]+\]\s*=(?!=)/, 'no two-level bracket writes');
   });
 });
