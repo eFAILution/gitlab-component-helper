@@ -22,6 +22,21 @@ export function escapeHtml(value: string): string {
 }
 
 /**
+ * Encode a value as a JavaScript string argument inside a double-quoted HTML event-handler attribute, e.g.
+ * `onclick="insertComponentById(${handlerArg(name)})"`.
+ *
+ * Two contexts, so two encodings, in order: `JSON.stringify` makes a JS string literal (escaping `"` and `\\`), then
+ * {@link escapeHtml} makes that safe inside the attribute. `escapeHtml` alone is not enough, because the browser decodes
+ * `&#39;` back to `'` before the handler runs, so a value containing a quote breaks out of `'...'` into code.
+ *
+ * @param value The value to pass; `undefined` becomes an empty string.
+ * @returns     Attribute-safe text that the handler sees as exactly one string literal equal to `value`.
+ */
+export function handlerArg(value: string | undefined): string {
+  return escapeHtml(JSON.stringify(value ?? ''));
+}
+
+/**
  * Render a single-paragraph description with inline Markdown (links, `code`, **bold**, *italic*).
  *
  * HTML is escaped first, so nothing in the source can inject markup; only the patterns below re-introduce

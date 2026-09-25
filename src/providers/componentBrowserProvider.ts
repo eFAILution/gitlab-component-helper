@@ -9,8 +9,7 @@ import type { HoverContext } from './hoverContentBuilder';
 import { containsGitLabVariables } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
-import { escapeHtml, renderInlineMarkdown } from '../webview/inlineMarkdown';
-import { clientRenderInlineMarkdownSource } from '../webview/clientInlineMarkdown';
+import { escapeHtml, handlerArg, renderInlineMarkdown } from '../webview/inlineMarkdown';
 import { serializeForScript } from '../webview/scriptData';
 import { generateComponentText } from './componentBrowserGenerate';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
@@ -352,7 +351,7 @@ export class ComponentBrowserProvider {
 
       this.logger.debug(`[ComponentBrowser] Filtered errors: ${Object.keys(filteredErrors).length} of ${Object.keys(cacheErrors).length}`, 'ComponentBrowser');
 
-      this.panel.webview.html = this.getComponentBrowserHtml(allComponents, filteredErrors);
+      this.panel.webview.html = this.getComponentBrowserHtml(this.panel.webview, allComponents, filteredErrors);
     } catch (error) {
       this.logger.error(`[ComponentBrowser] Error in loadComponents: ${error}`, 'ComponentBrowser');
       if (this.panel) {
@@ -730,17 +729,35 @@ export class ComponentBrowserProvider {
       .join('');
   }
 
-  private getComponentBrowserHtml(componentGroups: SourceGroup[], cacheErrors: Record<string, string> = {}): string {
+  /**
+   * Render the Component Browser: every configured source, its projects and their components, as a collapsible tree.
+   *
+   * @param webview         The panel this document is for, used to resolve its asset URIs.
+   * @param componentGroups Sources with their projects and components, already grouped for display.
+   * @param cacheErrors     Per-source failure messages, keyed by source name. Sources that failed are listed in a
+   *                        banner above the tree; an empty record omits it.
+   * @returns               The panel's complete HTML document.
+   */
+  private getComponentBrowserHtml(
+    webview: vscode.Webview,
+    componentGroups: SourceGroup[],
+    cacheErrors: Record<string, string> = {}
+  ): string {
+    const styleUri = assetUri(webview, this.context.extensionUri, 'styles/componentBrowser.css');
+    const scriptUri = assetUri(webview, this.context.extensionUri, 'client/componentBrowser.js');
     const hasErrors = Object.keys(cacheErrors).length > 0;
 
     // Prepare version data as a safe JSON string
+    // Null-prototype maps: component names and versions are publisher-controlled, and `__proto__` is a legal template
+    // file name and git tag. On a plain object, `acc['__proto__'][v] = …` would write to Object.prototype in the
+    // extension host.
     const versionData = componentGroups.reduce<Record<string, Record<string, ComponentVersion>>>((acc, source) => {
       if (source.projects && Array.isArray(source.projects)) {
         source.projects.forEach(project => {
           if (project.components && Array.isArray(project.components)) {
             project.components.forEach(component => {
-              if (!acc[component.name]) {
-                acc[component.name] = {};
+              if (!Object.prototype.hasOwnProperty.call(acc, component.name)) {
+                acc[component.name] = Object.create(null) as Record<string, ComponentVersion>;
               }
               if (component.versions && Array.isArray(component.versions)) {
                 component.versions.forEach(version => {
@@ -752,7 +769,7 @@ export class ComponentBrowserProvider {
         });
       }
       return acc;
-    }, {});
+    }, Object.create(null) as Record<string, Record<string, ComponentVersion>>);
 
     const versionDataJson = serializeForScript(versionData);
 
@@ -788,34 +805,35 @@ export class ComponentBrowserProvider {
             '<p class="no-components">No components found in this project</p>' :
             components.map(component => {
               const componentKey = `${component.name}-${component.sourcePath}`;
+              const initialVersion = component.defaultVersion || component.availableVersions[0];
               const hasVersions = component.availableVersions && component.availableVersions.length > 0;
 
               return `
-              <div class="component-card" data-name="${component.name}" data-description="${this.escapeHtml(component.description || '')}" data-component-name="${component.name}" data-project-id="${projectId}" data-source-path="${component.sourcePath}" data-gitlab-instance="${component.gitlabInstance}" id="component-${componentKey}">
+              <div class="component-card" data-name="${this.escapeHtml(component.name)}" data-description="${this.escapeHtml(component.description || '')}" data-component-name="${this.escapeHtml(component.name)}" data-project-id="${projectId}" data-source-path="${this.escapeHtml(component.sourcePath)}" data-gitlab-instance="${this.escapeHtml(component.gitlabInstance)}" id="component-${this.escapeHtml(componentKey)}">
                 <div class="component-header">
                   <span class="component-title">
-                    ${component.name}
+                    ${this.escapeHtml(component.name)}
                     ${hasVersions && component.availableVersions.length > 1 ? `<span class="version-badge">${component.availableVersions.length} versions</span>` : ''}
                   </span>
-                  <div class="component-actions" id="actions-${componentKey}">
+                  <div class="component-actions" id="actions-${this.escapeHtml(componentKey)}">
                     ${hasVersions ? `
                       ${component.availableVersions.length > 1 ? `
-                        <select class="version-dropdown" onchange="updateComponentVersion('${component.name}', this.value, '${projectId}')" oncontextmenu="showContextMenu(event, '${component.name}', this.value, '${projectId}')">
+                        <select class="version-dropdown" onchange="updateComponentVersion(${this.jsArg(component.name)}, this.value, ${this.jsArg(projectId)})" oncontextmenu="showContextMenu(event, ${this.jsArg(component.name)}, this.value, ${this.jsArg(projectId)})">
                           ${this.renderVersionOptions(component)}
                         </select>
-                      ` : `<span class="single-version">${component.availableVersions[0] || 'latest'}</span>`}
-                      <button onclick="viewDetailsById('${component.name}', '${component.defaultVersion || component.availableVersions[0]}', '${projectId}')">Details</button>
-                      <button onclick="insertComponentById('${component.name}', '${component.defaultVersion || component.availableVersions[0]}', '${projectId}')">Insert</button>
+                      ` : `<span class="single-version">${this.escapeHtml(component.availableVersions[0] || 'latest')}</span>`}
+                      <button data-role="details" onclick="viewDetailsById(${this.jsArg(component.name)}, ${this.jsArg(initialVersion)})">Details</button>
+                      <button data-role="insert" onclick="insertComponentById(${this.jsArg(component.name)}, ${this.jsArg(initialVersion)})">Insert</button>
                     ` : `
-                      <button class="load-versions-btn" onclick="loadComponentVersions('${component.name}', '${component.sourcePath}', '${component.gitlabInstance}', '${projectId}')">Load Versions</button>
-                      <span class="loading-versions" id="loading-${componentKey}" style="display: none;">Loading...</span>
+                      <button class="load-versions-btn" onclick="loadComponentVersions(${this.jsArg(component.name)}, ${this.jsArg(component.sourcePath)}, ${this.jsArg(component.gitlabInstance)}, ${this.jsArg(projectId)})">Load Versions</button>
+                      <span class="loading-versions" id="loading-${this.escapeHtml(componentKey)}" style="display: none;">Loading...</span>
                     `}
                   </div>
                 </div>
-                <div class="component-description" id="desc-${component.name}-${projectId}">${this.renderInlineMarkdown(component.description || '')}</div>
+                <div class="component-description" id="desc-${this.escapeHtml(component.name)}-${projectId}">${this.renderInlineMarkdown(component.description || '')}</div>
                 ${hasVersions && component.availableVersions.length > 1 ? `
-                  <div class="version-info" id="version-info-${component.name}-${projectId}">
-                    <small>Default version: ${component.defaultVersion}</small>
+                  <div class="version-info" id="version-info-${this.escapeHtml(component.name)}-${projectId}">
+                    <small>Default version: ${this.escapeHtml(component.defaultVersion)}</small>
                   </div>
                 ` : ''}
               </div>
@@ -826,8 +844,8 @@ export class ComponentBrowserProvider {
             <div class="project-group">
               <div class="project-header" onclick="toggleProject('${projectId}')">
                 <span class="project-icon" id="project-icon-${projectId}">${project.isExpanded ? '▼' : '▶'}</span>
-                <span class="project-title">${project.name} (${components.length})</span>
-                <span class="project-path">${project.gitlabInstance}/${project.path}</span>
+                <span class="project-title">${this.escapeHtml(project.name)} (${components.length})</span>
+                <span class="project-path">${this.escapeHtml(project.gitlabInstance)}/${this.escapeHtml(project.path)}</span>
               </div>
               <div class="project-content" id="project-content-${projectId}" style="display: ${project.isExpanded ? 'block' : 'none'}">
                 ${componentsHtml}
@@ -840,7 +858,7 @@ export class ComponentBrowserProvider {
           <div class="source-group">
             <div class="source-header" onclick="toggleSource('${sourceId}')">
               <span class="source-icon" id="source-icon-${sourceId}">${source.isExpanded ? '▼' : '▶'}</span>
-              <span class="source-title">${source.source} (${source.projects?.length || 0} projects, ${source.totalComponents || 0} components)</span>
+              <span class="source-title">${this.escapeHtml(source.source)} (${source.projects?.length || 0} projects, ${source.totalComponents || 0} components)</span>
             </div>
             <div class="source-content" id="source-content-${sourceId}" style="display: ${source.isExpanded ? 'block' : 'none'}">
               ${projectsHtml}
@@ -856,306 +874,7 @@ export class ComponentBrowserProvider {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>GitLab CI/CD Components</title>
-        <style>
-          body {
-            font-family: var(--vscode-font-family);
-            color: var(--vscode-editor-foreground);
-            padding: 20px;
-            background-color: var(--vscode-editor-background);
-          }
-          .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid var(--vscode-panel-border);
-          }
-          .search-container {
-            flex: 1;
-            max-width: 400px;
-            margin-right: 20px;
-          }
-          .search-container input {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid var(--vscode-input-border);
-            background-color: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
-            border-radius: 2px;
-          }
-          .cache-controls {
-            display: flex;
-            gap: 8px;
-          }
-          .refresh-btn, .update-cache-btn, .reset-cache-btn {
-            background-color: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            border: none;
-            padding: 8px 12px;
-            border-radius: 2px;
-            cursor: pointer;
-            font-size: 12px;
-            transition: background-color 0.2s;
-          }
-          .refresh-btn:hover, .update-cache-btn:hover, .reset-cache-btn:hover {
-            background-color: var(--vscode-button-hoverBackground);
-          }
-          .update-cache-btn {
-            background-color: var(--vscode-button-secondaryBackground);
-            color: var(--vscode-button-secondaryForeground);
-          }
-          .update-cache-btn:hover {
-            background-color: var(--vscode-button-secondaryHoverBackground);
-          }
-          .reset-cache-btn {
-            background-color: var(--vscode-editorError-background);
-            color: var(--vscode-errorForeground);
-            border: 1px solid var(--vscode-editorError-border);
-          }
-          .reset-cache-btn:hover {
-            background-color: var(--vscode-editorError-foreground);
-            color: var(--vscode-editorError-background);
-          }
-          .error-section {
-            background-color: var(--vscode-editorError-background);
-            border: 1px solid var(--vscode-editorError-border);
-            border-radius: 5px;
-            margin-bottom: 20px;
-            padding: 15px;
-          }
-          .error-header {
-            font-weight: bold;
-            margin-bottom: 10px;
-            color: var(--vscode-errorForeground);
-          }
-          .error-item {
-            margin-bottom: 10px;
-            padding: 10px;
-            background-color: rgba(255, 0, 0, 0.1);
-            border-radius: 3px;
-          }
-          .error-source {
-            font-weight: bold;
-            color: var(--vscode-errorForeground);
-          }
-          .error-summary {
-            color: var(--vscode-errorForeground);
-            margin: 4px 0;
-          }
-          .update-token-btn {
-            background-color: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            border: none;
-            padding: 6px 14px;
-            border-radius: 2px;
-            cursor: pointer;
-            margin-top: 6px;
-          }
-          .error-toggle {
-            background: none;
-            border: none;
-            color: var(--vscode-textLink-foreground);
-            cursor: pointer;
-            text-decoration: underline;
-            font-size: 0.9em;
-          }
-          .error-details {
-            margin-top: 10px;
-            padding: 10px;
-            background-color: rgba(0, 0, 0, 0.1);
-            border-radius: 3px;
-            font-family: monospace;
-            white-space: pre-wrap;
-            font-size: 0.9em;
-          }
-          .source-group {
-            margin-bottom: 20px;
-            border: 1px solid var(--vscode-panel-border);
-            border-radius: 5px;
-          }
-          .source-header {
-            background-color: var(--vscode-panel-background);
-            padding: 10px 15px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            border-bottom: 1px solid var(--vscode-panel-border);
-          }
-          .source-header:hover {
-            background-color: var(--vscode-list-hoverBackground);
-          }
-          .source-icon {
-            margin-right: 10px;
-            font-family: monospace;
-            font-weight: bold;
-          }
-          .source-title {
-            font-weight: bold;
-            flex: 1;
-          }
-          .source-content {
-            padding: 0;
-          }
-          .project-group {
-            border-bottom: 1px solid var(--vscode-panel-border);
-          }
-          .project-group:last-child {
-            border-bottom: none;
-          }
-          .project-header {
-            background-color: var(--vscode-editor-background);
-            padding: 8px 15px 8px 30px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            border-bottom: 1px solid var(--vscode-panel-border);
-          }
-          .project-header:hover {
-            background-color: var(--vscode-list-hoverBackground);
-          }
-          .project-icon {
-            margin-right: 8px;
-            font-family: monospace;
-            font-weight: bold;
-            font-size: 0.9em;
-          }
-          .project-title {
-            font-weight: bold;
-            flex: 1;
-            font-size: 0.95em;
-          }
-          .project-path {
-            color: var(--vscode-disabledForeground);
-            font-size: 0.85em;
-            font-family: monospace;
-          }
-          .project-content {
-            padding: 0;
-            background-color: var(--vscode-editor-background);
-          }
-          .component-card {
-            padding: 15px;
-            border-bottom: 1px solid var(--vscode-panel-border);
-            margin-left: 45px;
-          }
-          .component-card:last-child {
-            border-bottom: none;
-          }
-          .component-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-          }
-          .component-title {
-            font-weight: bold;
-            flex: 1;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-          }
-          .version-badge {
-            background-color: var(--vscode-badge-background);
-            color: var(--vscode-badge-foreground);
-            font-size: 0.75em;
-            padding: 2px 6px;
-            border-radius: 10px;
-            font-weight: normal;
-          }
-          .component-actions {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-          }
-          .version-dropdown {
-            background-color: var(--vscode-dropdown-background);
-            color: var(--vscode-dropdown-foreground);
-            border: 1px solid var(--vscode-dropdown-border);
-            padding: 4px 8px;
-            border-radius: 2px;
-            font-size: 0.9em;
-          }
-          .single-version {
-            color: var(--vscode-disabledForeground);
-            font-size: 0.9em;
-            font-family: monospace;
-          }
-          button {
-            background-color: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            border: none;
-            padding: 6px 12px;
-            border-radius: 2px;
-            cursor: pointer;
-            font-size: 0.85em;
-          }
-          button:hover {
-            background-color: var(--vscode-button-hoverBackground);
-          }
-          .load-versions-btn {
-            background-color: var(--vscode-button-secondaryBackground);
-            color: var(--vscode-button-secondaryForeground);
-          }
-          .load-versions-btn:hover {
-            background-color: var(--vscode-button-secondaryHoverBackground);
-          }
-          .loading-versions {
-            font-size: 0.85em;
-            color: var(--vscode-disabledForeground);
-            font-style: italic;
-          }
-          .error-message {
-            color: var(--vscode-errorForeground);
-            font-size: 0.85em;
-          }
-          .component-description {
-            color: var(--vscode-disabledForeground);
-            font-size: 0.9em;
-            margin-bottom: 8px;
-          }
-          .version-info {
-            color: var(--vscode-disabledForeground);
-            font-size: 0.8em;
-          }
-          .no-components {
-            padding: 20px;
-            text-align: center;
-            color: var(--vscode-disabledForeground);
-            font-style: italic;
-          }
-          .context-menu {
-            position: absolute;
-            background-color: var(--vscode-menu-background);
-            border: 1px solid var(--vscode-menu-border);
-            border-radius: 3px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-            z-index: 1000;
-            min-width: 150px;
-            display: none;
-          }
-          .context-menu-item {
-            padding: 8px 12px;
-            cursor: pointer;
-            color: var(--vscode-menu-foreground);
-            border-bottom: 1px solid var(--vscode-menu-separatorBackground);
-          }
-          .context-menu-item:last-child {
-            border-bottom: none;
-          }
-          .context-menu-item:hover {
-            background-color: var(--vscode-menu-selectionBackground);
-            color: var(--vscode-menu-selectionForeground);
-          }
-          .context-menu-item.disabled {
-            color: var(--vscode-disabledForeground);
-            cursor: not-allowed;
-          }
-          .context-menu-item.disabled:hover {
-            background-color: transparent;
-            color: var(--vscode-disabledForeground);
-          }
-        </style>
+        <link rel="stylesheet" href="${styleUri}">
       </head>
       <body>
         <div class="header">
@@ -1181,388 +900,8 @@ export class ComponentBrowserProvider {
           <div class="context-menu-item" onclick="alwaysUseLatest()">Always Use Latest</div>
         </div>
 
-        <script>
-          const vscode = acquireVsCodeApi();
-
-          ${this.clientRenderInlineMarkdownSource()}
-
-          // Inject component version data for client-side version switching
-          window.componentVersionData = ${versionDataJson};
-
-          // Context menu variables
-          let contextMenuTarget = null;
-          let contextMenuData = null;
-
-          function toggleError(errorId) {
-            const errorDiv = document.getElementById(errorId);
-            if (errorDiv.style.display === 'none' || errorDiv.style.display === '') {
-              errorDiv.style.display = 'block';
-            } else {
-              errorDiv.style.display = 'none';
-            }
-          }
-
-          function updateToken() {
-            vscode.postMessage({ command: 'updateToken' });
-          }
-
-          function toggleSource(sourceId) {
-            const content = document.getElementById('source-content-' + sourceId);
-            const icon = document.getElementById('source-icon-' + sourceId);
-
-            if (content.style.display === 'none') {
-              content.style.display = 'block';
-              icon.textContent = '▼';
-            } else {
-              content.style.display = 'none';
-              icon.textContent = '▶';
-            }
-          }
-
-          function toggleProject(projectId) {
-            const content = document.getElementById('project-content-' + projectId);
-            const icon = document.getElementById('project-icon-' + projectId);
-
-            if (content.style.display === 'none') {
-              content.style.display = 'block';
-              icon.textContent = '▼';
-            } else {
-              content.style.display = 'none';
-              icon.textContent = '▶';
-            }
-          }
-
-          function loadComponentVersions(componentName, sourcePath, gitlabInstance, projectId) {
-            const componentKey = componentName + '-' + sourcePath;
-            const loadingElement = document.getElementById('loading-' + componentKey);
-            const loadButton = document.querySelector('#component-' + componentKey + ' .load-versions-btn');
-            if (loadingElement) { loadingElement.style.display = 'inline'; }
-            if (loadButton) { loadButton.style.display = 'none'; }
-            vscode.postMessage({ command: 'fetchVersions', componentName: componentName, sourcePath: sourcePath, gitlabInstance: gitlabInstance });
-          }
-
-          window.addEventListener('message', event => {
-            const message = event.data;
-            if (message.command === 'versionsLoaded') { handleVersionsLoaded(message); }
-            else if (message.command === 'versionsError') { handleVersionsError(message); }
-          });
-
-          function handleVersionsLoaded(message) {
-            const componentName = message.componentName, sourcePath = message.sourcePath, versions = message.versions, defaultVersion = message.defaultVersion, componentKey = componentName + '-' + sourcePath;
-            if (!window.componentVersionData[componentName]) { window.componentVersionData[componentName] = {}; }
-            versions.forEach(function(v) { window.componentVersionData[componentName][v] = { version: v, sourcePath: sourcePath, gitlabInstance: message.gitlabInstance || 'gitlab.com' }; });
-            const componentCard = document.getElementById('component-' + componentKey);
-            if (!componentCard) { return; }
-            const projectId = componentCard.getAttribute('data-project-id'), actionsDiv = document.getElementById('actions-' + componentKey);
-            if (actionsDiv) {
-              if (versions.length > 1) {
-                // For monorepo sources the version values are full tags (e.g. <name>-1.1.0); the server sends a
-                // versionLabels map (full tag → stripped {version}) so we display the short form while keeping the
-                // full tag as the option value (the inserted ref).
-                const labels = message.versionLabels || {};
-                const label = function(v) { return labels[v] || v; };
-                // Build the dropdown shell + buttons as markup, then append options via the DOM so the untrusted
-                // version strings (tag names can contain <, >, &) are never interpolated into HTML.
-                actionsDiv.innerHTML = '<select class="version-dropdown" onchange="updateComponentVersion(&#39;' + componentName + '&#39;, this.value, &#39;' + projectId + '&#39;)"></select><button onclick="viewDetailsById(&#39;' + componentName + '&#39;, &#39;' + defaultVersion + '&#39;, &#39;' + projectId + '&#39;)">Details</button><button onclick="insertComponentById(&#39;' + componentName + '&#39;, &#39;' + defaultVersion + '&#39;, &#39;' + projectId + '&#39;)">Insert</button>';
-                const select = actionsDiv.querySelector('.version-dropdown');
-                versions.forEach(function(v) {
-                  const option = document.createElement('option');
-                  option.value = v;
-                  option.textContent = label(v);
-                  if (v === defaultVersion) { option.selected = true; }
-                  select.appendChild(option);
-                });
-                const descElement = document.getElementById('desc-' + componentName + '-' + projectId);
-                if (descElement && !document.getElementById('version-info-' + componentName + '-' + projectId)) {
-                  const versionInfo = document.createElement('div');
-                  versionInfo.className = 'version-info'; versionInfo.id = 'version-info-' + componentName + '-' + projectId;
-                  versionInfo.innerHTML = '<small>Default version: ' + defaultVersion + '</small>';
-                  descElement.parentNode.insertBefore(versionInfo, descElement.nextSibling);
-                }
-              } else {
-                const singleVersion = versions[0] || 'latest';
-                actionsDiv.innerHTML = '<span class="single-version">' + singleVersion + '</span><button onclick="viewDetailsById(&#39;' + componentName + '&#39;, &#39;' + singleVersion + '&#39;, &#39;' + projectId + '&#39;)">Details</button><button onclick="insertComponentById(&#39;' + componentName + '&#39;, &#39;' + singleVersion + '&#39;, &#39;' + projectId + '&#39;)">Insert</button>';
-              }
-            }
-            const titleSpan = componentCard.querySelector('.component-title');
-            if (titleSpan && versions.length > 1 && !titleSpan.querySelector('.version-badge')) {
-              const badge = document.createElement('span'); badge.className = 'version-badge'; badge.textContent = versions.length + ' versions'; titleSpan.appendChild(badge);
-            }
-          }
-
-          function handleVersionsError(message) {
-            const componentKey = message.componentName + '-' + message.sourcePath;
-            const loadingElement = document.getElementById('loading-' + componentKey);
-            if (loadingElement) { loadingElement.style.display = 'none'; }
-            const actionsDiv = document.getElementById('actions-' + componentKey);
-            if (actionsDiv) {
-              actionsDiv.innerHTML = '<span class="error-message" style="color: red; font-size: 0.9em;">Failed to load versions</span><button class="load-versions-btn" onclick="loadComponentVersions(&#39;' + message.componentName + '&#39;, &#39;' + message.sourcePath + '&#39;, &#39;' + (message.gitlabInstance || 'gitlab.com') + '&#39;, &#39;&#39;)">Retry</button>';
-            }
-          }
-
-          function updateComponentVersion(componentName, selectedVersion, projectId) {
-            const componentData = window.componentVersionData[componentName];
-            if (!componentData || !componentData[selectedVersion]) {
-              console.warn('Version data not found for', componentName, selectedVersion);
-
-              // Try to fetch this version dynamically
-              const componentCard = document.querySelector('[data-component-name="' + componentName + '"][data-project-id="' + projectId + '"]');
-              if (componentCard) {
-                const sourcePath = componentCard.getAttribute('data-source-path');
-                const gitlabInstance = componentCard.getAttribute('data-gitlab-instance');
-
-                if (sourcePath && gitlabInstance) {
-                  // Show loading state
-                  const versionInfoElement = document.getElementById('version-info-' + componentName + '-' + projectId);
-                  if (versionInfoElement) {
-                    versionInfoElement.innerHTML = '<small>Loading version ' + selectedVersion + '...</small>';
-                  }
-
-                  // Request the version from the backend
-                  vscode.postMessage({
-                    command: 'fetchVersion',
-                    componentName: componentName,
-                    sourcePath: sourcePath,
-                    gitlabInstance: gitlabInstance,
-                    version: selectedVersion
-                  });
-                }
-              }
-              return;
-            }
-
-            const versionData = componentData[selectedVersion];
-
-            // Update the description
-            const descElement = document.getElementById('desc-' + componentName + '-' + projectId);
-            if (descElement) {
-              descElement.innerHTML = renderInlineMarkdown(versionData.description);
-            }
-
-            // Update version info
-            const versionInfoElement = document.getElementById('version-info-' + componentName + '-' + projectId);
-            if (versionInfoElement) {
-              versionInfoElement.innerHTML = '<small>Selected version: ' + selectedVersion + '</small>';
-            }
-
-            // Update the Insert button to use the selected version
-            const insertButton = document.querySelector('[data-component-name="' + componentName + '"][data-project-id="' + projectId + '"] button[onclick*="insertComponent"]');
-            if (insertButton) {
-              insertButton.setAttribute('onclick', 'insertComponentById("' + componentName + '", "' + selectedVersion + '", "' + projectId + '")');
-            }
-
-            // Update the Details button to use the selected version
-            const detailsButton = document.querySelector('[data-component-name="' + componentName + '"][data-project-id="' + projectId + '"] button[onclick*="viewDetails"]');
-            if (detailsButton) {
-              detailsButton.setAttribute('onclick', 'viewDetailsById("' + componentName + '", "' + selectedVersion + '", "' + projectId + '")');
-            }
-          }
-
-          function refreshComponents() {
-            vscode.postMessage({ command: 'refreshComponents' });
-          }
-
-          function updateCache() {
-            vscode.postMessage({ command: 'updateCache' });
-          }
-
-          function resetCache() {
-            vscode.postMessage({ command: 'resetCache' });
-          }
-
-          function insertComponent(component) {
-            vscode.postMessage({ command: 'insertComponent', component });
-          }
-
-          function viewDetails(component) {
-            vscode.postMessage({ command: 'viewComponentDetails', component });
-          }
-
-          function viewDetailsById(componentName, version, projectId) {
-            const componentData = window.componentVersionData[componentName];
-            if (componentData && componentData[version]) {
-              // Send the raw component data; the server computes the template-file URL when it renders the details panel.
-              const component = {
-                ...componentData[version],
-                name: componentName,
-                version: version,
-              };
-              vscode.postMessage({ command: 'viewComponentDetails', component });
-            }
-          }
-
-          function insertComponentById(componentName, version, projectId) {
-            const componentData = window.componentVersionData[componentName];
-            if (componentData && componentData[version]) {
-              const versionData = componentData[version];
-              const component = {
-                name: componentName,
-                sourcePath: versionData.sourcePath,
-                version: version,
-                gitlabInstance: versionData.gitlabInstance || 'gitlab.com'
-              };
-              vscode.postMessage({ command: 'insertComponent', component });
-            }
-          }
-
-          function filterComponents() {
-            const searchText = document.getElementById('search').value.toLowerCase();
-            const cards = document.getElementsByClassName('component-card');
-            let hasVisibleComponents = false;
-
-            // Track which projects and sources should be visible
-            const visibleProjects = new Set();
-            const visibleSources = new Set();
-
-            for (let card of cards) {
-              const name = card.getAttribute('data-name').toLowerCase();
-              const description = card.getAttribute('data-description').toLowerCase();
-
-              if (name.includes(searchText) || description.includes(searchText)) {
-                card.style.display = '';
-                hasVisibleComponents = true;
-
-                // Find the parent project and source
-                let projectContent = card.closest('.project-content');
-                let sourceContent = card.closest('.source-content');
-
-                if (projectContent) {
-                  const projectId = projectContent.id.replace('project-content-', '');
-                  visibleProjects.add(projectId);
-                }
-
-                if (sourceContent) {
-                  const sourceId = sourceContent.id.replace('source-content-', '');
-                  visibleSources.add(sourceId);
-                }
-              } else {
-                card.style.display = 'none';
-              }
-            }
-
-            // Show/hide projects based on whether they have visible components
-            const projects = document.getElementsByClassName('project-group');
-            for (let project of projects) {
-              const projectContent = project.querySelector('.project-content');
-              if (projectContent) {
-                const projectId = projectContent.id.replace('project-content-', '');
-                const hasVisibleCards = visibleProjects.has(projectId);
-
-                if (hasVisibleCards || searchText === '') {
-                  project.style.display = '';
-                  // Auto-expand if searching and has results
-                  if (searchText !== '' && hasVisibleCards) {
-                    projectContent.style.display = 'block';
-                    const icon = document.getElementById('project-icon-' + projectId);
-                    if (icon) icon.textContent = '▼';
-                  }
-                } else {
-                  project.style.display = 'none';
-                }
-              }
-            }
-
-            // Show/hide sources based on whether they have visible projects
-            const sources = document.getElementsByClassName('source-group');
-            for (let source of sources) {
-              const sourceContent = source.querySelector('.source-content');
-              if (sourceContent) {
-                const sourceId = sourceContent.id.replace('source-content-', '');
-                const hasVisibleProjects = visibleSources.has(sourceId);
-
-                if (hasVisibleProjects || searchText === '') {
-                  source.style.display = '';
-                  // Auto-expand if searching and has results
-                  if (searchText !== '' && hasVisibleProjects) {
-                    sourceContent.style.display = 'block';
-                    const icon = document.getElementById('source-icon-' + sourceId);
-                    if (icon) icon.textContent = '▼';
-                  }
-                } else {
-                  source.style.display = 'none';
-                }
-              }
-            }
-          }
-
-          // Context menu functions
-          function showContextMenu(event, componentName, version, projectId) {
-            event.preventDefault();
-            event.stopPropagation();
-
-            const contextMenu = document.getElementById('contextMenu');
-            contextMenuTarget = event.target;
-            contextMenuData = { componentName, version, projectId };
-
-            contextMenu.style.display = 'block';
-            contextMenu.style.left = event.pageX + 'px';
-            contextMenu.style.top = event.pageY + 'px';
-          }
-
-          function hideContextMenu() {
-            const contextMenu = document.getElementById('contextMenu');
-            contextMenu.style.display = 'none';
-            contextMenuTarget = null;
-            contextMenuData = null;
-          }
-
-          function setAsDefaultVersion() {
-            if (contextMenuData) {
-              vscode.postMessage({
-                command: 'setDefaultVersion',
-                componentName: contextMenuData.componentName,
-                version: contextMenuData.version,
-                projectId: contextMenuData.projectId
-              });
-            }
-            hideContextMenu();
-          }
-
-          function alwaysUseLatest() {
-            if (contextMenuData) {
-              vscode.postMessage({
-                command: 'setAlwaysUseLatest',
-                componentName: contextMenuData.componentName,
-                projectId: contextMenuData.projectId
-              });
-            }
-            hideContextMenu();
-          }
-
-          // Hide context menu when clicking elsewhere
-          document.addEventListener('click', function(event) {
-            if (!event.target.closest('.context-menu')) {
-              hideContextMenu();
-            }
-          });
-
-          // Handle messages from the extension
-          window.addEventListener('message', event => {
-            const message = event.data;
-            switch (message.command) {
-              case 'versionFetched':
-                // Update the component data with the newly fetched version
-                if (!window.componentVersionData[message.componentName]) {
-                  window.componentVersionData[message.componentName] = {};
-                }
-                window.componentVersionData[message.componentName][message.version] = message.component;
-
-                // Update the UI for this version
-                const projectId = findProjectIdForComponent(message.componentName);
-                if (projectId) {
-                  updateComponentVersion(message.componentName, message.version, projectId);
-                }
-                break;
-            }
-          });
-
-          function findProjectIdForComponent(componentName) {
-            const componentCard = document.querySelector('[data-component-name="' + componentName + '"]');
-            return componentCard ? componentCard.getAttribute('data-project-id') : null;
-          }
-
-          // ...existing code...
-        </script>
+        <script type="application/json" id="component-version-data">${versionDataJson}</script>
+        <script src="${scriptUri}"></script>
       </body>
       </html>
     `;
@@ -1648,12 +987,12 @@ export class ComponentBrowserProvider {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Component: ${component.name}</title>
+        <title>Component: ${this.escapeHtml(component.name)}</title>
         ${cspMetaTag(webview.cspSource, nonce)}
         <link rel="stylesheet" href="${styleUri}">
       </head>
       <body>
-        <h1 id="componentName">${component.name}</h1>
+        <h1 id="componentName">${this.escapeHtml(component.name)}</h1>
 
         <div class="description" id="componentDescription">
           ${this.renderInlineMarkdown(component.description || '')}
@@ -1662,15 +1001,15 @@ export class ComponentBrowserProvider {
         <div id="componentContext" class="metadata ${hasContext ? '' : 'is-hidden'}">
           <div><strong>Context</strong></div>
           <div id="componentSummaryRow" class="${headerSummary ? '' : 'is-hidden'}">
-            <strong>Summary:</strong> <span id="componentSummary">${headerSummary || ''}</span>
+            <strong>Summary:</strong> <span id="componentSummary">${this.escapeHtml(headerSummary || '')}</span>
           </div>
           <div id="componentUsageRow" class="${headerUsage ? '' : 'is-hidden'}">
-            <strong>Usage:</strong> <span id="componentUsage">${headerUsage || ''}</span>
+            <strong>Usage:</strong> <span id="componentUsage">${this.escapeHtml(headerUsage || '')}</span>
           </div>
           <div id="componentNotesRow" class="${headerNotes.length > 0 ? '' : 'is-hidden'}">
             <strong>Notes:</strong>
             <ul id="componentNotes">
-              ${headerNotes.map((note: string) => '<li>' + note + '</li>').join('')}
+              ${headerNotes.map((note: string) => `<li>${this.escapeHtml(note)}</li>`).join('')}
             </ul>
           </div>
         </div>
@@ -1684,8 +1023,8 @@ export class ComponentBrowserProvider {
         </div>
 
         <div class="metadata">
-          <div><strong>Source:</strong> <span id="componentSource">${component.source}</span></div>
-          <div><strong>GitLab Instance:</strong> <span id="componentInstance">${component.gitlabInstance || 'gitlab.com'}</span></div>
+          <div><strong>Source:</strong> <span id="componentSource">${this.escapeHtml(component.source || '')}</span></div>
+          <div><strong>GitLab Instance:</strong> <span id="componentInstance">${this.escapeHtml(component.gitlabInstance || 'gitlab.com')}</span></div>
           <div class="version-control">
             <strong>Version:</strong>
             <select id="versionSelect" data-action="onVersionChange">
@@ -1706,7 +1045,7 @@ export class ComponentBrowserProvider {
           ${safeDocUrl ?
             `<div><strong>Project URL:</strong> <a href="#" data-action="openDocumentation" id="componentDocUrl">${this.escapeHtml(safeDocUrl)}</a></div>` : ''}
           ${component.url ?
-            `<div><strong>Component URL:</strong> <code id="componentUrl">${component.url}</code></div>` : ''}
+            `<div><strong>Component URL:</strong> <code id="componentUrl">${this.escapeHtml(component.url)}</code></div>` : ''}
           ${safeTemplateUrl ?
             `<div><strong>Template File:</strong> <a href="#" data-action="openTemplateFile" id="templateFileUrl">${this.escapeHtml(safeTemplateUrl)}</a></div>` : ''}
         </div>
@@ -1728,19 +1067,19 @@ export class ComponentBrowserProvider {
                 <div class="parameter">
                   <div class="parameter-content">
                     <div>
-                      <span class="parameter-name">${param.name}</span>
+                      <span class="parameter-name">${this.escapeHtml(param.name)}</span>
                       <span class="${param.required ? 'parameter-required' : 'parameter-optional'}">
                         (${param.required ? 'required' : 'optional'})
                       </span>
                     </div>
-                    <div>${param.description || `Parameter: ${param.name}`}</div>
-                    <div><strong>Type:</strong> ${param.type || 'string'}</div>
+                    <div>${this.escapeHtml(param.description || `Parameter: ${param.name}`)}</div>
+                    <div><strong>Type:</strong> ${this.escapeHtml(param.type || 'string')}</div>
                     ${param.default !== undefined ?
-                      `<div><strong>Default:</strong> <span class="parameter-default">${param.default}</span></div>` : ''}
+                      `<div><strong>Default:</strong> <span class="parameter-default">${this.escapeHtml(String(param.default))}</span></div>` : ''}
                   </div>
                   <div class="parameter-checkbox">
-                    <input type="checkbox" id="input-${param.name}" class="input-checkbox" data-action="updateInputSelection" data-param-name="${param.name}">
-                    <label for="input-${param.name}">Insert</label>
+                    <input type="checkbox" id="input-${this.escapeHtml(param.name)}" class="input-checkbox" data-action="updateInputSelection" data-param-name="${this.escapeHtml(param.name)}">
+                    <label for="input-${this.escapeHtml(param.name)}">Insert</label>
                   </div>
                 </div>
               `).join('')}
@@ -1804,12 +1143,13 @@ export class ComponentBrowserProvider {
     return escapeHtml(value);
   }
 
-  private renderInlineMarkdown(value: string): string {
-    return renderInlineMarkdown(value);
+  /** See {@link handlerArg}: a JS string argument, safe inside an event-handler attribute. */
+  private jsArg(value: string | undefined): string {
+    return handlerArg(value);
   }
 
-  private clientRenderInlineMarkdownSource(): string {
-    return clientRenderInlineMarkdownSource();
+  private renderInlineMarkdown(value: string): string {
+    return renderInlineMarkdown(value);
   }
 
   private buildTemplateFileUrl(component: Component): string | undefined {
