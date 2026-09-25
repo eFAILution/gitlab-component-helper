@@ -9,7 +9,7 @@ import type { HoverContext } from './hoverContentBuilder';
 import { containsGitLabVariables } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
-import { escapeHtml, renderInlineMarkdown } from '../webview/inlineMarkdown';
+import { escapeHtml, handlerArg, renderInlineMarkdown } from '../webview/inlineMarkdown';
 import { serializeForScript } from '../webview/scriptData';
 import { generateComponentText } from './componentBrowserGenerate';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
@@ -748,13 +748,16 @@ export class ComponentBrowserProvider {
     const hasErrors = Object.keys(cacheErrors).length > 0;
 
     // Prepare version data as a safe JSON string
+    // Null-prototype maps: component names and versions are publisher-controlled, and `__proto__` is a legal template
+    // file name and git tag. On a plain object, `acc['__proto__'][v] = …` would write to Object.prototype in the
+    // extension host.
     const versionData = componentGroups.reduce<Record<string, Record<string, ComponentVersion>>>((acc, source) => {
       if (source.projects && Array.isArray(source.projects)) {
         source.projects.forEach(project => {
           if (project.components && Array.isArray(project.components)) {
             project.components.forEach(component => {
-              if (!acc[component.name]) {
-                acc[component.name] = {};
+              if (!Object.prototype.hasOwnProperty.call(acc, component.name)) {
+                acc[component.name] = Object.create(null) as Record<string, ComponentVersion>;
               }
               if (component.versions && Array.isArray(component.versions)) {
                 component.versions.forEach(version => {
@@ -766,7 +769,7 @@ export class ComponentBrowserProvider {
         });
       }
       return acc;
-    }, {});
+    }, Object.create(null) as Record<string, Record<string, ComponentVersion>>);
 
     const versionDataJson = serializeForScript(versionData);
 
@@ -802,34 +805,35 @@ export class ComponentBrowserProvider {
             '<p class="no-components">No components found in this project</p>' :
             components.map(component => {
               const componentKey = `${component.name}-${component.sourcePath}`;
+              const initialVersion = component.defaultVersion || component.availableVersions[0];
               const hasVersions = component.availableVersions && component.availableVersions.length > 0;
 
               return `
-              <div class="component-card" data-name="${component.name}" data-description="${this.escapeHtml(component.description || '')}" data-component-name="${component.name}" data-project-id="${projectId}" data-source-path="${component.sourcePath}" data-gitlab-instance="${component.gitlabInstance}" id="component-${componentKey}">
+              <div class="component-card" data-name="${this.escapeHtml(component.name)}" data-description="${this.escapeHtml(component.description || '')}" data-component-name="${this.escapeHtml(component.name)}" data-project-id="${projectId}" data-source-path="${this.escapeHtml(component.sourcePath)}" data-gitlab-instance="${this.escapeHtml(component.gitlabInstance)}" id="component-${this.escapeHtml(componentKey)}">
                 <div class="component-header">
                   <span class="component-title">
-                    ${component.name}
+                    ${this.escapeHtml(component.name)}
                     ${hasVersions && component.availableVersions.length > 1 ? `<span class="version-badge">${component.availableVersions.length} versions</span>` : ''}
                   </span>
-                  <div class="component-actions" id="actions-${componentKey}">
+                  <div class="component-actions" id="actions-${this.escapeHtml(componentKey)}">
                     ${hasVersions ? `
                       ${component.availableVersions.length > 1 ? `
-                        <select class="version-dropdown" onchange="updateComponentVersion('${component.name}', this.value, '${projectId}')" oncontextmenu="showContextMenu(event, '${component.name}', this.value, '${projectId}')">
+                        <select class="version-dropdown" onchange="updateComponentVersion(${this.jsArg(component.name)}, this.value, ${this.jsArg(projectId)})" oncontextmenu="showContextMenu(event, ${this.jsArg(component.name)}, this.value, ${this.jsArg(projectId)})">
                           ${this.renderVersionOptions(component)}
                         </select>
-                      ` : `<span class="single-version">${component.availableVersions[0] || 'latest'}</span>`}
-                      <button onclick="viewDetailsById('${component.name}', '${component.defaultVersion || component.availableVersions[0]}', '${projectId}')">Details</button>
-                      <button onclick="insertComponentById('${component.name}', '${component.defaultVersion || component.availableVersions[0]}', '${projectId}')">Insert</button>
+                      ` : `<span class="single-version">${this.escapeHtml(component.availableVersions[0] || 'latest')}</span>`}
+                      <button data-role="details" onclick="viewDetailsById(${this.jsArg(component.name)}, ${this.jsArg(initialVersion)})">Details</button>
+                      <button data-role="insert" onclick="insertComponentById(${this.jsArg(component.name)}, ${this.jsArg(initialVersion)})">Insert</button>
                     ` : `
-                      <button class="load-versions-btn" onclick="loadComponentVersions('${component.name}', '${component.sourcePath}', '${component.gitlabInstance}', '${projectId}')">Load Versions</button>
-                      <span class="loading-versions" id="loading-${componentKey}" style="display: none;">Loading...</span>
+                      <button class="load-versions-btn" onclick="loadComponentVersions(${this.jsArg(component.name)}, ${this.jsArg(component.sourcePath)}, ${this.jsArg(component.gitlabInstance)}, ${this.jsArg(projectId)})">Load Versions</button>
+                      <span class="loading-versions" id="loading-${this.escapeHtml(componentKey)}" style="display: none;">Loading...</span>
                     `}
                   </div>
                 </div>
-                <div class="component-description" id="desc-${component.name}-${projectId}">${this.renderInlineMarkdown(component.description || '')}</div>
+                <div class="component-description" id="desc-${this.escapeHtml(component.name)}-${projectId}">${this.renderInlineMarkdown(component.description || '')}</div>
                 ${hasVersions && component.availableVersions.length > 1 ? `
-                  <div class="version-info" id="version-info-${component.name}-${projectId}">
-                    <small>Default version: ${component.defaultVersion}</small>
+                  <div class="version-info" id="version-info-${this.escapeHtml(component.name)}-${projectId}">
+                    <small>Default version: ${this.escapeHtml(component.defaultVersion)}</small>
                   </div>
                 ` : ''}
               </div>
@@ -840,8 +844,8 @@ export class ComponentBrowserProvider {
             <div class="project-group">
               <div class="project-header" onclick="toggleProject('${projectId}')">
                 <span class="project-icon" id="project-icon-${projectId}">${project.isExpanded ? '▼' : '▶'}</span>
-                <span class="project-title">${project.name} (${components.length})</span>
-                <span class="project-path">${project.gitlabInstance}/${project.path}</span>
+                <span class="project-title">${this.escapeHtml(project.name)} (${components.length})</span>
+                <span class="project-path">${this.escapeHtml(project.gitlabInstance)}/${this.escapeHtml(project.path)}</span>
               </div>
               <div class="project-content" id="project-content-${projectId}" style="display: ${project.isExpanded ? 'block' : 'none'}">
                 ${componentsHtml}
@@ -854,7 +858,7 @@ export class ComponentBrowserProvider {
           <div class="source-group">
             <div class="source-header" onclick="toggleSource('${sourceId}')">
               <span class="source-icon" id="source-icon-${sourceId}">${source.isExpanded ? '▼' : '▶'}</span>
-              <span class="source-title">${source.source} (${source.projects?.length || 0} projects, ${source.totalComponents || 0} components)</span>
+              <span class="source-title">${this.escapeHtml(source.source)} (${source.projects?.length || 0} projects, ${source.totalComponents || 0} components)</span>
             </div>
             <div class="source-content" id="source-content-${sourceId}" style="display: ${source.isExpanded ? 'block' : 'none'}">
               ${projectsHtml}
@@ -983,12 +987,12 @@ export class ComponentBrowserProvider {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Component: ${component.name}</title>
+        <title>Component: ${this.escapeHtml(component.name)}</title>
         ${cspMetaTag(webview.cspSource, nonce)}
         <link rel="stylesheet" href="${styleUri}">
       </head>
       <body>
-        <h1 id="componentName">${component.name}</h1>
+        <h1 id="componentName">${this.escapeHtml(component.name)}</h1>
 
         <div class="description" id="componentDescription">
           ${this.renderInlineMarkdown(component.description || '')}
@@ -997,15 +1001,15 @@ export class ComponentBrowserProvider {
         <div id="componentContext" class="metadata ${hasContext ? '' : 'is-hidden'}">
           <div><strong>Context</strong></div>
           <div id="componentSummaryRow" class="${headerSummary ? '' : 'is-hidden'}">
-            <strong>Summary:</strong> <span id="componentSummary">${headerSummary || ''}</span>
+            <strong>Summary:</strong> <span id="componentSummary">${this.escapeHtml(headerSummary || '')}</span>
           </div>
           <div id="componentUsageRow" class="${headerUsage ? '' : 'is-hidden'}">
-            <strong>Usage:</strong> <span id="componentUsage">${headerUsage || ''}</span>
+            <strong>Usage:</strong> <span id="componentUsage">${this.escapeHtml(headerUsage || '')}</span>
           </div>
           <div id="componentNotesRow" class="${headerNotes.length > 0 ? '' : 'is-hidden'}">
             <strong>Notes:</strong>
             <ul id="componentNotes">
-              ${headerNotes.map((note: string) => '<li>' + note + '</li>').join('')}
+              ${headerNotes.map((note: string) => `<li>${this.escapeHtml(note)}</li>`).join('')}
             </ul>
           </div>
         </div>
@@ -1019,8 +1023,8 @@ export class ComponentBrowserProvider {
         </div>
 
         <div class="metadata">
-          <div><strong>Source:</strong> <span id="componentSource">${component.source}</span></div>
-          <div><strong>GitLab Instance:</strong> <span id="componentInstance">${component.gitlabInstance || 'gitlab.com'}</span></div>
+          <div><strong>Source:</strong> <span id="componentSource">${this.escapeHtml(component.source || '')}</span></div>
+          <div><strong>GitLab Instance:</strong> <span id="componentInstance">${this.escapeHtml(component.gitlabInstance || 'gitlab.com')}</span></div>
           <div class="version-control">
             <strong>Version:</strong>
             <select id="versionSelect" data-action="onVersionChange">
@@ -1041,7 +1045,7 @@ export class ComponentBrowserProvider {
           ${safeDocUrl ?
             `<div><strong>Project URL:</strong> <a href="#" data-action="openDocumentation" id="componentDocUrl">${this.escapeHtml(safeDocUrl)}</a></div>` : ''}
           ${component.url ?
-            `<div><strong>Component URL:</strong> <code id="componentUrl">${component.url}</code></div>` : ''}
+            `<div><strong>Component URL:</strong> <code id="componentUrl">${this.escapeHtml(component.url)}</code></div>` : ''}
           ${safeTemplateUrl ?
             `<div><strong>Template File:</strong> <a href="#" data-action="openTemplateFile" id="templateFileUrl">${this.escapeHtml(safeTemplateUrl)}</a></div>` : ''}
         </div>
@@ -1063,19 +1067,19 @@ export class ComponentBrowserProvider {
                 <div class="parameter">
                   <div class="parameter-content">
                     <div>
-                      <span class="parameter-name">${param.name}</span>
+                      <span class="parameter-name">${this.escapeHtml(param.name)}</span>
                       <span class="${param.required ? 'parameter-required' : 'parameter-optional'}">
                         (${param.required ? 'required' : 'optional'})
                       </span>
                     </div>
-                    <div>${param.description || `Parameter: ${param.name}`}</div>
-                    <div><strong>Type:</strong> ${param.type || 'string'}</div>
+                    <div>${this.escapeHtml(param.description || `Parameter: ${param.name}`)}</div>
+                    <div><strong>Type:</strong> ${this.escapeHtml(param.type || 'string')}</div>
                     ${param.default !== undefined ?
-                      `<div><strong>Default:</strong> <span class="parameter-default">${param.default}</span></div>` : ''}
+                      `<div><strong>Default:</strong> <span class="parameter-default">${this.escapeHtml(String(param.default))}</span></div>` : ''}
                   </div>
                   <div class="parameter-checkbox">
-                    <input type="checkbox" id="input-${param.name}" class="input-checkbox" data-action="updateInputSelection" data-param-name="${param.name}">
-                    <label for="input-${param.name}">Insert</label>
+                    <input type="checkbox" id="input-${this.escapeHtml(param.name)}" class="input-checkbox" data-action="updateInputSelection" data-param-name="${this.escapeHtml(param.name)}">
+                    <label for="input-${this.escapeHtml(param.name)}">Insert</label>
                   </div>
                 </div>
               `).join('')}
@@ -1137,6 +1141,11 @@ export class ComponentBrowserProvider {
 
   private escapeHtml(value: string): string {
     return escapeHtml(value);
+  }
+
+  /** See {@link handlerArg}: a JS string argument, safe inside an event-handler attribute. */
+  private jsArg(value: string | undefined): string {
+    return handlerArg(value);
   }
 
   private renderInlineMarkdown(value: string): string {

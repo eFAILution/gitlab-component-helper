@@ -64,6 +64,64 @@ function isVersionData(value: unknown): value is Record<string, Record<string, V
     && Object.values(value).every(entry => typeof entry === 'object' && entry !== null);
 }
 
+/**
+ * Property names that reach `Object.prototype` instead of creating an own key. Component names and version strings are
+ * set by whoever publishes the component, and `__proto__` is both a legal file name and a legal git tag.
+ */
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
+ * Record one version of a component, refusing keys that would write through to `Object.prototype`.
+ *
+ * @returns Whether the entry was stored.
+ */
+function storeVersion(componentName: string, version: string, entry: VersionEntry): boolean {
+  if (UNSAFE_KEYS.has(componentName) || UNSAFE_KEYS.has(version)) {
+    console.warn('Ignoring a component or version with a reserved name', componentName, version);
+    return false;
+  }
+  if (!Object.prototype.hasOwnProperty.call(window.componentVersionData, componentName)) {
+    window.componentVersionData[componentName] = Object.create(null) as Record<string, VersionEntry>;
+  }
+  window.componentVersionData[componentName][version] = entry;
+  return true;
+}
+
+/** A card's control, found by the `data-role` both the server and this script put on it. */
+function cardControl(componentName: string, projectId: string, role: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(
+    `[data-component-name="${CSS.escape(componentName)}"][data-project-id="${CSS.escape(projectId)}"] [data-role="${role}"]`
+  );
+}
+
+/**
+ * Build the Details and Insert buttons for a component at a version.
+ *
+ * Built as elements with listeners rather than as markup with `onclick` text: the component name and version are set
+ * by whoever publishes the component, and git accepts quotes and angle brackets in a tag name, so interpolating them
+ * into HTML or into a handler's JavaScript lets a tag run code in this panel.
+ */
+function actionButtons(componentName: string, version: string): HTMLButtonElement[] {
+  const details = document.createElement('button');
+  details.textContent = 'Details';
+  details.dataset.role = 'details';
+  details.onclick = () => viewDetailsById(componentName, version);
+
+  const insert = document.createElement('button');
+  insert.textContent = 'Insert';
+  insert.dataset.role = 'insert';
+  insert.onclick = () => insertComponentById(componentName, version);
+
+  return [details, insert];
+}
+
+/** A `<small>` holding plain text, for the version line under a component's description. */
+function smallText(text: string): HTMLElement {
+  const small = document.createElement('small');
+  small.textContent = text;
+  return small;
+}
+
 function toggleError(errorId: string): void {
   const errorDiv = document.getElementById(errorId);
   if (!errorDiv) {
@@ -118,7 +176,7 @@ function loadComponentVersions(
 ): void {
   const componentKey = `${componentName}-${sourcePath}`;
   const loadingElement = document.getElementById(`loading-${componentKey}`);
-  const loadButton = document.querySelector<HTMLElement>(`#component-${componentKey} .load-versions-btn`);
+  const loadButton = document.getElementById(`component-${componentKey}`)?.querySelector<HTMLElement>('.load-versions-btn');
   if (loadingElement) {
     loadingElement.style.display = 'inline';
   }
@@ -149,15 +207,12 @@ function handleVersionsLoaded(message: {
   const { componentName, sourcePath, versions, defaultVersion } = message;
   const componentKey = `${componentName}-${sourcePath}`;
 
-  if (!window.componentVersionData[componentName]) {
-    window.componentVersionData[componentName] = {};
-  }
   versions.forEach(v => {
-    window.componentVersionData[componentName][v] = {
+    storeVersion(componentName, v, {
       version: v,
       sourcePath,
       gitlabInstance: message.gitlabInstance || 'gitlab.com',
-    };
+    });
   });
 
   const componentCard = document.getElementById(`component-${componentKey}`);
@@ -165,7 +220,7 @@ function handleVersionsLoaded(message: {
     return;
   }
 
-  const projectId = componentCard.getAttribute('data-project-id');
+  const projectId = componentCard.getAttribute('data-project-id') || '';
   const actionsDiv = document.getElementById(`actions-${componentKey}`);
   if (actionsDiv) {
     if (versions.length > 1) {
@@ -173,10 +228,9 @@ function handleVersionsLoaded(message: {
       // versionLabels map (full tag → stripped {version}) so we display the short form while keeping the
       // full tag as the option value (the inserted ref).
       const labels = message.versionLabels || {};
-      // Build the dropdown shell + buttons as markup, then append options via the DOM so the untrusted
-      // version strings (tag names can contain <, >, &) are never interpolated into HTML.
-      actionsDiv.innerHTML = '<select class="version-dropdown" onchange="updateComponentVersion(&#39;' + componentName + '&#39;, this.value, &#39;' + projectId + '&#39;)"></select><button onclick="viewDetailsById(&#39;' + componentName + '&#39;, &#39;' + defaultVersion + '&#39;, &#39;' + projectId + '&#39;)">Details</button><button onclick="insertComponentById(&#39;' + componentName + '&#39;, &#39;' + defaultVersion + '&#39;, &#39;' + projectId + '&#39;)">Insert</button>';
-      const select = actionsDiv.querySelector('.version-dropdown');
+      const select = document.createElement('select');
+      select.className = 'version-dropdown';
+      select.onchange = () => updateComponentVersion(componentName, select.value, projectId);
       versions.forEach(v => {
         const option = document.createElement('option');
         option.value = v;
@@ -184,20 +238,24 @@ function handleVersionsLoaded(message: {
         if (v === defaultVersion) {
           option.selected = true;
         }
-        select?.appendChild(option);
+        select.appendChild(option);
       });
+      actionsDiv.replaceChildren(select, ...actionButtons(componentName, defaultVersion));
 
       const descElement = document.getElementById(`desc-${componentName}-${projectId}`);
       if (descElement && !document.getElementById(`version-info-${componentName}-${projectId}`)) {
         const versionInfo = document.createElement('div');
         versionInfo.className = 'version-info';
         versionInfo.id = `version-info-${componentName}-${projectId}`;
-        versionInfo.innerHTML = '<small>Default version: ' + defaultVersion + '</small>';
+        versionInfo.replaceChildren(smallText(`Default version: ${defaultVersion}`));
         descElement.parentNode?.insertBefore(versionInfo, descElement.nextSibling);
       }
     } else {
       const singleVersion = versions[0] || 'latest';
-      actionsDiv.innerHTML = '<span class="single-version">' + singleVersion + '</span><button onclick="viewDetailsById(&#39;' + componentName + '&#39;, &#39;' + singleVersion + '&#39;, &#39;' + projectId + '&#39;)">Details</button><button onclick="insertComponentById(&#39;' + componentName + '&#39;, &#39;' + singleVersion + '&#39;, &#39;' + projectId + '&#39;)">Insert</button>';
+      const label = document.createElement('span');
+      label.className = 'single-version';
+      label.textContent = singleVersion;
+      actionsDiv.replaceChildren(label, ...actionButtons(componentName, singleVersion));
     }
   }
 
@@ -224,7 +282,18 @@ function handleVersionsError(message: {
 
   const actionsDiv = document.getElementById(`actions-${componentKey}`);
   if (actionsDiv) {
-    actionsDiv.innerHTML = '<span class="error-message" style="color: red; font-size: 0.9em;">Failed to load versions</span><button class="load-versions-btn" onclick="loadComponentVersions(&#39;' + message.componentName + '&#39;, &#39;' + message.sourcePath + '&#39;, &#39;' + (message.gitlabInstance || 'gitlab.com') + '&#39;, &#39;&#39;)">Retry</button>';
+    const failure = document.createElement('span');
+    failure.className = 'error-message';
+    failure.textContent = 'Failed to load versions';
+
+    const retry = document.createElement('button');
+    retry.className = 'load-versions-btn';
+    retry.textContent = 'Retry';
+    retry.onclick = () => loadComponentVersions(
+      message.componentName, message.sourcePath, message.gitlabInstance || 'gitlab.com', ''
+    );
+
+    actionsDiv.replaceChildren(failure, retry);
   }
 }
 
@@ -236,7 +305,7 @@ function updateComponentVersion(componentName: string, selectedVersion: string, 
 
     // Try to fetch this version dynamically
     const componentCard = document.querySelector(
-      `[data-component-name="${componentName}"][data-project-id="${projectId}"]`
+      `[data-component-name="${CSS.escape(componentName)}"][data-project-id="${CSS.escape(projectId)}"]`
     );
     if (componentCard) {
       const sourcePath = componentCard.getAttribute('data-source-path');
@@ -246,7 +315,7 @@ function updateComponentVersion(componentName: string, selectedVersion: string, 
         // Show loading state
         const versionInfoElement = document.getElementById(`version-info-${componentName}-${projectId}`);
         if (versionInfoElement) {
-          versionInfoElement.innerHTML = '<small>Loading version ' + selectedVersion + '...</small>';
+          versionInfoElement.replaceChildren(smallText(`Loading version ${selectedVersion}...`));
         }
 
         vscode.postMessage({
@@ -270,28 +339,19 @@ function updateComponentVersion(componentName: string, selectedVersion: string, 
 
   const versionInfoElement = document.getElementById(`version-info-${componentName}-${projectId}`);
   if (versionInfoElement) {
-    versionInfoElement.innerHTML = '<small>Selected version: ' + selectedVersion + '</small>';
+    versionInfoElement.replaceChildren(smallText(`Selected version: ${selectedVersion}`));
   }
 
-  // The selected version lives in the buttons' `onclick` text, so it is rewritten rather than stored.
-  const insertButton = document.querySelector(
-    `[data-component-name="${componentName}"][data-project-id="${projectId}"] button[onclick*="insertComponent"]`
-  );
+  // Repoint the buttons with listeners. Rewriting their `onclick` text would put the version string inside
+  // JavaScript source, which a tag containing a quote breaks out of.
+  const insertButton = cardControl(componentName, projectId, 'insert');
   if (insertButton) {
-    insertButton.setAttribute(
-      'onclick',
-      `insertComponentById("${componentName}", "${selectedVersion}", "${projectId}")`
-    );
+    insertButton.onclick = () => insertComponentById(componentName, selectedVersion);
   }
 
-  const detailsButton = document.querySelector(
-    `[data-component-name="${componentName}"][data-project-id="${projectId}"] button[onclick*="viewDetails"]`
-  );
+  const detailsButton = cardControl(componentName, projectId, 'details');
   if (detailsButton) {
-    detailsButton.setAttribute(
-      'onclick',
-      `viewDetailsById("${componentName}", "${selectedVersion}", "${projectId}")`
-    );
+    detailsButton.onclick = () => viewDetailsById(componentName, selectedVersion);
   }
 }
 
@@ -476,10 +536,9 @@ window.addEventListener('message', event => {
     return;
   }
 
-  if (!window.componentVersionData[message.componentName]) {
-    window.componentVersionData[message.componentName] = {};
+  if (!storeVersion(message.componentName, message.version, message.component)) {
+    return;
   }
-  window.componentVersionData[message.componentName][message.version] = message.component;
 
   const projectId = findProjectIdForComponent(message.componentName);
   if (projectId) {
@@ -489,7 +548,7 @@ window.addEventListener('message', event => {
 
 /** Find which project a component card belongs to, for messages that carry only a component name. */
 function findProjectIdForComponent(componentName: string): string | null {
-  const componentCard = document.querySelector(`[data-component-name="${componentName}"]`);
+  const componentCard = document.querySelector(`[data-component-name="${CSS.escape(componentName)}"]`);
   return componentCard ? componentCard.getAttribute('data-project-id') : null;
 }
 
