@@ -22,7 +22,6 @@ export const DEFAULT_COMPONENT_TYPE_PROJECT = 'project' as const;
 export const DEFAULT_COMPONENT_TYPE_GROUP = 'group' as const;
 
 // Source Names
-export const SOURCE_LOCAL = 'Local' as const;
 export const SOURCE_COMPONENTS_PREFIX = 'Components from' as const;
 
 // Parameter Types

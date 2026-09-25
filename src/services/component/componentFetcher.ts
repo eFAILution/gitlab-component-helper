@@ -15,7 +15,7 @@ import { isAuthError } from '../../errors';
 import { TokenManager } from './tokenManager';
 import { UrlParser } from './urlParser';
 import {
-  backfillParameterOptions,
+  backfillParameterSpecDetail,
   buildCatalogComponents,
   fetchAllTemplateFiles,
 } from './componentFetcherTemplates';
@@ -195,9 +195,10 @@ export class ComponentFetcher {
             if (extractedParameters.length === 0 && templateResult?.parameters?.length) {
               extractedParameters = templateResult.parameters;
             } else if (templateResult?.parameters?.length) {
-              // The catalog API doesn't return per-input `options`, so backfill them from the parsed template
-              // (matched by name) onto the catalog-derived parameters we're keeping.
-              extractedParameters = backfillParameterOptions(extractedParameters, templateResult.parameters);
+              // The catalog API describes inputs more loosely than the spec does — no `options`, and often no
+              // `type` — so backfill that detail from the parsed template (matched by name) onto the
+              // catalog-derived parameters we're keeping.
+              extractedParameters = backfillParameterSpecDetail(extractedParameters, templateResult.parameters);
             }
 
             // If the catalog omits a description, fall back to the component's README.

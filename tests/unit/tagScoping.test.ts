@@ -9,12 +9,7 @@
  */
 
 import * as assert from 'node:assert/strict';
-import {
-  compileTagTemplate,
-  scopeTagsToComponent,
-  stripTagPrefix,
-  DEFAULT_TAG_PATTERN,
-} from '../../src/services/component/tagScoping';
+import { DEFAULT_TAG_PATTERN, buildVersionLabels, compileTagTemplate, scopeTagsToComponent, stripTagPrefix } from '../../src/services/component/tagScoping';
 import { selectDefaultVersion } from '../../src/providers/componentBrowserTransform';
 
 // A realistic mixed tag list for a tag-per-component monorepo using the default `{name}-{version}` convention.
@@ -134,5 +129,30 @@ suite('selectDefaultVersion — monorepo', () => {
     // Full prefixed tags fail the bare-semver regex, so the reduce keeps the first element.
     const chosen = selectDefaultVersion(scoped, 'main');
     assert.strictEqual(chosen, scoped[0]);
+  });
+});
+
+suite('buildVersionLabels', () => {
+  const versions = ['deploy-1.0.0', 'deploy-1.1.0', 'main'];
+
+  test('maps each tag to its stripped {version} for a monorepo source', () => {
+    assert.deepStrictEqual(buildVersionLabels(versions, 'deploy', '{name}-{version}'), {
+      'deploy-1.0.0': '1.0.0',
+      'deploy-1.1.0': '1.1.0',
+      // A tag that doesn't match the template (a branch name) keeps its full form.
+      main: 'main',
+    });
+  });
+
+  test('returns undefined with no template, so the webview falls back to the full tag', () => {
+    assert.strictEqual(buildVersionLabels(versions, 'deploy', undefined), undefined);
+  });
+
+  test('returns undefined when the template does not compile', () => {
+    assert.strictEqual(buildVersionLabels(versions, 'deploy', 'no-tokens-here'), undefined);
+  });
+
+  test('returns an empty map rather than undefined for an empty version list', () => {
+    assert.deepStrictEqual(buildVersionLabels([], 'deploy', '{name}-{version}'), {});
   });
 });

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { getComponentService } from '../component';
 import { Logger } from '../../utils/logger';
 import { getPerformanceMonitor } from '../../utils/performanceMonitor';
-import { CachedComponent, PersistentCacheData } from '../../types/cache';
+import { CachedComponent, PersistentCacheData, VersionLookupComponent } from '../../types/cache';
 import { ComponentSource } from '../../types/api';
 import { reconcileComponentSource } from './sourceReconciliation';
 import { ProjectCache } from './projectCache';
@@ -12,13 +12,12 @@ import { sameCachedComponent } from '../../utils/cachedComponentEquality';
 import {
   CACHE_LOCATION_GLOBAL_STATE,
   CACHE_LOCATION_MEMORY_ONLY,
-  SOURCE_LOCAL,
   DEFAULT_COMPONENT_TYPE_PROJECT,
 } from '../../constants/cache';
 
 // Bump when the on-disk CachedComponent shape changes. Mismatched caches are discarded on load so the new fields can be
 // populated by re-fetching.
-const CURRENT_CACHE_VERSION = '1.3.0';
+const CURRENT_CACHE_VERSION = '1.4.0';
 
 /**
  * ComponentCacheManager - Main orchestrator for component caching
@@ -265,11 +264,9 @@ export class ComponentCacheManager implements vscode.Disposable {
 
       if (sources.length === 0) {
         this.logger.debug(
-          '[ComponentCache] No sources configured, using local components',
+          '[ComponentCache] No sources configured, leaving the cache empty',
           'ComponentCache'
         );
-        // Add local fallback components
-        newComponents.push(...this.getLocalFallbackComponents());
       } else {
         // Fetch from all configured sources in parallel
         const fetchPromises = sources.map(async source => {
@@ -424,9 +421,12 @@ export class ComponentCacheManager implements vscode.Disposable {
   }
 
   /**
-   * Fetch and cache all available versions for a specific component
+   * Fetch and cache all available versions for a specific component.
+   *
+   * Takes the narrow {@link VersionLookupComponent} rather than a full cache entry: the lookup is driven entirely by
+   * the project coordinates, so callers holding a partial component (the details panel) can use it too.
    */
-  public async fetchComponentVersions(component: CachedComponent): Promise<string[]> {
+  public async fetchComponentVersions(component: VersionLookupComponent): Promise<string[]> {
     try {
       const sortedVersions = await this.versionCache.fetchComponentVersions(component);
 
@@ -801,61 +801,6 @@ export class ComponentCacheManager implements vscode.Disposable {
     };
   }
 
-  /**
-   * Get local fallback components when no sources are configured
-   */
-  private getLocalFallbackComponents(): CachedComponent[] {
-    return [
-      {
-        name: 'deploy-component',
-        description: 'Deploys the application to the specified environment',
-        parameters: [
-          {
-            name: 'environment',
-            description: 'Target environment for deployment',
-            required: true,
-            type: 'string',
-          },
-          {
-            name: 'version',
-            description: 'Version to deploy',
-            required: false,
-            type: 'string',
-            default: 'latest',
-          },
-        ],
-        source: SOURCE_LOCAL,
-        sourcePath: 'local',
-        gitlabInstance: 'local',
-        version: 'latest',
-        url: 'deploy-component',
-      },
-      {
-        name: 'test-component',
-        description: 'Runs tests for the application',
-        parameters: [
-          {
-            name: 'test_type',
-            description: 'Type of tests to run',
-            required: true,
-            type: 'string',
-          },
-          {
-            name: 'coverage',
-            description: 'Whether to collect coverage information',
-            required: false,
-            type: 'boolean',
-            default: false,
-          },
-        ],
-        source: SOURCE_LOCAL,
-        sourcePath: 'local',
-        gitlabInstance: 'local',
-        version: 'latest',
-        url: 'test-component',
-      },
-    ];
-  }
 }
 
 // Singleton instance

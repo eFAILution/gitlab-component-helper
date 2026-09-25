@@ -3,8 +3,8 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { Component, ComponentParameter } from './componentDetector';
 import { Logger } from '../utils/logger';
-import { isYamlNode } from '../utils/yamlParser';
-import type { ParameterDefault } from '../types/git-component';
+import { isYamlNode, GITLAB_CI_SCHEMA } from '../utils/yamlParser';
+import { isParameterDefault } from '../parsers/parameterDefaultShape';
 
 // Pure parser helpers live in their own module so the unit suite can exercise them under plain Node. Re-exported
 // here so existing callers (e.g. validationProvider) keep their import path.
@@ -142,20 +142,6 @@ function isOptionsList(value: unknown): value is Array<string | number | boolean
   );
 }
 
-/** Narrow an unknown value to {@link ParameterDefault} (the union accepted by `inputs.*.default`). */
-function isParameterDefault(value: unknown): value is ParameterDefault {
-  if (value === null) return true;
-  const t = typeof value;
-  if (t === 'string' || t === 'number' || t === 'boolean') return true;
-  if (Array.isArray(value)) {
-    return value.every(v => {
-      const vt = typeof v;
-      return vt === 'string' || vt === 'number' || vt === 'boolean';
-    });
-  }
-  return false;
-}
-
 /**
  * Read the text content of a local include target, preferring the open editor buffer over the on-disk file.
  *
@@ -229,7 +215,7 @@ export async function resolveLocalIncludeOutcome(
   }
   let docs: unknown[];
   try {
-    docs = yaml.loadAll(text);
+    docs = yaml.loadAll(text, { schema: GITLAB_CI_SCHEMA });
   } catch (err) {
     logger.debug(`[LocalComponentResolver] Failed to parse ${uri.fsPath}: ${err}`, 'LocalComponentResolver');
     // The file exists and was read; it just isn't valid YAML. That's a plain include we can't extract inputs from,

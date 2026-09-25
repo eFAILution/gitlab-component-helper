@@ -5,8 +5,8 @@ import { CompletionProvider } from './providers/completionProvider';
 import { ComponentDocumentLinkProvider } from './providers/documentLinkProvider';
 import { ComponentBrowserProvider } from './providers/componentBrowserProvider';
 import { detectIncludeComponent, Component } from './providers/componentDetector';
-import { stripTagPrefix } from './services/component/tagScoping';
 import { getComponentCacheManager, ComponentCacheManager } from './services/cache/componentCacheManager';
+import { assetRoots } from './webview/webviewHtml';
 import { Logger } from './utils/logger';
 import { ValidationProvider } from './providers/validationProvider';
 import type { CachedComponent } from './types/cache';
@@ -16,22 +16,6 @@ import type { HoverContext } from './providers/hoverContentBuilder';
 /** Component payload passed to the `detachHover` command. Adds the hover-builder's location context. */
 type DetachableComponent = Component & { _hoverContext?: HoverContext };
 
-/**
- * Type-guard narrowing a `Component`-shaped value to one that also satisfies `CachedComponent`.
- *
- * @param component  A `Component` (typically `activeComponent` in the detach-hover panel) that may
- *                   or may not have been enriched with cache details.
- * @returns          `true` if all `CachedComponent` required fields are present and string-typed,
- *                   narrowing `component` to `Component & CachedComponent` in the truthy branch.
- *                   `false` if any field is missing.
- */
-function isCachedComponentShape(component: Component): component is Component & CachedComponent {
-  return typeof component.source === 'string'
-    && typeof component.sourcePath === 'string'
-    && typeof component.gitlabInstance === 'string'
-    && typeof component.version === 'string'
-    && typeof component.url === 'string';
-}
 import { getPerformanceMonitor } from './utils/performanceMonitor';
 import { isGitLabCIFile, invalidateFileGlobsCache } from './utils/gitlabCiFileMatcher';
 
@@ -212,8 +196,7 @@ export function activate(context: vscode.ExtensionContext) {
         const confirmation = await vscode.window.showWarningMessage(
           'Are you sure you want to reset the cache? This will clear all cached components and force them to be re-downloaded.',
           { modal: true },
-          'Reset Cache',
-          'Cancel'
+          'Reset Cache'
         );
 
         if (confirmation === 'Reset Cache') {
@@ -335,7 +318,7 @@ export function activate(context: vscode.ExtensionContext) {
           {
             enableScripts: true,
             retainContextWhenHidden: true,
-            localResourceRoots: []
+            localResourceRoots: assetRoots(context.extensionUri)
           }
         );
 
@@ -420,7 +403,7 @@ export function activate(context: vscode.ExtensionContext) {
         // (cacheManager.fetchComponentVersions) scopes to this component instead of returning every repo tag.
         const enriched = await componentBrowser.lookupComponentDetails(activeComponent);
         activeComponent = { ...activeComponent, ...enriched };
-        panel.webview.html = componentBrowser.getComponentDetailsHtml(activeComponent);
+        panel.webview.html = componentBrowser.getComponentDetailsHtml(panel.webview, activeComponent);
 
         // Ensure the original editor remains focused after panel creation
         setTimeout(async () => {
@@ -430,145 +413,7 @@ export function activate(context: vscode.ExtensionContext) {
           });
         }, PANEL_FOCUS_DELAY_MS);
 
-        // Handle messages from the detached webview
-        panel.webview.onDidReceiveMessage(async (message) => {
-          switch (message.command) {
-            case 'insertComponent':
-              try {
-                // Ensure the original editor is active and focused
-                await vscode.window.showTextDocument(originalEditor.document, originalEditor.viewColumn);
-
-                // Wait a brief moment for the editor to fully activate
-                await new Promise(resolve => setTimeout(resolve, PANEL_FOCUS_DELAY_MS));
-
-                // Verify we have the correct active editor
-                const currentEditor = vscode.window.activeTextEditor;
-                if (!currentEditor || currentEditor.document.uri.toString() !== originalEditor.document.uri.toString()) {
-                  vscode.window.showErrorMessage('Could not activate the original editor');
-                  return;
-                }
-
-                // Handle different insertion options
-                const { version, includeInputs, selectedInputs } = message;
-
-                // Update component version if specified
-                if (version && version !== activeComponent.version) {
-                  if (!activeComponent.sourcePath || !activeComponent.gitlabInstance) {
-                    vscode.window.showErrorMessage(`Cannot fetch version: component is missing source path or GitLab instance.`);
-                    return;
-                  }
-                  const updatedComponent = await cacheManager.fetchSpecificVersion(
-                    activeComponent.name,
-                    activeComponent.sourcePath,
-                    activeComponent.gitlabInstance,
-                    version
-                  );
-                  if (updatedComponent) {
-                    if (activeComponent._hoverContext) {
-                      await componentBrowser.editExistingComponentFromDetached(
-                        updatedComponent,
-                        activeComponent._hoverContext.documentUri,
-                        activeComponent._hoverContext.position,
-                        includeInputs || false,
-                        selectedInputs || []
-                      );
-                    } else {
-                      await componentBrowser.insertComponentFromDetached(
-                        updatedComponent,
-                        includeInputs || false,
-                        selectedInputs || []
-                      );
-                    }
-                  } else {
-                    vscode.window.showErrorMessage(`Failed to fetch version ${version} of component ${activeComponent.name}`);
-                  }
-                } else {
-                  if (activeComponent._hoverContext) {
-                    await componentBrowser.editExistingComponentFromDetached(
-                      activeComponent,
-                      activeComponent._hoverContext.documentUri,
-                      activeComponent._hoverContext.position,
-                      includeInputs || false,
-                      selectedInputs || []
-                    );
-                  } else {
-                    await componentBrowser.insertComponentFromDetached(
-                      activeComponent,
-                      includeInputs || false,
-                      selectedInputs || []
-                    );
-                  }
-                }
-
-                // Close the panel after successful insertion/edit
-                panel.dispose();
-              } catch (error) {
-                logger.error(`[Extension] Error inserting component from detached view: ${error}`, 'Extension');
-                vscode.window.showErrorMessage(`Error inserting component: ${error}`);
-              }
-              break;
-            case 'fetchVersions':
-              try {
-                if (!isCachedComponentShape(activeComponent)) {
-                  throw new Error('Component is missing required fields (source, sourcePath, gitlabInstance, version) for version lookup.');
-                }
-                const versions = await cacheManager.fetchComponentVersions(activeComponent);
-                // For a monorepo source, map each full tag to its stripped {version} so the dropdown shows short
-                // labels while keeping the full tag as the option value (the inserted ref).
-                let versionLabels: Record<string, string> | undefined;
-                if (activeComponent.tagPattern) {
-                  versionLabels = {};
-                  for (const v of versions) {
-                    versionLabels[v] = stripTagPrefix(v, activeComponent.name, activeComponent.tagPattern);
-                  }
-                }
-                panel.webview.postMessage({
-                  command: 'versionsLoaded',
-                  versions: versions,
-                  versionLabels,
-                  currentVersion: activeComponent.version
-                });
-              } catch (error) {
-                panel.webview.postMessage({
-                  command: 'versionsError',
-                  error: error instanceof Error ? error.message : String(error)
-                });
-              }
-              break;
-            case 'versionChanged':
-              try {
-                const { selectedVersion } = message;
-                if (!activeComponent.sourcePath || !activeComponent.gitlabInstance) {
-                  vscode.window.showErrorMessage(`Cannot change version: component is missing source path or GitLab instance.`);
-                  return;
-                }
-                const updatedComponent = await cacheManager.fetchSpecificVersion(
-                  activeComponent.name,
-                  activeComponent.sourcePath,
-                  activeComponent.gitlabInstance,
-                  selectedVersion
-                );
-                if (updatedComponent) {
-                  activeComponent = updatedComponent;
-                  panel.webview.postMessage({
-                    command: 'componentDetailsUpdated',
-                    component: updatedComponent
-                  });
-                } else {
-                  panel.webview.postMessage({
-                    command: 'versionChangeError',
-                    error: `Failed to fetch details for version ${selectedVersion}`
-                  });
-                }
-              } catch (error) {
-                panel.webview.postMessage({
-                  command: 'versionChangeError',
-                  error: error instanceof Error ? error.message : String(error)
-                });
-              }
-              break;
-          }
-        });
+        componentBrowser.registerDetailsPanelMessageHandler(panel, activeComponent, { detachedFrom: originalEditor });
       })
     );
 

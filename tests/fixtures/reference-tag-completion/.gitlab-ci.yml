@@ -1,0 +1,14 @@
+include:
+  - local: "reference-tag-completion/templates/deploy.yml"
+    inputs:
+      job_name: deploy
+
+.pnpm-setup:
+  script:
+    - corepack enable
+    - pnpm install --frozen-lockfile
+
+test:
+  script:
+    - !reference [.pnpm-setup, script]
+    - pnpm test
