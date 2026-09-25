@@ -81,10 +81,10 @@ const INLINE_CODE: Record<string, RegExp> = {
  */
 const NOT_YET_EXTRACTED: Record<string, Record<string, number>> = {
   getComponentBrowserHtml: {
-    'inline <script>': 1,
-    'inline <style>': 1,
-    'inline event handler': 21,
-    'inline style attribute': 5,
+    'inline <script>': 0,
+    'inline <style>': 0,
+    'inline event handler': 15,
+    'inline style attribute': 4,
   },
 };
 
