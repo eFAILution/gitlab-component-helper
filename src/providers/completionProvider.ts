@@ -5,6 +5,7 @@ import { getVariableCompletions, containsGitLabVariables, expandComponentUrl } f
 import { Logger } from '../utils/logger';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { resolveLocalComponent } from './localComponentResolver';
+import { resolvePreferredVersion } from './versionPreferences';
 import { findCompletionInputContextAtLine, buildInputInsertValue, renderOptionValue, allowedValuesFor } from './completionInputContext';
 import type { ComponentParameter } from '../types/git-component';
 import type { CachedComponent } from '../types/cache';
@@ -241,32 +242,12 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       return 'main';
     }
 
-    // Check user preferences first
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-    const defaultVersions = config.get<Record<string, string>>('defaultVersions', {});
-    const alwaysLatest = config.get<string[]>('alwaysUseLatest', []);
-
-    if (alwaysLatest.includes(componentName)) {
-      // User wants always latest - find the highest semantic version or fall back to main
-      const semanticVersions = availableVersions.filter(v => v.match(/^\d+\.\d+\.\d+$/));
-      if (semanticVersions.length > 0) {
-        // Sort semantic versions in descending order
-        semanticVersions.sort((a, b) => {
-          const aParts = a.split('.').map(Number);
-          const bParts = b.split('.').map(Number);
-          for (let i = 0; i < 3; i++) {
-            if (aParts[i] !== bParts[i]) {
-              return bParts[i] - aParts[i];
-            }
-          }
-          return 0;
-        });
-        return semanticVersions[0];
-      }
-    }
-
-    if (defaultVersions[componentName] && availableVersions.includes(defaultVersions[componentName])) {
-      return defaultVersions[componentName];
+    const preferences = vscode.workspace
+      .getConfiguration('gitlabComponentHelper')
+      .get<Record<string, string>>('versionPreferences', {});
+    const preferred = resolvePreferredVersion(preferences[componentName], availableVersions);
+    if (preferred) {
+      return preferred;
     }
 
     // Default priority: main > master > highest semantic version > first available

@@ -80,6 +80,8 @@ When a component is pinned to a semantic version (`X.Y.Z`), the extension checks
 - An outdated pin gets a **warning squiggle** on the version ref, with an **Update to `X.Y.Z`** quick fix (`Ctrl+.`).
 - **GitLab CI: Update All Component Versions to Latest** rewrites every outdated pin in the active file at once.
 
+Completion picks a default version for each component too: `main` or `master` if the project has one, else the highest semantic version. To pin a different choice, open the Component Browser, load a component's versions, and right-click the version dropdown — **Set as Default Version** makes completion offer that version, and **Always Use Latest** makes it offer the highest stable version available when you insert, even if `main` exists. This choice is stored in `gitlabComponentHelper.versionPreferences` in your user settings, where `~latest` marks Always Use Latest, and can be edited or cleared there.
+
 Only clean `X.Y.Z` pins (optionally `v`-prefixed) are checked — floating refs (`main`, `latest`, `~latest`), partial pins (`1`, `1.2`), and commit SHAs are left untouched, and pre-release tags are never suggested. The check runs when a CI file is opened or saved (not on every keystroke) and reuses the version cache. Toggle it with `gitlabComponentHelper.versionCheck.enabled`; soften the squiggle to an informational underline with `gitlabComponentHelper.versionCheck.severity`.
 
 ---
@@ -158,6 +160,7 @@ Add these to `settings.json` or configure them via the Settings UI.
 | `gitlabComponentHelper.additionalFileGlobs` | array | `[]` | Extra GitLab CI file globs, merged with the built-in defaults. Patterns match at any depth (e.g. `ci/*.yml` → `**/ci/*.yml`). |
 | `gitlabComponentHelper.versionCheck.enabled` | boolean | `true` | Warn when a component pinned to a semantic version has a newer stable release. Checked on open/save. |
 | `gitlabComponentHelper.versionCheck.severity` | string | `warning` | Severity of the "newer version available" diagnostic. One of `warning`, `information`. |
+| `gitlabComponentHelper.versionPreferences` | object | `{}` | Version completion offers per component, keyed by component name: a version, or `~latest` for the highest stable version. Set via **Set as Default Version** or **Always Use Latest** in the Component Browser. |
 | `gitlabComponentHelper.cacheTime` | number | `3600` | Component cache lifetime, in seconds. |
 | `gitlabComponentHelper.logLevel` | string | `ERROR` | Logging level. One of `DEBUG`, `INFO`, `WARN`, `ERROR`. |
 | `gitlabComponentHelper.autoShowOutput` | boolean | `false` | Show the output channel automatically when the log level changes. |

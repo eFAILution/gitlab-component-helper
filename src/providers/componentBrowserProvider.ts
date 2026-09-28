@@ -14,6 +14,7 @@ import { serializeForScript } from '../webview/scriptData';
 import { generateComponentText } from './componentBrowserGenerate';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
 import { transformCachedComponentsToGroups } from './componentBrowserTransform';
+import { LATEST_VERSION_PREFERENCE, withVersionPreference } from './versionPreferences';
 import { buildVersionLabels, compileTagTemplate, stripTagPrefix } from '../services/component/tagScoping';
 import { assetRoots, assetUri, createNonce, cspMetaTag } from '../webview/webviewHtml';
 import { safeHttpUrl } from '../webview/safeUrl';
@@ -1457,15 +1458,10 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
 
   private async setDefaultVersion(componentName: string, version: string) {
     try {
-      // Store user preference for this component's default version
-      const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-      const defaultVersions = config.get<Record<string, string>>('defaultVersions', {});
-      defaultVersions[componentName] = version;
-      await config.update('defaultVersions', defaultVersions, vscode.ConfigurationTarget.Global);
+      await this.writeVersionPreference(componentName, version);
 
       this.logger.debug(`[ComponentBrowser] Set default version for ${componentName} to ${version}`, 'ComponentBrowser');
       vscode.window.showInformationMessage(`Set default version for ${componentName} to ${version}`);
-
     } catch (error) {
       this.logger.error(`[ComponentBrowser] Error setting default version: ${error}`, 'ComponentBrowser');
       vscode.window.showErrorMessage(`Error setting default version: ${error}`);
@@ -1474,28 +1470,26 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
 
   private async setAlwaysUseLatest(componentName: string) {
     try {
-      // Store user preference to always use latest for this component
-      const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-      const alwaysLatest = config.get<string[]>('alwaysUseLatest', []);
-      if (!alwaysLatest.includes(componentName)) {
-        alwaysLatest.push(componentName);
-        await config.update('alwaysUseLatest', alwaysLatest, vscode.ConfigurationTarget.Global);
-      }
-
-      // Remove any specific default version for this component
-      const defaultVersions = config.get<Record<string, string>>('defaultVersions', {});
-      if (defaultVersions[componentName]) {
-        delete defaultVersions[componentName];
-        await config.update('defaultVersions', defaultVersions, vscode.ConfigurationTarget.Global);
-      }
+      await this.writeVersionPreference(componentName, LATEST_VERSION_PREFERENCE);
 
       this.logger.debug(`[ComponentBrowser] Set ${componentName} to always use latest version`, 'ComponentBrowser');
       vscode.window.showInformationMessage(`${componentName} will now always use the latest version`);
-
     } catch (error) {
       this.logger.error(`[ComponentBrowser] Error setting always use latest: ${error}`, 'ComponentBrowser');
       vscode.window.showErrorMessage(`Error setting always use latest: ${error}`);
     }
+  }
+
+  /**
+   * Save one component's version preference to user settings.
+   *
+   * @param componentName The component to set the preference for.
+   * @param value A version to pin, or `LATEST_VERSION_PREFERENCE`.
+   */
+  private async writeVersionPreference(componentName: string, value: string) {
+    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+    const preferences = withVersionPreference(config.get<Record<string, string>>('versionPreferences', {}), componentName, value);
+    await config.update('versionPreferences', preferences, vscode.ConfigurationTarget.Global);
   }
 
   private async handleComponentExpand(componentName: string, projectId: string) {
