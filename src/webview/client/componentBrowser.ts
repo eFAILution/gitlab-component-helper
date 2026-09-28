@@ -22,6 +22,8 @@ interface ContextMenuData {
   componentName: string;
   version: string;
   projectId: string;
+  sourcePath: string;
+  gitlabInstance: string;
 }
 
 const vscode = acquireVsCodeApi();
@@ -232,6 +234,7 @@ function handleVersionsLoaded(message: {
       const select = document.createElement('select');
       select.className = 'version-dropdown';
       select.onchange = () => updateComponentVersion(componentName, select.value, projectId);
+      select.oncontextmenu = event => showContextMenu(event, componentName, select.value, projectId);
       versions.forEach(v => {
         const option = document.createElement('option');
         option.value = v;
@@ -477,16 +480,27 @@ function revealGroups(
   }
 }
 
+/**
+ * Open the version dropdown's context menu for a component.
+ *
+ * @param event The right-click on the dropdown. Its component card supplies the project path and instance.
+ * @param componentName The component the dropdown belongs to.
+ * @param version The version selected in the dropdown.
+ * @param projectId The DOM id of the component's project group.
+ */
 function showContextMenu(event: MouseEvent, componentName: string, version: string, projectId: string): void {
   event.preventDefault();
   event.stopPropagation();
 
   const contextMenu = document.getElementById('contextMenu');
-  if (!contextMenu) {
+  const card = event.target instanceof Element ? event.target.closest('.component-card') : null;
+  const sourcePath = card?.getAttribute('data-source-path');
+  const gitlabInstance = card?.getAttribute('data-gitlab-instance');
+  if (!contextMenu || !sourcePath || !gitlabInstance) {
     return;
   }
 
-  contextMenuData = { componentName, version, projectId };
+  contextMenuData = { componentName, version, projectId, sourcePath, gitlabInstance };
   contextMenu.style.display = 'block';
   contextMenu.style.left = `${event.pageX}px`;
   contextMenu.style.top = `${event.pageY}px`;
@@ -506,7 +520,8 @@ function setAsDefaultVersion(): void {
       command: 'setDefaultVersion',
       componentName: contextMenuData.componentName,
       version: contextMenuData.version,
-      projectId: contextMenuData.projectId,
+      sourcePath: contextMenuData.sourcePath,
+      gitlabInstance: contextMenuData.gitlabInstance,
     });
   }
   hideContextMenu();
@@ -517,7 +532,8 @@ function alwaysUseLatest(): void {
     vscode.postMessage({
       command: 'setAlwaysUseLatest',
       componentName: contextMenuData.componentName,
-      projectId: contextMenuData.projectId,
+      sourcePath: contextMenuData.sourcePath,
+      gitlabInstance: contextMenuData.gitlabInstance,
     });
   }
   hideContextMenu();

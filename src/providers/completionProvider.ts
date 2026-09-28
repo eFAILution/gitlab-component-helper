@@ -5,7 +5,8 @@ import { getVariableCompletions, containsGitLabVariables, expandComponentUrl } f
 import { Logger } from '../utils/logger';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { resolveLocalComponent } from './localComponentResolver';
-import { resolvePreferredVersion } from './versionPreferences';
+import { chooseComponentVersion } from './componentBrowserTransform';
+import { readVersionPreferences } from './versionPreferenceSettings';
 import { findCompletionInputContextAtLine, buildInputInsertValue, renderOptionValue, allowedValuesFor } from './completionInputContext';
 import type { ComponentParameter } from '../types/git-component';
 import type { CachedComponent } from '../types/cache';
@@ -142,8 +143,13 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       const filteredVersions = availableVersions.filter(version =>
         version.toLowerCase().includes(currentVersionInput.toLowerCase())
       );
+      // The version the component would be inserted with leads the list, so the 10-entry cap never drops it.
+      const chosenVersion = chooseComponentVersion(availableVersions, targetComponent, readVersionPreferences(), 'main');
+      const orderedVersions = filteredVersions.includes(chosenVersion)
+        ? [chosenVersion, ...filteredVersions.filter(version => version !== chosenVersion)]
+        : filteredVersions;
       // Limit to top 10 versions to avoid overwhelming the user
-      const versionsToShow = filteredVersions.slice(0, 10);
+      const versionsToShow = orderedVersions.slice(0, 10);
       for (const version of versionsToShow) {
         const item = new vscode.CompletionItem(version, vscode.CompletionItemKind.Reference);
         item.detail = `Version ${version}`;
@@ -151,12 +157,15 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
         // Set the insertion text to just the version (since we're after the @)
         item.insertText = version;
         // Add sort priority based on version type
-        if (version === 'main' || version === 'master') {
-          item.sortText = '0' + version; // High priority for main branches
+        if (version === chosenVersion) {
+          item.sortText = '0' + version;
+          item.preselect = true;
+        } else if (version === 'main' || version === 'master') {
+          item.sortText = '1' + version; // High priority for main branches
         } else if (version.match(/^\d+\.\d+\.\d+$/)) {
-          item.sortText = '1' + version; // Medium priority for semantic versions
+          item.sortText = '2' + version; // Medium priority for semantic versions
         } else {
-          item.sortText = '2' + version; // Lower priority for other versions
+          item.sortText = '3' + version; // Lower priority for other versions
         }
         completionItems.push(item);
       }
@@ -181,6 +190,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
 
     const completionItems: vscode.CompletionItem[] = [];
     const seenComponents = new Set<string>();
+    const preferences = readVersionPreferences();
 
     for (const component of components) {
       // Create a unique key for each component to avoid duplicates
@@ -191,12 +201,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       }
       seenComponents.add(componentKey);
 
-      // Get the best version to suggest
-      let bestVersion = 'main';
-      if (component.availableVersions && component.availableVersions.length > 0) {
-        // Find the best version using priority logic
-        bestVersion = this.getBestVersionForComponent(component.availableVersions, component.name);
-      }
+      const bestVersion = chooseComponentVersion(component.availableVersions ?? [], component, preferences, 'main');
 
       let componentUrl = `https://${component.gitlabInstance}/${component.sourcePath}/${component.name}`;
 
@@ -232,49 +237,6 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
 
     this.logger.debug(`[CompletionProvider] Created ${completionItems.length} component completion items`, 'CompletionProvider');
     return completionItems;
-  }
-
-  /**
-   * Get the best version for a component based on priority logic
-   */
-  private getBestVersionForComponent(availableVersions: string[], componentName: string): string {
-    if (!availableVersions || availableVersions.length === 0) {
-      return 'main';
-    }
-
-    const preferences = vscode.workspace
-      .getConfiguration('gitlabComponentHelper')
-      .get<Record<string, string>>('versionPreferences', {});
-    const preferred = resolvePreferredVersion(preferences[componentName], availableVersions);
-    if (preferred) {
-      return preferred;
-    }
-
-    // Default priority: main > master > highest semantic version > first available
-    if (availableVersions.includes('main')) {
-      return 'main';
-    }
-    if (availableVersions.includes('master')) {
-      return 'master';
-    }
-
-    // Find highest semantic version
-    const semanticVersions = availableVersions.filter(v => v.match(/^\d+\.\d+\.\d+$/));
-    if (semanticVersions.length > 0) {
-      semanticVersions.sort((a, b) => {
-        const aParts = a.split('.').map(Number);
-        const bParts = b.split('.').map(Number);
-        for (let i = 0; i < 3; i++) {
-          if (aParts[i] !== bParts[i]) {
-            return bParts[i] - aParts[i];
-          }
-        }
-        return 0;
-      });
-      return semanticVersions[0];
-    }
-
-    return availableVersions[0];
   }
 
   private provideParameterCompletions(parameters: ComponentParameter[]): vscode.CompletionItem[] {

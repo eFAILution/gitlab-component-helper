@@ -13,8 +13,9 @@ import { escapeHtml, handlerArg, renderInlineMarkdown } from '../webview/inlineM
 import { serializeForScript } from '../webview/scriptData';
 import { generateComponentText } from './componentBrowserGenerate';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
-import { transformCachedComponentsToGroups } from './componentBrowserTransform';
-import { LATEST_VERSION_PREFERENCE, withVersionPreference } from './versionPreferences';
+import { chooseComponentVersion, transformCachedComponentsToGroups } from './componentBrowserTransform';
+import { LATEST_VERSION_PREFERENCE, versionPreferenceKey } from './versionPreferences';
+import { readVersionPreferences, saveVersionPreference } from './versionPreferenceSettings';
 import { buildVersionLabels, compileTagTemplate, stripTagPrefix } from '../services/component/tagScoping';
 import { assetRoots, assetUri, createNonce, cspMetaTag } from '../webview/webviewHtml';
 import { safeHttpUrl } from '../webview/safeUrl';
@@ -144,10 +145,10 @@ export class ComponentBrowserProvider {
             await this.fetchAndCacheVersion(message.componentName, message.sourcePath, message.gitlabInstance, message.version);
             return;
           case 'setDefaultVersion':
-            await this.setDefaultVersion(message.componentName, message.version);
+            await this.setDefaultVersion(message);
             return;
           case 'setAlwaysUseLatest':
-            await this.setAlwaysUseLatest(message.componentName);
+            await this.setAlwaysUseLatest(message);
             return;
           case 'expandComponent':
             await this.handleComponentExpand(message.componentName, message.projectId);
@@ -192,8 +193,11 @@ export class ComponentBrowserProvider {
       this.logger.debug('[ComponentBrowser] Components loaded, versions will be fetched on demand', 'ComponentBrowser');
 
       // Transform cached components to component groups format
-      const allComponents = transformCachedComponentsToGroups(cachedComponents, (comp, reason) =>
-        this.logger.warn(`[ComponentBrowser] Skipping component (${reason}): ${JSON.stringify(comp)}`, 'ComponentBrowser'),
+      const allComponents = transformCachedComponentsToGroups(
+        cachedComponents,
+        (comp, reason) =>
+          this.logger.warn(`[ComponentBrowser] Skipping component (${reason}): ${JSON.stringify(comp)}`, 'ComponentBrowser'),
+        readVersionPreferences(),
       );
       const cacheErrors = Object.fromEntries(sourceErrors);
 
@@ -1456,24 +1460,45 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     }
   }
 
-  private async setDefaultVersion(componentName: string, version: string) {
-    try {
-      await this.writeVersionPreference(componentName, version);
+  /**
+   * Pin the version the user right-clicked as the one completion and the browser offer for that component.
+   *
+   * @param message The webview's `setDefaultVersion` message.
+   */
+  private async setDefaultVersion(message: unknown) {
+    const target = readPreferenceTarget(message);
+    if (!target || !hasStringField(message, 'version')) {
+      this.logger.warn('[ComponentBrowser] Ignoring malformed setDefaultVersion message', 'ComponentBrowser');
+      return;
+    }
+    const { version } = message;
 
-      this.logger.debug(`[ComponentBrowser] Set default version for ${componentName} to ${version}`, 'ComponentBrowser');
-      vscode.window.showInformationMessage(`Set default version for ${componentName} to ${version}`);
+    try {
+      const { overriddenByWorkspace } = await saveVersionPreference(versionPreferenceKey(target), version);
+      this.logger.debug(`[ComponentBrowser] Set default version for ${target.name} to ${version}`, 'ComponentBrowser');
+      this.reportPreferenceSaved(`Set default version for ${target.name} to ${version}`, overriddenByWorkspace);
     } catch (error) {
       this.logger.error(`[ComponentBrowser] Error setting default version: ${error}`, 'ComponentBrowser');
       vscode.window.showErrorMessage(`Error setting default version: ${error}`);
     }
   }
 
-  private async setAlwaysUseLatest(componentName: string) {
-    try {
-      await this.writeVersionPreference(componentName, LATEST_VERSION_PREFERENCE);
+  /**
+   * Make completion and the browser offer the latest stable version of a component.
+   *
+   * @param message The webview's `setAlwaysUseLatest` message.
+   */
+  private async setAlwaysUseLatest(message: unknown) {
+    const target = readPreferenceTarget(message);
+    if (!target) {
+      this.logger.warn('[ComponentBrowser] Ignoring malformed setAlwaysUseLatest message', 'ComponentBrowser');
+      return;
+    }
 
-      this.logger.debug(`[ComponentBrowser] Set ${componentName} to always use latest version`, 'ComponentBrowser');
-      vscode.window.showInformationMessage(`${componentName} will now always use the latest version`);
+    try {
+      const { overriddenByWorkspace } = await saveVersionPreference(versionPreferenceKey(target), LATEST_VERSION_PREFERENCE);
+      this.logger.debug(`[ComponentBrowser] Set ${target.name} to always use latest version`, 'ComponentBrowser');
+      this.reportPreferenceSaved(`${target.name} will now always use the latest version`, overriddenByWorkspace);
     } catch (error) {
       this.logger.error(`[ComponentBrowser] Error setting always use latest: ${error}`, 'ComponentBrowser');
       vscode.window.showErrorMessage(`Error setting always use latest: ${error}`);
@@ -1481,15 +1506,19 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
   }
 
   /**
-   * Save one component's version preference to user settings.
+   * Confirm a saved preference, or warn when a workspace setting overrides it.
    *
-   * @param componentName The component to set the preference for.
-   * @param value A version to pin, or `LATEST_VERSION_PREFERENCE`.
+   * @param confirmation The message to show when the preference takes effect.
+   * @param overriddenByWorkspace Whether a workspace entry for the component wins over the saved one.
    */
-  private async writeVersionPreference(componentName: string, value: string) {
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-    const preferences = withVersionPreference(config.get<Record<string, string>>('versionPreferences', {}), componentName, value);
-    await config.update('versionPreferences', preferences, vscode.ConfigurationTarget.Global);
+  private reportPreferenceSaved(confirmation: string, overriddenByWorkspace: boolean) {
+    if (overriddenByWorkspace) {
+      vscode.window.showWarningMessage(
+        `${confirmation} in user settings, but this workspace sets a different version preference for it, which takes precedence.`,
+      );
+      return;
+    }
+    vscode.window.showInformationMessage(confirmation);
   }
 
   private async handleComponentExpand(componentName: string, projectId: string) {
@@ -1560,15 +1589,13 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
       this.versionsFetched.add(componentKey);
       this.versionsLoading.delete(componentKey);
 
-      // Pick the default version. `availableVersions` is already sorted highest-priority-first (semantic versions
-      // before branches), so the first entry is the best default — except `latest`, the catalog floating tag, which
-      // wins when present.
       const availableVersions = updatedComponent.availableVersions || [];
-      let defaultVersion = updatedComponent.version || 'latest';
-
-      if (availableVersions.length > 0) {
-        defaultVersion = availableVersions.includes('latest') ? 'latest' : availableVersions[0];
-      }
+      const defaultVersion = chooseComponentVersion(
+        availableVersions,
+        updatedComponent,
+        readVersionPreferences(),
+        updatedComponent.version || 'latest',
+      );
 
       // For a monorepo source, precompute display labels (full tag → stripped {version}) server-side, since the
       // webview can't reach the template matcher. Non-monorepo sources send no labels (value == label).
@@ -1684,4 +1711,32 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
   private async parseExistingComponent(document: vscode.TextDocument, range: vscode.Range): Promise<unknown> {
     return parseExistingComponentText(document.getText(range));
   }
+}
+
+/**
+ * Does `value` have a string property `field`?
+ *
+ * @param value A message received from the webview.
+ * @param field The property to check.
+ * @returns `true` when `value[field]` is a string.
+ */
+function hasStringField<K extends string>(value: unknown, field: K): value is Record<K, string> {
+  return typeof value === 'object' && value !== null && typeof Reflect.get(value, field) === 'string';
+}
+
+/**
+ * Read which component a context-menu message is about.
+ *
+ * @param message A `setDefaultVersion` or `setAlwaysUseLatest` message from the webview.
+ * @returns The component's name, project path and instance, or `undefined` when any is missing.
+ */
+function readPreferenceTarget(message: unknown): { name: string; sourcePath: string; gitlabInstance: string } | undefined {
+  if (
+    !hasStringField(message, 'componentName') ||
+    !hasStringField(message, 'sourcePath') ||
+    !hasStringField(message, 'gitlabInstance')
+  ) {
+    return undefined;
+  }
+  return { name: message.componentName, sourcePath: message.sourcePath, gitlabInstance: message.gitlabInstance };
 }
