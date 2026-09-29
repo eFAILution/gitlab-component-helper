@@ -220,7 +220,7 @@
             "type": "string"
           },
           "default": {},
-          "markdownDescription": "Version that completion offers for a component, keyed by component name. The value is a version, or `~latest` for the highest stable version available when you insert. Set from the Component Browser by right-clicking a version dropdown and choosing **Set as Default Version** or **Always Use Latest**."
+          "markdownDescription": "Version that completion and the Component Browser offer for a component, keyed by `<instance>/<project path>/<component>`, for example `gitlab.com/components/opentofu/full-pipeline`. The value is a version, or `~latest` for the highest stable version available when you insert. Set from the Component Browser by right-clicking a version dropdown and choosing **Set as Default Version** or **Always Use Latest**."
         }
       }
     },
