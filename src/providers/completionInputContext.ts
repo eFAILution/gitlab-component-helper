@@ -7,7 +7,7 @@
 
 import { parseYaml, parseYamlDocuments, findDocumentWith, isYamlNode, type YamlNode } from '../utils/yamlParser';
 import { findIncludeLine } from '../utils/includeMatcher';
-import type { ComponentParameter } from '../types/git-component';
+import type { ComponentParameter, ParameterDefault } from '../types/git-component';
 
 /**
  * The completion slot a YAML cursor position resolves to.
@@ -325,6 +325,22 @@ export function renderOptionValue(value: string | number | boolean): string {
 }
 
 /**
+ * Render an input's `default` as the YAML text to insert for it.
+ *
+ * Arrays become flow sequences (`[a, b]`); strings are bare or double-quoted by round-trip safety; everything else
+ * (booleans, numbers, `null`) is its bare scalar form, so a `false` default inserts as `false` and not `"false"`.
+ *
+ * @param value - The declared default for the input.
+ * @returns The YAML text for that value.
+ */
+export function renderDefaultValue(value: ParameterDefault): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((v) => (typeof v === 'string' ? quoteYamlIfUnsafe(v, true) : String(v))).join(', ')}]`;
+  }
+  return typeof value === 'string' ? quoteYamlIfUnsafe(value) : String(value);
+}
+
+/**
  * Narrow a parameter default to the scalar shapes an `options:` entry can take (string/number/boolean), excluding
  * the `null` and array forms a default may also hold.
  *
@@ -336,6 +352,28 @@ function isOptionScalar(value: unknown): value is string | number | boolean {
 }
 
 /**
+ * The values an input is allowed to take, if that set is known and finite.
+ *
+ * An explicit `options:` list is used as declared. A `boolean` input has no `options:` in the spec but is still a
+ * closed two-value enum, so it yields `true, false` — conventional reading order, which is what a reader scanning
+ * the dropdown expects. A declared default is floated to the front by the caller, so it still pre-selects.
+ *
+ * Shared by both completion slots so the input-name snippet and the value-slot dropdown always agree.
+ *
+ * @param param - The input being completed.
+ * @returns The allowed values, or `undefined` when the input accepts free-form text.
+ */
+export function allowedValuesFor(param: ComponentParameter): Array<string | number | boolean> | undefined {
+  if (param.options && param.options.length > 0) {
+    return param.options;
+  }
+  if (param.type === 'boolean') {
+    return [true, false];
+  }
+  return undefined;
+}
+
+/**
  * Build the value portion of the snippet inserted after `param.name: ` when an input is accepted from completion.
  *
  * Returns a TextMate snippet body (with `${1...}` tab-stops) the caller wraps in a `vscode.SnippetString`.
@@ -343,20 +381,24 @@ function isOptionScalar(value: unknown): value is string | number | boolean {
  * Values are inserted bare where a bare YAML scalar round-trips to the same string — GitLab CI parses a bare scalar
  * by the input's declared type, so a string input is a bare scalar, not a quoted one. Strings that bare YAML would
  * reinterpret (indicators, embedded `: `/` #`, type-like tokens, etc.) are double-quoted; see {@link quoteYamlIfUnsafe}.
- * Precedence: an `options:` enum becomes a `${1|...|}` choice (with the default, if any, pre-selected first) so the
- * allowed values stay one keystroke away; otherwise an explicit `default` is rendered as the YAML it represents;
- * otherwise a type-appropriate placeholder.
+ * Precedence: an `options:` enum — or a `boolean` input, which is a closed two-value enum — becomes a `${1|...|}`
+ * choice (with the default, if any, pre-selected first) so the allowed values stay one keystroke away; otherwise an
+ * explicit `default` is rendered as the YAML it represents; otherwise a type-appropriate placeholder.
  *
  * @param param - The input parameter spec (type, optional default, optional `options` enum, requiredness).
  * @returns The snippet body to insert after `param.name: ` — a `${1|...|}` choice, a rendered value, or a `${1:...}` placeholder.
  */
 export function buildInputInsertValue(param: ComponentParameter): string {
-  if (param.options && param.options.length > 0) {
-    // Offer the allowed values (`options:`) as a choice. Entries stay unquoted so a number/boolean option isn't
+  // Includes a `boolean` input's implicit true/false. Falling through to the default-rendering branch below would
+  // pre-fill the default with no alternatives shown.
+  const options = allowedValuesFor(param);
+
+  if (options && options.length > 0) {
+    // Offer the allowed values as a choice. Entries stay unquoted so a number/boolean option isn't
     // turned into a string; string entries are quoted only when bare YAML would reinterpret them. When the input
     // also has a default, float the matching option to the front — VS Code pre-selects the first choice entry, so
     // accepting the input keeps the default while leaving the alternatives one arrow-key away.
-    const rendered = param.options.map(renderOptionValue);
+    const rendered = options.map(renderOptionValue);
     // Only a scalar default can name one of the options; a null or array default has no matching entry.
     const defaultRendered = isOptionScalar(param.default) ? renderOptionValue(param.default) : undefined;
     const ordered =
@@ -367,17 +409,11 @@ export function buildInputInsertValue(param: ComponentParameter): string {
   }
 
   if (param.default !== undefined) {
-    // Render the default as the YAML the input expects: arrays as flow sequences (`[a, b]`),
-    // strings bare-or-quoted by round-trip safety, everything else as its bare scalar form.
-    if (Array.isArray(param.default)) {
-      return `[${param.default.map((v) => (typeof v === 'string' ? quoteYamlIfUnsafe(v, true) : String(v))).join(', ')}]`;
-    }
-    return typeof param.default === 'string' ? quoteYamlIfUnsafe(param.default) : String(param.default);
+    return renderDefaultValue(param.default);
   }
 
   switch (param.type) {
-    case 'boolean':
-      return param.required ? '${1|true,false|}' : '${1|false,true|}';
+    // `boolean` is handled above as a two-value choice, with or without a default.
     case 'number':
       return '${1:0}';
     case 'integer':
