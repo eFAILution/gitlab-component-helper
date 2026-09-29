@@ -1,0 +1,187 @@
+body {
+  font-family: var(--vscode-font-family);
+  color: var(--vscode-editor-foreground);
+  padding: 20px;
+  background-color: var(--vscode-editor-background);
+}
+
+h1 {
+  border-bottom: 1px solid var(--vscode-panel-border);
+  padding-bottom: 10px;
+}
+
+.description {
+  margin-bottom: 20px;
+}
+
+.metadata {
+  background-color: var(--vscode-panel-background);
+  padding: 10px;
+  border-radius: 5px;
+  margin-bottom: 20px;
+}
+
+.metadata div {
+  margin-bottom: 5px;
+}
+
+.version-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.version-control select {
+  background-color: var(--vscode-dropdown-background);
+  color: var(--vscode-dropdown-foreground);
+  border: 1px solid var(--vscode-dropdown-border);
+  border-radius: 2px;
+  padding: 4px 8px;
+  min-width: 120px;
+}
+
+.version-loading {
+  font-size: 0.9em;
+  color: var(--vscode-disabledForeground);
+}
+
+.version-loading.version-error {
+  color: var(--vscode-errorForeground);
+}
+
+.parameters {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 5px;
+}
+
+.parameter {
+  padding: 10px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.parameter:last-child {
+  border-bottom: none;
+}
+
+.parameter-content {
+  flex: 1;
+  margin-right: 15px;
+}
+
+.parameter-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.parameter-name {
+  font-weight: bold;
+}
+
+.parameter-required {
+  color: var(--vscode-errorForeground);
+  font-size: 0.9em;
+}
+
+.parameter-optional {
+  color: var(--vscode-disabledForeground);
+  font-size: 0.9em;
+}
+
+.parameter-default {
+  font-family: monospace;
+  background-color: var(--vscode-textCodeBlock-background);
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.parameters-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.select-all-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.9em;
+}
+
+.insert-options {
+  margin-top: 20px;
+  padding: 15px;
+  background-color: var(--vscode-panel-background);
+  border-radius: 5px;
+}
+
+.insert-options h3 {
+  margin-top: 0;
+  margin-bottom: 15px;
+}
+
+.checkbox-group {
+  margin-bottom: 15px;
+}
+
+.checkbox-group label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.checkbox-group input[type="checkbox"] {
+  margin: 0;
+}
+
+button {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  padding: 8px 16px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+button:hover {
+  background-color: var(--vscode-button-hoverBackground);
+}
+
+button.secondary {
+  background-color: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+
+button.secondary:hover {
+  background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+#raw-yaml-content {
+  white-space: pre;
+  overflow-x: auto;
+  background-color: var(--vscode-textCodeBlock-background);
+  padding: 10px;
+  border-radius: 5px;
+  border: 1px solid var(--vscode-panel-border);
+}
+
+/* Visibility, carried by class rather than a `style` attribute the document's CSP would block. Rows whose content
+   is optional start hidden and are revealed as data arrives. */
+.is-hidden {
+  display: none;
+}
+
+.raw-yaml-header {
+  margin-bottom: 5px;
+}
+
+.raw-yaml-header p {
+  margin: 0;
+}

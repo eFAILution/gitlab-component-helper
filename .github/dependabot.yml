@@ -6,11 +6,18 @@
 # in osv-scanner.toml that the Argus scan honors. Do NOT add a dev-dep `ignore:` here to suppress
 # those alerts -- `ignore:` also stops the version-update PRs below, which are how dev tools stay
 # current and how a transitive fix (e.g. serialize-javascript >= 7.0.5) actually lands.
+#
+# Every ecosystem below sets `target-branch: "beta"`. Without it Dependabot opens against the default
+# branch (`main`), which is the STABLE release line: a push there auto-cuts a stable GitHub release, so a
+# routine dependency bump would ship one out of band. `main` also trails `beta` by whatever has not been
+# released yet, so bumps opened against it duplicate what already landed on `beta` and conflict on the
+# lockfile when retargeted. Everything reaches `main` through the beta -> main release PR instead.
 version: 2
 updates:
   # Maintain npm dependencies
   - package-ecosystem: "npm"
     directory: "/"
+    target-branch: "beta"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -68,6 +75,7 @@ updates:
   # Maintain GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "beta"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -85,6 +93,7 @@ updates:
   # Maintain pre-commit hooks
   - package-ecosystem: "pip"
     directory: "/"
+    target-branch: "beta"
     schedule:
       interval: "weekly"
       day: "monday"

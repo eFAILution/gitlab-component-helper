@@ -1,0 +1,23 @@
+.common-inputs: &common
+  stage:
+    description: The stage the job runs in
+    type: string
+    default: deploy
+  region:
+    description: Target region
+    type: string
+    default: eu-west-1
+
+spec:
+  inputs:
+    # `stage` and `region` arrive through the merge key. Both carry a default, so neither is required — a parser
+    # that leaves `<<` literal instead reports them missing and offers an input named `<<`.
+    <<: *common
+    job_name:
+      description: The name of the CI job
+      type: string
+---
+$[[ inputs.job_name ]]:
+  stage: $[[ inputs.stage ]]
+  script:
+    - echo "deploy to $[[ inputs.region ]]"
