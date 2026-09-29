@@ -126,12 +126,7 @@ function smallText(text: string): HTMLElement {
 }
 
 function toggleError(errorId: string): void {
-  const errorDiv = document.getElementById(errorId);
-  if (!errorDiv) {
-    return;
-  }
-  const hidden = errorDiv.style.display === 'none' || errorDiv.style.display === '';
-  errorDiv.style.display = hidden ? 'block' : 'none';
+  document.getElementById(errorId)?.classList.toggle('is-hidden');
 }
 
 function updateToken(): void {
@@ -161,8 +156,7 @@ function toggleDisclosure(contentId: string, iconId: string): void {
     return;
   }
 
-  const collapsed = content.style.display === 'none';
-  content.style.display = collapsed ? 'block' : 'none';
+  const collapsed = content.classList.toggle('is-hidden') === false;
   icon.textContent = collapsed ? '▼' : '▶';
 }
 
@@ -180,12 +174,8 @@ function loadComponentVersions(
   const componentKey = `${componentName}-${sourcePath}`;
   const loadingElement = document.getElementById(`loading-${componentKey}`);
   const loadButton = document.getElementById(`component-${componentKey}`)?.querySelector<HTMLElement>('.load-versions-btn');
-  if (loadingElement) {
-    loadingElement.style.display = 'inline';
-  }
-  if (loadButton) {
-    loadButton.style.display = 'none';
-  }
+  loadingElement?.classList.remove('is-hidden');
+  loadButton?.classList.add('is-hidden');
   vscode.postMessage({ command: 'fetchVersions', componentName, sourcePath, gitlabInstance });
 }
 
@@ -280,9 +270,7 @@ function handleVersionsError(message: {
 }): void {
   const componentKey = `${message.componentName}-${message.sourcePath}`;
   const loadingElement = document.getElementById(`loading-${componentKey}`);
-  if (loadingElement) {
-    loadingElement.style.display = 'none';
-  }
+  loadingElement?.classList.add('is-hidden');
 
   const actionsDiv = document.getElementById(`actions-${componentKey}`);
   if (actionsDiv) {
@@ -468,7 +456,7 @@ function revealGroups(
     if (hasMatch || searchText === '') {
       group.style.display = '';
       if (searchText !== '' && hasMatch) {
-        content.style.display = 'block';
+        content.classList.remove('is-hidden');
         const icon = document.getElementById(iconPrefix + id);
         if (icon) {
           icon.textContent = '▼';
@@ -565,23 +553,111 @@ function findProjectIdForComponent(componentName: string): string | null {
   return componentCard ? componentCard.getAttribute('data-project-id') : null;
 }
 
-// The document's `onclick`/`onchange` attributes resolve against the global scope, which this bundle's IIFE is not.
-Object.assign(window, {
-  alwaysUseLatest,
-  filterComponents,
-  insertComponentById,
-  loadComponentVersions,
-  refreshComponents,
-  resetCache,
-  setAsDefaultVersion,
-  showContextMenu,
-  toggleError,
-  toggleProject,
-  toggleSource,
-  updateCache,
-  updateComponentVersion,
-  updateToken,
-  viewDetailsById,
+/** The component card a control sits in, and the coordinates the card carries. */
+interface CardContext {
+  componentName: string;
+  projectId: string;
+  sourcePath: string;
+  gitlabInstance: string;
+  /** The version currently chosen in the card's dropdown, or its initial version when it has only one. */
+  version: string;
+}
+
+/**
+ * Read the coordinates of the card a control belongs to.
+ *
+ * @param control An element inside a `.component-card`.
+ * @returns       The card's context, or null when the control is not in a card.
+ */
+function cardContext(control: HTMLElement): CardContext | null {
+  const card = control.closest<HTMLElement>('.component-card');
+  if (!card) {
+    return null;
+  }
+
+  const select = card.querySelector('select.version-dropdown');
+  const single = card.querySelector('.single-version');
+  return {
+    componentName: card.dataset.componentName ?? '',
+    projectId: card.dataset.projectId ?? '',
+    sourcePath: card.dataset.sourcePath ?? '',
+    gitlabInstance: card.dataset.gitlabInstance ?? '',
+    version: select instanceof HTMLSelectElement
+      ? select.value
+      : single?.textContent?.trim() ?? '',
+  };
+}
+
+/** Actions a control requests by naming one in `data-action`, dispatched from the document. */
+const ACTIONS: Record<string, (control: HTMLElement, event: Event) => void> = {
+  filterComponents: () => filterComponents(),
+  refreshComponents: () => refreshComponents(),
+  updateCache: () => updateCache(),
+  resetCache: () => resetCache(),
+  updateToken: () => updateToken(),
+  setAsDefaultVersion: () => setAsDefaultVersion(),
+  alwaysUseLatest: () => alwaysUseLatest(),
+  toggleError: control => toggleError(control.dataset.target ?? ''),
+  toggleSource: control => toggleSource(control.dataset.target ?? ''),
+  toggleProject: control => toggleProject(control.dataset.target ?? ''),
+  loadVersions: control => {
+    const card = cardContext(control);
+    if (card) {
+      loadComponentVersions(card.componentName, card.sourcePath, card.gitlabInstance, card.projectId);
+    }
+  },
+  selectVersion: control => {
+    const card = cardContext(control);
+    if (card) {
+      updateComponentVersion(card.componentName, card.version, card.projectId);
+    }
+  },
+  viewDetails: control => {
+    const card = cardContext(control);
+    if (card) {
+      viewDetailsById(card.componentName, card.version);
+    }
+  },
+  insertComponent: control => {
+    const card = cardContext(control);
+    if (card) {
+      insertComponentById(card.componentName, card.version);
+    }
+  },
+};
+
+/**
+ * Run the action a control names, if any.
+ *
+ * Delegated from the document so controls the script rebuilds at runtime need no rebinding, and so the document
+ * carries no event-handler attributes for its CSP to block.
+ */
+function dispatch(event: Event): void {
+  if (!(event.target instanceof HTMLElement)) {
+    return;
+  }
+
+  const control = event.target.closest<HTMLElement>('[data-action]');
+  const action = control?.dataset.action;
+  if (control && action) {
+    ACTIONS[action]?.(control, event);
+  }
+}
+
+for (const eventName of ['click', 'change', 'input'] as const) {
+  document.addEventListener(eventName, dispatch);
+}
+
+document.addEventListener('contextmenu', event => {
+  if (!(event.target instanceof HTMLElement)) {
+    return;
+  }
+
+  const control = event.target.closest<HTMLElement>('select.version-dropdown');
+  const card = control && cardContext(control);
+  if (card) {
+    showContextMenu(event, card.componentName, card.version, card.projectId);
+  }
 });
 
 export {};

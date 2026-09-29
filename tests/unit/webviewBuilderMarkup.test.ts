@@ -78,15 +78,10 @@ const INLINE_CODE: Record<string, RegExp> = {
  * Builders still being moved to external assets (#288), with the most of each kind they may carry. A ceiling rather
  * than an exemption: the count can only go down, and reaching zero fails the suite until the entry is deleted, so the
  * allowance cannot outlive the work it exists for.
+ *
+ * Empty: every builder is extracted, and the strict test below covers them all.
  */
-const NOT_YET_EXTRACTED: Record<string, Record<string, number>> = {
-  getComponentBrowserHtml: {
-    'inline <script>': 0,
-    'inline <style>': 0,
-    'inline event handler': 15,
-    'inline style attribute': 4,
-  },
-};
+const NOT_YET_EXTRACTED: Record<string, Record<string, number>> = {};
 
 /** Each `get…Html` builder's source, keyed by method name. */
 function builderBodies(source: string): Map<string, string> {
