@@ -1,0 +1,77 @@
+body {
+  font-family: var(--vscode-font-family);
+  color: var(--vscode-editor-foreground);
+  padding: 20px;
+  background-color: var(--vscode-editor-background);
+}
+
+/* Per-source error list (getErrorsHtml). */
+.errors {
+  background-color: var(--vscode-inputValidation-errorBackground);
+  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  padding: 10px;
+  border-radius: 5px;
+  margin: 20px 0;
+}
+
+/* Single fatal error (getErrorHtml). */
+.error {
+  color: var(--vscode-errorForeground);
+  background-color: var(--vscode-inputValidation-errorBackground);
+  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  padding: 15px;
+  border-radius: 5px;
+  margin: 20px 0;
+}
+
+.error-item {
+  margin: 12px 0;
+}
+
+.error-item:not(:last-child) {
+  border-bottom: 1px solid var(--vscode-inputValidation-errorBorder);
+  padding-bottom: 12px;
+}
+
+.error-source {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.error-summary {
+  color: var(--vscode-errorForeground);
+}
+
+.error-raw {
+  margin: 8px 0 0;
+  padding: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font-size: 0.85em;
+  background-color: var(--vscode-textCodeBlock-background);
+  border-radius: 3px;
+}
+
+button {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  padding: 8px 16px;
+  border-radius: 2px;
+  cursor: pointer;
+  margin-right: 8px;
+}
+
+.link-button {
+  background: none;
+  color: var(--vscode-textLink-foreground);
+  padding: 0;
+  margin: 4px 0 0;
+  text-decoration: underline;
+}
+
+/* Initial state for the raw error text, which the details toggle then shows. A `style` attribute would be blocked
+   by the document's CSP. */
+.is-hidden {
+  display: none;
+}

@@ -25,9 +25,9 @@ keys:
   - providers
   - scripts
   - services
-  - templates
   - types
   - utils
+  - webview
   workflows:
   - add_configuration_option
   - add_new_command
@@ -43,6 +43,7 @@ keys:
   - BATCH_API_REQUESTS
   - CACHE_COMPONENTS
   - CENTRALIZED_ERROR_HANDLING
+  - DEPENDABOT_TARGETS_BETA
   - EXTENSION_HOST_TEST_LAYER
   - FILE_SIZE_POLICY
   - MOCHA_OVER_JEST

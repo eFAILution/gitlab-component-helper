@@ -9,6 +9,7 @@ import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { spawn } from 'child_process';
 import { resolveLocalIncludeOutcome, isUnsupportedLocalPath } from './localComponentResolver';
 import { attachDiagnosticMetadata, readDiagnosticMetadata } from './validationMetadata';
+import { renderDefaultValue } from './completionInputContext';
 import { isAuthError } from '../errors';
 import type { MissingRequiredInputMetadata } from './validationMetadata';
 import type { GitApi, GitRepository } from '../types/vscode-git';
@@ -1319,7 +1320,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             quickPick.items = (args.missingInputs || []).map(input => ({
                 label: input.name,
                 description: input.required ? 'Required' : 'Optional',
-                detail: `${input.description} (${input.type}${input.default !== undefined ? `, default: ${JSON.stringify(input.default)}` : ''})`
+                detail: `${input.description} (${input.type}${input.default !== undefined ? `, default: ${renderDefaultValue(input.default)}` : ''})`
             }));
         }
 
@@ -1361,9 +1362,10 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
                     insertText += `${indentation}${inputName}: `;
 
-                    // Add appropriate default value
+                    // Add appropriate default value, rendered as the YAML the input's type expects — `JSON.stringify`
+                    // would quote every scalar, inserting `"false"`/`"production"` where a bare scalar belongs.
                     if (inputInfo?.default !== undefined) {
-                        insertText += `${JSON.stringify(inputInfo.default)}`;
+                        insertText += renderDefaultValue(inputInfo.default);
                     } else {
                         switch (inputInfo?.type?.toLowerCase()) {
                             case 'boolean':
