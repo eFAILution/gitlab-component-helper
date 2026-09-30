@@ -2,22 +2,27 @@ import * as vscode from 'vscode';
 import { getComponentService } from '../services/component';
 import { ComponentCacheManager } from '../services/cache/componentCacheManager';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
-import type { ComponentParameter, Component } from './componentDetector';
+import type { Component } from './componentDetector';
 import { resolveServerFqdn } from './componentDetector';
 import { isVersionLookupShape } from '../services/component/versionLookupShape';
 import type { SourceGroup, ComponentGroup, ComponentVersion } from './componentBrowserTypes';
 import type { HoverContext } from './hoverContentBuilder';
 import { Logger } from '../utils/logger';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
-import { escapeHtml, renderInlineMarkdown } from '../webview/inlineMarkdown';
-import { serializeForScript } from '../webview/scriptData';
 import { generateComponentText } from './componentBrowserGenerate';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
 import { chooseComponentVersion, transformCachedComponentsToGroups } from './componentBrowserTransform';
 import { LATEST_VERSION_PREFERENCE, versionPreferenceKey } from './versionPreferences';
 import { readVersionPreferences, saveVersionPreference } from './versionPreferenceSettings';
-import { buildVersionLabels, compileTagTemplate, stripTagPrefix } from '../services/component/tagScoping';
-import { assetRoots, assetUri, createNonce, cspMetaTag } from '../webview/webviewHtml';
+import { buildVersionLabels } from '../services/component/tagScoping';
+import { assetRoots, assetUri, createNonce } from '../webview/webviewHtml';
+import { renderDocument } from '../webview/render';
+import { ComponentBrowserView } from '../webview/views/ComponentBrowserView';
+import { ComponentDetailsView } from '../webview/views/ComponentDetailsView';
+import { ErrorsView } from '../webview/views/ErrorsView';
+import { ErrorView } from '../webview/views/ErrorView';
+import { LoadingView } from '../webview/views/LoadingView';
+import { NoSourcesView } from '../webview/views/NoSourcesView';
 import { safeHttpUrl } from '../webview/safeUrl';
 
 /**
@@ -611,50 +616,7 @@ export class ComponentBrowserProvider {
   private getLoadingHtml(webview: vscode.Webview): string {
     const nonce = createNonce();
     const styleUri = assetUri(webview, this.context.extensionUri, 'styles/loading.css');
-    return `
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        ${cspMetaTag(webview.cspSource, nonce)}
-        <link rel="stylesheet" href="${styleUri}">
-        <title>GitLab CI/CD Components</title>
-      </head>
-      <body>
-        <div class="loading">
-          <div class="spinner"></div>
-          <p>Loading GitLab CI/CD components...</p>
-        </div>
-      </body>
-      </html>
-    `;
-  }
-
-  /**
-   * Render the `<option>` markup for a component's version dropdown.
-   *
-   * For a monorepo source the available versions are full prefixed tags (`<name>-1.1.0`). The option **value** is
-   * always the full tag (the ref inserted into the file); only the visible label is the prefix-stripped form.
-   * Non-monorepo components keep value == label == the version string.
-   *
-   * @param component  The component group to render options for. Its `availableVersions` become the options,
-   *                   `defaultVersion` marks the pre-selected one, and a `tagPattern` (if present) drives the
-   *                   prefix-stripped labels.
-   * @returns          The concatenated `<option>` HTML for the dropdown's contents (no wrapping `<select>`).
-   */
-  private renderVersionOptions(component: ComponentGroup): string {
-    const selectedAttr = (version: string): string =>
-      version === component.defaultVersion ? ' selected' : '';
-
-    return component.availableVersions
-      .map((version) => {
-        const label = component.tagPattern
-          ? stripTagPrefix(version, component.name, component.tagPattern)
-          : version;
-        return `<option value="${this.escapeHtml(version)}"${selectedAttr(version)}>${this.escapeHtml(label)}</option>`;
-      })
-      .join('');
+    return renderDocument(LoadingView, { cspSource: webview.cspSource, nonce, styleUri: styleUri.toString() });
   }
 
   /**
@@ -674,9 +636,8 @@ export class ComponentBrowserProvider {
     const nonce = createNonce();
     const styleUri = assetUri(webview, this.context.extensionUri, 'styles/componentBrowser.css');
     const scriptUri = assetUri(webview, this.context.extensionUri, 'client/componentBrowser.js');
-    const hasErrors = Object.keys(cacheErrors).length > 0;
 
-    // Prepare version data as a safe JSON string
+    // Version details for the client script, keyed by component name then version.
     // Null-prototype maps: component names and versions are publisher-controlled, and `__proto__` is a legal template
     // file name and git tag. On a plain object, `acc['__proto__'][v] = …` would write to Object.prototype in the
     // extension host.
@@ -700,141 +661,22 @@ export class ComponentBrowserProvider {
       return acc;
     }, Object.create(null) as Record<string, Record<string, ComponentVersion>>);
 
-    const versionDataJson = serializeForScript(versionData);
+    const cacheErrorList = Object.entries(cacheErrors).map(([source, raw]) => ({
+      source,
+      summary: this.classifySourceError(raw).summary,
+      raw,
+    }));
 
-    // Build error section HTML
-    const hasAuthError = Object.values(cacheErrors).some(error => this.classifySourceError(error).isAuth);
-    const errorSectionHtml = hasErrors ? `
-      <div class="error-section">
-        <div class="error-header">⚠️ Cache Errors</div>
-        ${Object.entries(cacheErrors).map(([source, error], index) => {
-          const { summary } = this.classifySourceError(error);
-          return `
-          <div class="error-item">
-            <div class="error-source">${this.escapeHtml(source)}</div>
-            <div class="error-summary">${this.escapeHtml(summary)}</div>
-            <button class="error-toggle" data-action="toggleError" data-target="error-${index}">Show Details</button>
-            <div class="error-details is-hidden" id="error-${index}">${this.escapeHtml(error)}</div>
-          </div>
-          `;
-        }).join('')}
-        ${hasAuthError ? '<button class="update-token-btn" data-action="updateToken">Update Token</button>' : ''}
-      </div>
-    ` : '';
-
-    // Build components HTML
-    const componentsHtml = componentGroups.length === 0 ?
-      '<p class="no-components">No components found. Click "Refresh" to load components from your configured sources.</p>' :
-      componentGroups.map(source => {
-        const sourceId = source.source.replace(/[^a-zA-Z0-9]/g, '_');
-        const projectsHtml = (source.projects && Array.isArray(source.projects) ? source.projects : []).map(project => {
-          const projectId = `${sourceId}_${project.path.replace(/[^a-zA-Z0-9]/g, '_')}`;
-          const components = project.components && Array.isArray(project.components) ? project.components : [];
-          const componentsHtml = components.length === 0 ?
-            '<p class="no-components">No components found in this project</p>' :
-            components.map(component => {
-              const componentKey = `${component.name}-${component.sourcePath}`;
-              const initialVersion = component.defaultVersion || component.availableVersions[0];
-              const hasVersions = component.availableVersions && component.availableVersions.length > 0;
-
-              return `
-              <div class="component-card" data-name="${this.escapeHtml(component.name)}" data-description="${this.escapeHtml(component.description || '')}" data-component-name="${this.escapeHtml(component.name)}" data-project-id="${projectId}" data-source-path="${this.escapeHtml(component.sourcePath)}" data-gitlab-instance="${this.escapeHtml(component.gitlabInstance)}" data-version="${this.escapeHtml(initialVersion)}" id="component-${this.escapeHtml(componentKey)}">
-                <div class="component-header">
-                  <span class="component-title">
-                    ${this.escapeHtml(component.name)}
-                    ${hasVersions && component.availableVersions.length > 1 ? `<span class="version-badge">${component.availableVersions.length} versions</span>` : ''}
-                  </span>
-                  <div class="component-actions" id="actions-${this.escapeHtml(componentKey)}">
-                    ${hasVersions ? `
-                      ${component.availableVersions.length > 1 ? `
-                        <select class="version-dropdown" data-action="selectVersion">
-                          ${this.renderVersionOptions(component)}
-                        </select>
-                      ` : `<span class="single-version">${this.escapeHtml(initialVersion || 'latest')}</span>`}
-                      <button data-role="details" data-action="viewDetails">Details</button>
-                      <button data-role="insert" data-action="insertComponent">Insert</button>
-                    ` : `
-                      <button class="load-versions-btn" data-action="loadVersions">Load Versions</button>
-                      <span class="loading-versions is-hidden" id="loading-${this.escapeHtml(componentKey)}">Loading...</span>
-                    `}
-                  </div>
-                </div>
-                <div class="component-description" id="desc-${this.escapeHtml(component.name)}-${projectId}">${this.renderInlineMarkdown(component.description || '')}</div>
-                ${hasVersions && component.availableVersions.length > 1 ? `
-                  <div class="version-info" id="version-info-${this.escapeHtml(component.name)}-${projectId}">
-                    <small>Default version: ${this.escapeHtml(component.defaultVersion)}</small>
-                  </div>
-                ` : ''}
-              </div>
-            `;
-            }).join('');
-
-          return `
-            <div class="project-group">
-              <div class="project-header" data-action="toggleProject" data-target="${projectId}">
-                <span class="project-icon" id="project-icon-${projectId}">${project.isExpanded ? '▼' : '▶'}</span>
-                <span class="project-title">${this.escapeHtml(project.name)} (${components.length})</span>
-                <span class="project-path">${this.escapeHtml(project.gitlabInstance)}/${this.escapeHtml(project.path)}</span>
-              </div>
-              <div class="project-content ${project.isExpanded ? '' : 'is-hidden'}" id="project-content-${projectId}">
-                ${componentsHtml}
-              </div>
-            </div>
-          `;
-        }).join('');
-
-        return `
-          <div class="source-group">
-            <div class="source-header" data-action="toggleSource" data-target="${sourceId}">
-              <span class="source-icon" id="source-icon-${sourceId}">${source.isExpanded ? '▼' : '▶'}</span>
-              <span class="source-title">${this.escapeHtml(source.source)} (${source.projects?.length || 0} projects, ${source.totalComponents || 0} components)</span>
-            </div>
-            <div class="source-content ${source.isExpanded ? '' : 'is-hidden'}" id="source-content-${sourceId}">
-              ${projectsHtml}
-            </div>
-          </div>
-        `;
-      }).join('');
-
-    return `
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        ${cspMetaTag(webview.cspSource, nonce)}
-        <title>GitLab CI/CD Components</title>
-        <link rel="stylesheet" href="${styleUri}">
-      </head>
-      <body>
-        <div class="header">
-          <div class="search-container">
-            <input type="text" id="search" data-action="filterComponents" placeholder="Search components...">
-          </div>
-          <div class="cache-controls">
-            <button class="refresh-btn" data-action="refreshComponents" title="Refresh components (reload current data)">🔄 Refresh</button>
-            <button class="update-cache-btn" data-action="updateCache" title="Update cache (force fetch fresh data from all sources)">📥 Update Cache</button>
-            <button class="reset-cache-btn" data-action="resetCache" title="Reset cache (clear all cached data)">🗑️ Reset Cache</button>
-          </div>
-        </div>
-
-        ${errorSectionHtml}
-
-        <div class="components-container">
-          ${componentsHtml}
-        </div>
-
-        <!-- Context Menu -->
-        <div id="contextMenu" class="context-menu">
-          <div class="context-menu-item" data-action="setAsDefaultVersion">Set as Default Version</div>
-          <div class="context-menu-item" data-action="alwaysUseLatest">Always Use Latest</div>
-        </div>
-
-        <script type="application/json" id="component-version-data" nonce="${nonce}">${versionDataJson}</script>
-        <script nonce="${nonce}" src="${scriptUri}"></script>
-      </body>
-      </html>
-    `;
+    return renderDocument(ComponentBrowserView, {
+      cspSource: webview.cspSource,
+      nonce,
+      styleUri: styleUri.toString(),
+      scriptUri: scriptUri.toString(),
+      sources: componentGroups,
+      cacheErrors: cacheErrorList,
+      hasAuthError: Object.values(cacheErrors).some(error => this.classifySourceError(error).isAuth),
+      versionData,
+    });
   }
 
   /**
@@ -897,147 +739,34 @@ export class ComponentBrowserProvider {
     const styleUri = assetUri(webview, this.context.extensionUri, 'styles/componentDetails.css');
     const scriptUri = assetUri(webview, this.context.extensionUri, 'client/componentDetails.js');
 
-    const parameters = component.parameters || [];
     const availableVersions = component.availableVersions || [component.version || 'main'];
-    const headerSummary = component.summary;
-    const headerUsage = component.usage;
-    const headerNotes = Array.isArray(component.notes) ? component.notes : [];
-    const hasContext = Boolean(headerSummary || headerUsage || headerNotes.length > 0);
-    const rawYaml = component.rawYaml || '';
-    const hasRawYaml = Boolean(rawYaml);
     const templateFileUrl = this.buildTemplateFileUrl(component);
     // `documentationUrl` is whatever the component's publisher put in its catalog entry. Validate before display; the
     // anchors carry no URL, and clicking one has the extension host open it (see `openLink`).
     const safeDocUrl = safeHttpUrl(component.documentationUrl);
     const safeTemplateUrl = safeHttpUrl(templateFileUrl);
 
-    return `
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Component: ${this.escapeHtml(component.name)}</title>
-        ${cspMetaTag(webview.cspSource, nonce)}
-        <link rel="stylesheet" href="${styleUri}">
-      </head>
-      <body>
-        <h1 id="componentName">${this.escapeHtml(component.name)}</h1>
-
-        <div class="description" id="componentDescription">
-          ${this.renderInlineMarkdown(component.description || '')}
-        </div>
-
-        <div id="componentContext" class="metadata ${hasContext ? '' : 'is-hidden'}">
-          <div><strong>Context</strong></div>
-          <div id="componentSummaryRow" class="${headerSummary ? '' : 'is-hidden'}">
-            <strong>Summary:</strong> <span id="componentSummary">${this.escapeHtml(headerSummary || '')}</span>
-          </div>
-          <div id="componentUsageRow" class="${headerUsage ? '' : 'is-hidden'}">
-            <strong>Usage:</strong> <span id="componentUsage">${this.escapeHtml(headerUsage || '')}</span>
-          </div>
-          <div id="componentNotesRow" class="${headerNotes.length > 0 ? '' : 'is-hidden'}">
-            <strong>Notes:</strong>
-            <ul id="componentNotes">
-              ${headerNotes.map((note: string) => `<li>${this.escapeHtml(note)}</li>`).join('')}
-            </ul>
-          </div>
-        </div>
-
-        <div id="rawYamlSection" class="metadata ${hasRawYaml ? '' : 'is-hidden'}">
-          <div class="parameters-header raw-yaml-header">
-            <h2>Raw YAML</h2>
-            <button class="secondary" id="toggle-raw-yaml" data-action="toggleRawYaml">Show</button>
-          </div>
-          <pre id="raw-yaml-content" class="is-hidden">${this.escapeHtml(rawYaml)}</pre>
-        </div>
-
-        <div class="metadata">
-          <div><strong>Source:</strong> <span id="componentSource">${this.escapeHtml(component.source || '')}</span></div>
-          <div><strong>GitLab Instance:</strong> <span id="componentInstance">${this.escapeHtml(component.gitlabInstance || 'gitlab.com')}</span></div>
-          <div class="version-control">
-            <strong>Version:</strong>
-            <select id="versionSelect" data-action="onVersionChange">
-              ${(() => {
-                // For monorepo tags show the template's {version} capture as the label, keeping the full tag as the
-                // option value (the ref used to fetch and insert the version).
-                const matcher = component.tagPattern
-                  ? compileTagTemplate(component.tagPattern, component.name)
-                  : null;
-                return availableVersions.map((version: string) => {
-                  const label = matcher?.extractVersion(version) ?? version;
-                  return `<option value="${this.escapeHtml(version)}" ${version === component.version ? 'selected' : ''}>${this.escapeHtml(label)}</option>`;
-                }).join('');
-              })()}
-            </select>
-            <span class="version-loading is-hidden" id="versionLoading">Loading version details...</span>
-          </div>
-          ${safeDocUrl ?
-            `<div><strong>Project URL:</strong> <a href="#" data-action="openDocumentation" id="componentDocUrl">${this.escapeHtml(safeDocUrl)}</a></div>` : ''}
-          ${component.url ?
-            `<div><strong>Component URL:</strong> <code id="componentUrl">${this.escapeHtml(component.url)}</code></div>` : ''}
-          ${safeTemplateUrl ?
-            `<div><strong>Template File:</strong> <a href="#" data-action="openTemplateFile" id="templateFileUrl">${this.escapeHtml(safeTemplateUrl)}</a></div>` : ''}
-        </div>
-
-        <div class="parameters-header">
-          <h2>Parameters</h2>
-          ${parameters.length > 0 ? `
-            <div class="select-all-group">
-              <input type="checkbox" id="selectAllInputs" data-action="toggleAllInputs">
-              <label for="selectAllInputs">Select All</label>
-            </div>
-          ` : ''}
-        </div>
-        <div id="parametersContainer">
-          ${parameters.length === 0 ?
-            '<p>No parameters documented for this component.</p>' :
-            `<div class="parameters">
-              ${parameters.map((param: ComponentParameter) => `
-                <div class="parameter">
-                  <div class="parameter-content">
-                    <div>
-                      <span class="parameter-name">${this.escapeHtml(param.name)}</span>
-                      <span class="${param.required ? 'parameter-required' : 'parameter-optional'}">
-                        (${param.required ? 'required' : 'optional'})
-                      </span>
-                    </div>
-                    <div>${this.escapeHtml(param.description || `Parameter: ${param.name}`)}</div>
-                    <div><strong>Type:</strong> ${this.escapeHtml(param.type || 'string')}</div>
-                    ${param.default !== undefined ?
-                      `<div><strong>Default:</strong> <span class="parameter-default">${this.escapeHtml(String(param.default))}</span></div>` : ''}
-                  </div>
-                  <div class="parameter-checkbox">
-                    <input type="checkbox" id="input-${this.escapeHtml(param.name)}" class="input-checkbox" data-action="updateInputSelection" data-param-name="${this.escapeHtml(param.name)}">
-                    <label for="input-${this.escapeHtml(param.name)}">Insert</label>
-                  </div>
-                </div>
-              `).join('')}
-            </div>`
-          }
-        </div>
-
-        <div class="insert-options">
-          <h3>Insert Options</h3>
-          <div class="checkbox-group">
-            <label>
-              <input type="checkbox" id="includeInputs">
-              Include input parameters with default values
-            </label>
-          </div>
-          <div class="button-group">
-            <button data-action="insertComponent">Insert Component</button>
-            <button class="secondary" data-action="refreshVersions">Refresh Versions</button>
-          </div>
-        </div>
-
-        <script type="application/json" id="details-bootstrap" nonce="${nonce}">${serializeForScript({
-          loaded: availableVersions.length > 1,
-        })}</script>
-        <script nonce="${nonce}" src="${scriptUri}"></script>
-      </body>
-      </html>
-    `;
+    return renderDocument(ComponentDetailsView, {
+      cspSource: webview.cspSource,
+      nonce,
+      styleUri: styleUri.toString(),
+      scriptUri: scriptUri.toString(),
+      name: component.name,
+      description: component.description || '',
+      summary: component.summary,
+      usage: component.usage,
+      notes: Array.isArray(component.notes) ? component.notes : [],
+      rawYaml: component.rawYaml || '',
+      source: component.source,
+      gitlabInstance: component.gitlabInstance,
+      version: component.version,
+      availableVersions,
+      tagPattern: component.tagPattern,
+      url: component.url,
+      parameters: component.parameters || [],
+      safeDocUrl,
+      safeTemplateUrl,
+    });
   }
 
   /**
@@ -1069,14 +798,6 @@ export class ComponentBrowserProvider {
     return { isAuth: true, summary };
   }
 
-  private escapeHtml(value: string): string {
-    return escapeHtml(value);
-  }
-
-  private renderInlineMarkdown(value: string): string {
-    return renderInlineMarkdown(value);
-  }
-
   private buildTemplateFileUrl(component: Component): string | undefined {
     if (!component || !component.gitlabInstance || !component.sourcePath || !component.templatePath) {
       return undefined;
@@ -1094,51 +815,12 @@ export class ComponentBrowserProvider {
     const styleUri = assetUri(webview, this.context.extensionUri, 'styles/noSources.css');
     const scriptUri = assetUri(webview, this.context.extensionUri, 'client/noSources.js');
 
-    return `
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        ${cspMetaTag(webview.cspSource, nonce)}
-        <title>GitLab CI/CD Components</title>
-        <link rel="stylesheet" href="${styleUri}">
-      </head>
-      <body>
-        <h1>Configure Component Sources</h1>
-
-        <div class="guidance">
-          <p>No GitLab component sources are configured. Please add sources in your settings.</p>
-
-          <p>Go to: <strong>Settings > Extensions > GitLab Component Helper > Component Sources</strong></p>
-
-          <p>Example configuration:</p>
-          <pre>
-  [
-    {
-      "name": "GitLab CI Examples",
-      "path": "gitlab-org/gitlab-foss",
-      "gitlabInstance": "gitlab.com"
-    },
-    {
-      "name": "OpenTofu Components",
-      "path": "components/opentofu",
-      "gitlabInstance": "gitlab.com"
-    },
-    {
-      "name": "Internal Components",
-      "path": "your-group/your-project",
-      "gitlabInstance": "gitlab.your-company.com"
-    }
-  ]</pre>
-        </div>
-
-        <button data-action="openSettings">Open Settings</button>
-
-        <script nonce="${nonce}" src="${scriptUri}"></script>
-      </body>
-      </html>
-    `;
+    return renderDocument(NoSourcesView, {
+      cspSource: webview.cspSource,
+      nonce,
+      styleUri: styleUri.toString(),
+      scriptUri: scriptUri.toString(),
+    });
   }
 
   /**
@@ -1156,50 +838,14 @@ export class ComponentBrowserProvider {
     const scriptUri = assetUri(webview, this.context.extensionUri, 'client/errors.js');
 
     const entries = Object.entries(errors);
-    const hasAuthError = entries.some(([, error]) => this.classifySourceError(error).isAuth);
-
-    const errorItemsHtml = entries.map(([source, error], index) => {
-      const { summary } = this.classifySourceError(error);
-      const detailsId = `error-details-${index}`;
-      return `
-        <div class="error-item">
-          <div class="error-source">${this.escapeHtml(source)}</div>
-          <div class="error-summary">${this.escapeHtml(summary)}</div>
-          <button class="link-button" data-action="toggleDetails" data-details-id="${detailsId}">Show details</button>
-          <pre class="error-raw is-hidden" id="${detailsId}">${this.escapeHtml(error)}</pre>
-        </div>
-      `;
-    }).join('');
-
-    return `
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        ${cspMetaTag(webview.cspSource, nonce)}
-        <title>GitLab CI/CD Components</title>
-        <link rel="stylesheet" href="${styleUri}">
-      </head>
-      <body>
-        <h1>Component Loading Errors</h1>
-
-        <p>There were errors loading components from the configured sources:</p>
-
-        <div class="errors">
-          ${errorItemsHtml}
-        </div>
-
-        <div>
-          ${hasAuthError ? '<button data-action="updateToken">Update Token</button>' : ''}
-          <button data-action="refresh">Try Again</button>
-          <button data-action="openSettings">Open Settings</button>
-        </div>
-
-        <script nonce="${nonce}" src="${scriptUri}"></script>
-      </body>
-      </html>
-    `;
+    return renderDocument(ErrorsView, {
+      cspSource: webview.cspSource,
+      nonce,
+      styleUri: styleUri.toString(),
+      scriptUri: scriptUri.toString(),
+      errors: entries.map(([source, raw]) => ({ source, summary: this.classifySourceError(raw).summary, raw })),
+      hasAuthError: entries.some(([, error]) => this.classifySourceError(error).isAuth),
+    });
   }
 
   private async showCacheStatus() {
@@ -1318,37 +964,14 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     const nonce = createNonce();
     const styleUri = assetUri(webview, this.context.extensionUri, 'styles/errors.css');
     const scriptUri = assetUri(webview, this.context.extensionUri, 'client/errors.js');
-    return `
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        ${cspMetaTag(webview.cspSource, nonce)}
-        <title>GitLab CI/CD Components - Error</title>
-        <link rel="stylesheet" href="${styleUri}">
-      </head>
-      <body>
-        <h1>Component Loading Error</h1>
-
-        <div class="error">
-          ${isAuth
-            ? `${this.escapeHtml(summary)}
-               <button class="link-button" data-action="toggleDetails" data-details-id="error-raw">Show details</button>
-               <pre class="error-raw is-hidden" id="error-raw">${this.escapeHtml(message)}</pre>`
-            : `<strong>Error:</strong> ${this.escapeHtml(message)}`}
-        </div>
-
-        <div>
-          ${isAuth ? '<button data-action="updateToken">Update Token</button>' : ''}
-          <button data-action="refresh">Try Again</button>
-          <button data-action="openSettings">Open Settings</button>
-        </div>
-
-        <script nonce="${nonce}" src="${scriptUri}"></script>
-      </body>
-      </html>
-    `;
+    return renderDocument(ErrorView, {
+      cspSource: webview.cspSource,
+      nonce,
+      styleUri: styleUri.toString(),
+      scriptUri: scriptUri.toString(),
+      message,
+      authSummary: isAuth ? summary : undefined,
+    });
   }
 
 
