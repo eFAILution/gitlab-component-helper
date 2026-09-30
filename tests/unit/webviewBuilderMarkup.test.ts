@@ -1,52 +1,190 @@
 // @mocha
 /**
- * Source-level guards over the webview HTML builders in `componentBrowserProvider.ts`.
+ * Guards over what the webview views actually render.
  *
- * The builders are private methods on a class that imports `vscode`, so the unit suite cannot call them. These read
- * the file as text instead — enough to catch markup faults that every other tool is blind to, because the HTML lives
- * inside template literals where `tsc`, eslint and stylelint all see an ordinary string.
+ * The compiler already rejects malformed markup and duplicate attributes, and eslint rejects inline styles, handlers
+ * and raw HTML in the view source. These render every view from fixtures and check the properties neither can see:
+ * that the output carries no code the CSP would block, that publisher-controlled text stays inert, and that every
+ * `data-action` the markup names has a handler in its client script — a missing one is a dead button, not an error.
  */
 
 import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { SourceGroup } from '../../src/providers/componentBrowserTypes';
+import { renderDocument } from '../../src/webview/render';
+import { ComponentBrowserView } from '../../src/webview/views/ComponentBrowserView';
+import { ComponentDetailsView } from '../../src/webview/views/ComponentDetailsView';
+import { ErrorsView } from '../../src/webview/views/ErrorsView';
+import { ErrorView } from '../../src/webview/views/ErrorView';
+import { LoadingView } from '../../src/webview/views/LoadingView';
+import { NoSourcesView } from '../../src/webview/views/NoSourcesView';
 
-const PROVIDER = path.resolve(
-  __dirname, '..', '..', 'src', 'providers', 'componentBrowserProvider.ts',
-);
+const CLIENT_DIR = path.resolve(__dirname, '..', '..', 'src', 'webview', 'client');
 
-/** Tag-open spans, e.g. `<pre class="a" id="b">`. Close tags and text between elements are ignored. */
-function openingTags(source: string): string[] {
-  return source.match(/<[a-zA-Z][^<>]*>/g) ?? [];
+/** A legal git tag and a legal component description, so a publisher can ship either. */
+const HOSTILE = `x"'><img src=x onerror=alert(1)></script><script>alert(2)</script>`;
+
+const assets = (client?: string) => ({
+  cspSource: 'vscode-webview://origin',
+  nonce: 'NONCE123',
+  styleUri: 'vscode-webview://origin/styles/view.css',
+  scriptUri: client && `vscode-webview://origin/client/${client}.js`,
+});
+
+const SOURCES: SourceGroup[] = [{
+  source: 'Main', type: 'source', isExpanded: true, totalComponents: 2, totalVersions: 3, projectCount: 1,
+  componentCount: 2,
+  projects: [{
+    name: 'proj', path: 'group/proj', gitlabInstance: 'gitlab.com', type: 'project', isExpanded: false,
+    components: [
+      {
+        name: HOSTILE, description: `**bold** ${HOSTILE}`, parameters: [], source: 'Main', sourcePath: 'group/proj',
+        gitlabInstance: 'gitlab.com', documentationUrl: '', versionCount: 2, defaultVersion: `${HOSTILE}-2`,
+        availableVersions: [`${HOSTILE}-1`, `${HOSTILE}-2`], tagPattern: '{name}-{version}',
+        versions: [{
+          version: HOSTILE, description: HOSTILE, parameters: [], documentationUrl: '', source: 'Main',
+          sourcePath: 'group/proj', gitlabInstance: 'gitlab.com',
+        }],
+      },
+      {
+        name: 'unloaded', description: '', parameters: [], source: 'Main', sourcePath: 'group/proj',
+        gitlabInstance: 'gitlab.com', documentationUrl: '', versionCount: 0, defaultVersion: '', availableVersions: [],
+        versions: [],
+      },
+    ],
+  }],
+}];
+
+const VERSION_DATA = { [HOSTILE]: { [HOSTILE]: { description: HOSTILE } } };
+
+/** Every view, rendered with fixtures that exercise each optional section, and the client script it loads. */
+const VIEWS: Record<string, { html: string; client?: string }> = {
+  loading: { html: renderDocument(LoadingView, assets()) },
+  noSources: { html: renderDocument(NoSourcesView, assets('noSources')), client: 'noSources' },
+  errors: {
+    html: renderDocument(ErrorsView, {
+      ...assets('errors'),
+      errors: [{ source: HOSTILE, summary: HOSTILE, raw: HOSTILE }],
+      hasAuthError: true,
+    }),
+    client: 'errors',
+  },
+  error: {
+    html: renderDocument(ErrorView, { ...assets('errors'), message: HOSTILE, authSummary: HOSTILE }),
+    client: 'errors',
+  },
+  browser: {
+    html: renderDocument(ComponentBrowserView, {
+      ...assets('componentBrowser'),
+      sources: SOURCES,
+      cacheErrors: [{ source: HOSTILE, summary: HOSTILE, raw: HOSTILE }],
+      hasAuthError: true,
+      versionData: VERSION_DATA,
+    }),
+    client: 'componentBrowser',
+  },
+  details: {
+    html: renderDocument(ComponentDetailsView, {
+      ...assets('componentDetails'),
+      name: HOSTILE, description: HOSTILE, summary: HOSTILE, usage: HOSTILE, notes: [HOSTILE], rawYaml: HOSTILE,
+      source: HOSTILE, gitlabInstance: HOSTILE, version: `${HOSTILE}-1`,
+      availableVersions: [`${HOSTILE}-1`, `${HOSTILE}-2`], tagPattern: '{name}-{version}', url: HOSTILE,
+      parameters: [{ name: HOSTILE, description: HOSTILE, required: true, type: HOSTILE, default: HOSTILE }],
+      safeDocUrl: 'https://docs.example.com/?a=1&b=2', safeTemplateUrl: 'https://gitlab.com/t.yml',
+    }),
+    client: 'componentDetails',
+  },
+};
+
+/** Inline code the document's nonce CSP blocks, so it would silently not run. */
+const INLINE_CODE: Record<string, RegExp> = {
+  'inline <script>': /<script(?![^>]*\bsrc=)(?![^>]*type="application\/json")[^>]*>/,
+  'inline <style>': /<style[\s>]/,
+  'inline event handler': /<[a-z][^>]*\son[a-z]+=/i,
+  'inline style attribute': /<[a-z][^>]*\sstyle=/i,
+};
+
+/** The `data-action` names a client script dispatches on, read from its source. */
+function handledActions(client: string): Set<string> {
+  const source = fs.readFileSync(path.join(CLIENT_DIR, `${client}.ts`), 'utf8');
+  const actions = new Set<string>();
+  // `const ACTIONS = { name: …, name, … }` and `const COMMANDS = { name: '…' }`: keys at the start of a line.
+  const map = source.match(/const (?:ACTIONS|COMMANDS)\b[^\n]*\{\n([\s\S]*?)\n\};/);
+  for (const [, key] of map?.[1].matchAll(/^ {2}([a-zA-Z]+)\s*[:,]/gm) ?? []) {
+    actions.add(key);
+  }
+  // Actions matched by comparison rather than through the map, e.g. `action === 'toggleDetails'`.
+  for (const [, key] of source.matchAll(/action === '([a-zA-Z]+)'/g)) {
+    actions.add(key);
+  }
+  for (const [, key] of source.matchAll(/\[data-action="([a-zA-Z]+)"\]/g)) {
+    actions.add(key);
+  }
+  return actions;
 }
 
-suite('componentBrowserProvider markup', () => {
-  const source = fs.readFileSync(PROVIDER, 'utf8');
+suite('webview views', () => {
+  for (const [name, { html, client }] of Object.entries(VIEWS)) {
+    suite(name, () => {
+      test('carries no inline code the CSP would block', () => {
+        const found = Object.entries(INLINE_CODE).filter(([, pattern]) => pattern.test(html)).map(([kind]) => kind);
+        assert.deepEqual(found, []);
+      });
 
-  test('no element carries the same attribute twice', () => {
-    // `<pre class="error-raw" id="error-raw" class="is-hidden">` shipped in the fatal-error view: HTML5 keeps the
-    // first `class` and drops the rest, so `is-hidden` never applied and the raw error rendered expanded, with the
-    // toggle's label inverted from then on. Silent in every linter, and in the one view that cannot be triggered
-    // deliberately to check by hand.
-    const offenders: string[] = [];
-    for (const tag of openingTags(source)) {
-      const seen = new Set<string>();
-      for (const [, name] of tag.matchAll(/(?:^|\s)([a-zA-Z-]+)=/g)) {
-        if (seen.has(name)) {
-          offenders.push(`${name} repeated in: ${tag.trim()}`);
+      test('sets the CSP and nonces every script', () => {
+        assert.match(html, /^<!doctype html><html lang="en"><head>/);
+        assert.match(
+          html,
+          /<meta http-equiv="Content-Security-Policy" content="default-src 'none'; [^"]*'nonce-NONCE123';"/,
+        );
+        for (const [tag] of html.matchAll(/<script[^>]*>/g)) {
+          assert.match(tag, /\snonce="NONCE123"/, tag);
         }
-        seen.add(name);
+      });
+
+      test('keeps publisher text inert', () => {
+        assert.doesNotMatch(html, /<img/);
+        assert.doesNotMatch(html, /<script>alert/);
+      });
+
+      if (client) {
+        test(`every data-action has a handler in client/${client}.ts`, () => {
+          const handled = handledActions(client);
+          const unhandled = [...new Set([...html.matchAll(/data-action="([^"]+)"/g)].map(match => match[1]))]
+            .filter(action => !handled.has(action));
+          assert.deepEqual(unhandled, [], `no handler for: ${unhandled.join(', ')}`);
+        });
       }
-    }
-    assert.deepEqual(offenders, [], `duplicate attributes:\n${offenders.join('\n')}`);
+    });
+  }
+
+  test('finds the handlers it is meant to check against', () => {
+    // If the client scripts stopped matching `handledActions`, every handler test would fail loudly, but a view whose
+    // markup lost its data-actions would pass vacuously.
+    assert.ok(handledActions('componentBrowser').size >= 10);
+    assert.ok([...VIEWS.browser.html.matchAll(/data-action=/g)].length >= 10);
+  });
+});
+
+suite('bootstrap data', () => {
+  const json = (html: string, id: string) => {
+    const match = html.match(new RegExp(`<script type="application/json" id="${id}" nonce="NONCE123">(.*?)</script>`));
+    assert.ok(match, `no #${id} block`);
+    return JSON.parse(match[1]);
+  };
+
+  test('the browser version data round-trips, including a closing script tag', () => {
+    assert.deepEqual(json(VIEWS.browser.html, 'component-version-data'), VERSION_DATA);
+  });
+
+  test('the details panel reports its version list as loaded', () => {
+    assert.deepEqual(json(VIEWS.details.html, 'details-bootstrap'), { loaded: true });
   });
 });
 
 suite('component details link handling', () => {
-  const client = fs.readFileSync(
-    path.resolve(__dirname, '..', '..', 'src', 'webview', 'client', 'componentDetails.ts'), 'utf8',
-  );
-  const provider = fs.readFileSync(PROVIDER, 'utf8');
+  const client = fs.readFileSync(path.join(CLIENT_DIR, 'componentDetails.ts'), 'utf8');
 
   test('the client script never assigns a URL to a navigable property', () => {
     // Component metadata reaches this script by message and is attacker-influenced (`documentation_url` is set by
@@ -55,91 +193,9 @@ suite('component details link handling', () => {
     assert.doesNotMatch(client, /\b(location|window\.open)\b/);
   });
 
-  test('the builder never interpolates a metadata URL into an href', () => {
-    assert.doesNotMatch(provider, /href="\$\{[^}]*(documentationUrl|templateFileUrl|safeDocUrl|safeTemplateUrl)/);
-  });
-});
-
-/**
- * Inline code a webview builder must not emit. Every one of these is invisible to `tsc`, eslint, stylelint and CodeQL
- * while it lives in a template literal, and the document's nonce CSP blocks all but the first anyway.
- *
- * A `<script type="application/json">` block is data, not code, and is how a builder hands state to its client script
- * (see `getComponentDetailsHtml`), so it is allowed.
- */
-const INLINE_CODE: Record<string, RegExp> = {
-  'inline <script>': /<script(?![^>]*\bsrc=)(?![^>]*type="application\/json")[^>]*>/g,
-  'inline <style>': /<style[\s>]/g,
-  'inline event handler': /\son[a-z]+\s*=\s*["'`]/gi,
-  'inline style attribute': /\sstyle\s*=\s*["'`]/gi,
-};
-
-/**
- * Builders still being moved to external assets (#288), with the most of each kind they may carry. A ceiling rather
- * than an exemption: the count can only go down, and reaching zero fails the suite until the entry is deleted, so the
- * allowance cannot outlive the work it exists for.
- *
- * Empty: every builder is extracted, and the strict test below covers them all.
- */
-const NOT_YET_EXTRACTED: Record<string, Record<string, number>> = {};
-
-/** Each `get…Html` builder's source, keyed by method name. */
-function builderBodies(source: string): Map<string, string> {
-  const declaration = /^ {2}(?:(?:private|public|protected)\s+)?(?:static\s+)?(?:async\s+)?([a-zA-Z_]\w*)\s*\(/gm;
-  const methods = [...source.matchAll(declaration)].map(match => ({ name: match[1], start: match.index ?? 0 }));
-  return new Map(
-    methods
-      .map((method, index) => [method.name, source.slice(method.start, methods[index + 1]?.start ?? source.length)] as const)
-      .filter(([name]) => /^get\w+Html$/.test(name)),
-  );
-}
-
-function countInlineCode(body: string): Record<string, number> {
-  return Object.fromEntries(
-    Object.entries(INLINE_CODE).map(([kind, pattern]) => [kind, (body.match(pattern) ?? []).length]),
-  );
-}
-
-suite('webview builders emit no inline code', () => {
-  const builders = builderBodies(fs.readFileSync(PROVIDER, 'utf8'));
-
-  test('finds the builders it is meant to guard', () => {
-    // If a rename or refactor moved them, every other test here would pass vacuously.
-    assert.ok(builders.size >= 6, `expected at least 6 get…Html builders, found ${[...builders.keys()].join(', ')}`);
-  });
-
-  test('extracted builders carry no inline script, style or handlers', () => {
-    const offenders = [...builders]
-      .filter(([name]) => !(name in NOT_YET_EXTRACTED))
-      .flatMap(([name, body]) => Object.entries(countInlineCode(body))
-        .filter(([, count]) => count > 0)
-        .map(([kind, count]) => `${name}: ${count} × ${kind}`));
-    assert.deepEqual(
-      offenders,
-      [],
-      `move these into src/webview/client or src/webview/styles, where they are linted and type-checked:\n${offenders.join('\n')}`,
-    );
-  });
-
-  test('builders not yet extracted only shrink', () => {
-    for (const [name, ceilings] of Object.entries(NOT_YET_EXTRACTED)) {
-      const body = builders.get(name);
-      assert.ok(body, `${name} is listed in NOT_YET_EXTRACTED but no longer exists; delete the entry`);
-
-      const counts = countInlineCode(body);
-      for (const [kind, ceiling] of Object.entries(ceilings)) {
-        assert.ok(
-          counts[kind] <= ceiling,
-          `${name} grew from ${ceiling} to ${counts[kind]} × ${kind}; put new code in an external asset instead`,
-        );
-      }
-
-      const remaining = Object.values(counts).reduce((total, count) => total + count, 0);
-      assert.notEqual(
-        remaining,
-        0,
-        `${name} is fully extracted; delete its NOT_YET_EXTRACTED entry so the strict test covers it`,
-      );
-    }
+  test('the view never puts a metadata URL in an href', () => {
+    const hrefs = [...VIEWS.details.html.matchAll(/href="([^"]*)"/g)].map(match => match[1]);
+    assert.deepEqual(hrefs.filter(href => href !== '#' && !href.startsWith('vscode-webview://')), []);
+    assert.match(VIEWS.details.html, />https:\/\/docs\.example\.com\/\?a=1&amp;b=2</);
   });
 });
