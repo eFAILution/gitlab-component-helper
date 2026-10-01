@@ -472,7 +472,8 @@ export class ComponentBrowserProvider {
                 vscode.window.showErrorMessage(`Failed to fetch version ${version} of component ${active.name}`);
                 return;
               }
-              target = updatedComponent;
+              // Keep the reference as written, so a variable form like `${CI_SERVER_FQDN}/…` survives the version swap.
+              target = { ...updatedComponent, originalUrl: active.originalUrl };
             }
 
             if (active._hoverContext) {
@@ -562,10 +563,12 @@ export class ComponentBrowserProvider {
             if (updatedComponent) {
               // Carry the hover context forward so a later insert still edits in place rather than inserting anew.
               // Carry the documentation URL forward too: a cached version carries none, and it names the project rather
-              // than a version, so dropping it would silently break the Project URL link after a version switch.
+              // than a version, so dropping it would silently break the Project URL link after a version switch. And the
+              // reference as written, so an edit keeps a variable form like `${CI_SERVER_FQDN}/…`.
               active = {
                 ...updatedComponent,
                 documentationUrl: active.documentationUrl,
+                originalUrl: active.originalUrl,
                 _hoverContext: active._hoverContext,
               };
               // Send the updated component details to the webview, with the template-file URL precomputed
@@ -1586,14 +1589,13 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     const parsedExisting = await this.parseExistingComponent(document, componentRange);
     const existingComponent = isExistingComponentShape(parsedExisting) ? parsedExisting : null;
 
-    // Generate the new component text with updated inputs
-    const serverFqdn = await resolveServerFqdn(document.uri);
+    // Generate the new component text with updated inputs. No `serverFqdn`: an edit keeps the host form the line
+    // already uses — a variable reference round-trips via `originalUrl`, a literal host stays literal.
     const newComponentText = generateComponentText(
       component,
       includeInputs,
       selectedInputs,
-      existingComponent,
-      serverFqdn
+      existingComponent
     );
 
     // Replace the existing component with the updated version

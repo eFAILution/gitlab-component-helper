@@ -3,7 +3,7 @@ import { getComponentService } from '../services/component';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
 import { containsGitLabVariables, detectGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
-import { referenceToUrl } from '../utils/componentReference';
+import { matchComponentValue, referenceToUrl } from '../utils/componentReference';
 import { Logger } from '../utils/logger';
 import { spawn } from 'child_process';
 import { detectLocalIncludeComponent } from './localComponentResolver';
@@ -160,121 +160,20 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
     return localComponent;
   }
 
-  // Extract component URL from the line - handle both absolute URLs and those with GitLab variables
-  let componentUrl = line.match(/component:\s*([^\s]+)/)?.[1];
-  if (!componentUrl) {
+  const match = matchComponentValue(line);
+  if (!match) {
     logger.debug(`[ComponentDetector] No component URL found in line`, 'ComponentDetector');
     return null;
   }
 
-  logger.debug(`[ComponentDetector] Detected component URL: ${componentUrl}`, 'ComponentDetector');
-  const originalUrl = componentUrl; // Store original URL with variables
-  if (containsGitLabVariables(componentUrl)) {
-    const variables = detectGitLabVariables(componentUrl);
-    logger.debug(`[ComponentDetector] Component URL contains GitLab variables: ${variables.join(', ')}`, 'ComponentDetector');
+  const originalUrl = match.value; // As written, variables included
+  logger.debug(`[ComponentDetector] Detected component URL: ${originalUrl}`, 'ComponentDetector');
 
-    // Try to get Git repository context first, scoped to the active file so
-    // multi-repo workspaces resolve to the correct GitLab host.
-    const gitContext = await getGitRepositoryContext(document.uri);
-    let expandedUrl: string;
-
-    if (gitContext.gitlabInstance && gitContext.projectPath) {
-      logger.debug(`[ComponentDetector] Using Git repository context: ${gitContext.gitlabInstance}/${gitContext.projectPath}`, 'ComponentDetector');
-      const context = {
-        gitlabInstance: gitContext.gitlabInstance,
-        projectPath: gitContext.projectPath,
-        serverUrl: `https://${gitContext.gitlabInstance}`,
-        commitSha: gitContext.commitSha || 'main'
-      };
-      expandedUrl = expandComponentUrl(componentUrl, context);
-      logger.debug(`[ComponentDetector] Expanded URL using Git context: ${expandedUrl}`, 'ComponentDetector');
-    } else {
-      logger.debug(`[ComponentDetector] No Git repository context found, checking for non-GitLab repository`, 'ComponentDetector');
-
-      // Check if we're in a non-GitLab repository - if so, don't fall back to component sources
-      const workspaceFolders = vscode.workspace.workspaceFolders;
-      if (workspaceFolders && workspaceFolders.length > 0) {
-        logger.debug(`[ComponentDetector] Found workspace folder: ${workspaceFolders[0].uri.fsPath}`, 'ComponentDetector');
-        const nonGitlabInfo = await detectNonGitLabRepository(workspaceFolders[0]);
-        logger.debug(`[ComponentDetector] Non-GitLab repository detection result: ${nonGitlabInfo ? JSON.stringify(nonGitlabInfo) : 'null'}`, 'ComponentDetector');
-
-        if (nonGitlabInfo) {
-          logger.debug(`[ComponentDetector] Detected non-GitLab repository (${nonGitlabInfo.hostname}), not using component sources for variable expansion`, 'ComponentDetector');
-          // Return component with unresolved variables info
-          const description = `This repository is hosted on ${nonGitlabInfo.hostname} (${nonGitlabInfo.type}). GitLab variables (${variables.join(', ')}) can only be expanded when working in a GitLab repository.`;
-
-          return {
-            name: `Component with unresolved variables`,
-            description: description,
-            parameters: [],
-            source: 'Non-GitLab Repository',
-            url: originalUrl,
-            originalUrl: originalUrl,
-            version: 'unknown',
-            gitlabInstance: 'unknown',
-            sourcePath: 'unknown'
-          };
-        }
-      }
-
-      logger.debug(`[ComponentDetector] No non-GitLab repository detected, falling back to configured component sources`, 'ComponentDetector');
-
-      // Fallback to configured component sources only if we're not in a detected non-GitLab repository
-      const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-      const componentSources = config.get<Array<{
-        name: string;
-        path: string;
-        gitlabInstance?: string;
-      }>>('componentSources', []);
-
-      if (componentSources.length > 0) {
-        const context = {
-          gitlabInstance: componentSources[0].gitlabInstance || 'gitlab.com',
-          projectPath: componentSources[0].path,
-          serverUrl: `https://${componentSources[0].gitlabInstance || 'gitlab.com'}`
-        };
-        expandedUrl = expandComponentUrl(componentUrl, context);
-        logger.debug(`[ComponentDetector] Expanded URL using configured sources: ${expandedUrl}`, 'ComponentDetector');
-      } else {
-        logger.debug(`[ComponentDetector] No Git context or component sources configured, cannot expand variables`, 'ComponentDetector');
-
-        // Check if we're in a non-GitLab repository to provide better messaging
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        let description = `Contains GitLab variables: ${variables.join(', ')}. `;
-
-        if (workspaceFolders && workspaceFolders.length > 0) {
-          const workspacePath = workspaceFolders[0].uri.fsPath;
-          const rawGitContext = await getRawGitRepositoryContext(workspacePath);
-          if (rawGitContext.gitlabInstance && !rawGitContext.gitlabInstance.includes('gitlab')) {
-            description += `This project is hosted on ${rawGitContext.gitlabInstance}, not GitLab. GitLab Component Helper requires a GitLab repository to resolve CI/CD variables.`;
-          } else {
-            description += `No GitLab repository detected. Configure component sources or ensure this is a GitLab repository to resolve these variables.`;
-          }
-        } else {
-          description += `No workspace folder found. Configure component sources to resolve GitLab variables.`;
-        }
-
-        // Return a fallback component with information about the variables
-        return {
-          name: `Component with variables`,
-          description: description,
-          parameters: [],
-          source: 'GitLab Variables',
-          url: originalUrl,
-          originalUrl: originalUrl,
-          version: 'unknown',
-          gitlabInstance: 'unknown',
-          sourcePath: 'unknown'
-        };
-      }
-    }
-
-    // Use the expanded URL for further processing
-    componentUrl = expandedUrl;
-  } else {
-    // Everything below parses with `new URL()`.
-    componentUrl = referenceToUrl(componentUrl);
+  const resolved = await createReferenceResolver(document.uri)(originalUrl);
+  if (!resolved.resolved) {
+    return describeUnresolvedReference(originalUrl, resolved.reason);
   }
+  const componentUrl = resolved.url;
 
   // First, try to find the component in our cache
   const cacheManager = getComponentCacheManager();
@@ -833,28 +732,114 @@ export async function resolveServerFqdn(forUri: vscode.Uri): Promise<string | un
 }
 
 /**
- * Turn a `component:` value as written in a file into a URL `new URL()` can parse: GitLab variables are expanded from
- * the file's git remote — the same source {@link resolveServerFqdn} uses — and `https://` is added.
- *
- * @returns The parseable URL, or `undefined` when the value uses variables the file's repository can't resolve.
+ * Build the hover placeholder for a reference whose GitLab variables couldn't be expanded, explaining why.
  */
-export async function toParseableReference(reference: string, forUri?: vscode.Uri): Promise<string | undefined> {
-  if (!containsGitLabVariables(reference)) {
-    return referenceToUrl(reference);
+async function describeUnresolvedReference(originalUrl: string, reason: UnresolvedReason): Promise<Component> {
+  const variables = detectGitLabVariables(originalUrl).join(', ');
+  const placeholder = { parameters: [], url: originalUrl, originalUrl, version: 'unknown', gitlabInstance: 'unknown', sourcePath: 'unknown' };
+
+  if (reason.kind === 'non-gitlab-repo') {
+    return {
+      ...placeholder,
+      name: 'Component with unresolved variables',
+      description: `This repository is hosted on ${reason.hostname} (${reason.type}). GitLab variables (${variables}) can only be expanded when working in a GitLab repository.`,
+      source: 'Non-GitLab Repository',
+    };
   }
 
+  let description = `Contains GitLab variables: ${variables}. `;
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (reason.kind === 'incomplete') {
+    description += `Some of them can't be expanded outside a pipeline.`;
+  } else if (!workspaceFolder) {
+    description += `No workspace folder found. Configure component sources to resolve GitLab variables.`;
+  } else {
+    const rawGitContext = await getRawGitRepositoryContext(workspaceFolder.uri.fsPath);
+    description += rawGitContext.gitlabInstance && !rawGitContext.gitlabInstance.includes('gitlab')
+      ? `This project is hosted on ${rawGitContext.gitlabInstance}, not GitLab. GitLab Component Helper requires a GitLab repository to resolve CI/CD variables.`
+      : `No GitLab repository detected. Configure component sources or ensure this is a GitLab repository to resolve these variables.`;
+  }
+
+  return { ...placeholder, name: 'Component with variables', description, source: 'GitLab Variables' };
+}
+
+/** Context GitLab variables in a `component:` value are expanded from. */
+interface ExpansionContext {
+  gitlabInstance: string;
+  projectPath: string;
+  serverUrl: string;
+  commitSha?: string;
+}
+
+/** Why a reference's GitLab variables couldn't be expanded. */
+export type UnresolvedReason =
+  /** The workspace's repository is hosted somewhere other than GitLab, so the variables have no meaning. */
+  | { kind: 'non-gitlab-repo'; hostname: string; type: string }
+  /** No GitLab remote and no configured component source to expand from. */
+  | { kind: 'no-context' }
+  /** Expansion ran but left variables the extension doesn't know how to expand. */
+  | { kind: 'incomplete'; expandedUrl: string };
+
+export type ResolvedReference =
+  | { resolved: true; url: string }
+  | { resolved: false; reason: UnresolvedReason };
+
+/**
+ * Find what GitLab variables expand from for a document: its repository's GitLab remote; failing that — unless the
+ * workspace is a non-GitLab repository — the first configured component source.
+ */
+async function lookupExpansionContext(forUri: vscode.Uri): Promise<ExpansionContext | UnresolvedReason> {
   const gitContext = await getGitRepositoryContext(forUri);
-  if (!gitContext.gitlabInstance) {
-    return undefined;
+  if (gitContext.gitlabInstance && gitContext.projectPath) {
+    return {
+      gitlabInstance: gitContext.gitlabInstance,
+      projectPath: gitContext.projectPath,
+      serverUrl: `https://${gitContext.gitlabInstance}`,
+      commitSha: gitContext.commitSha || 'main',
+    };
   }
 
-  const expanded = expandComponentUrl(reference, {
-    gitlabInstance: gitContext.gitlabInstance,
-    projectPath: gitContext.projectPath,
-    serverUrl: `https://${gitContext.gitlabInstance}`,
-    commitSha: gitContext.commitSha || 'main',
-  });
-  return containsGitLabVariables(expanded) ? undefined : expanded;
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  const nonGitlab = workspaceFolder ? await detectNonGitLabRepository(workspaceFolder) : null;
+  if (nonGitlab) {
+    return { kind: 'non-gitlab-repo', hostname: nonGitlab.hostname, type: nonGitlab.type };
+  }
+
+  const [source] = vscode.workspace
+    .getConfiguration('gitlabComponentHelper')
+    .get<Array<{ path: string; gitlabInstance?: string }>>('componentSources', []);
+  if (!source) {
+    return { kind: 'no-context' };
+  }
+  const gitlabInstance = source.gitlabInstance || 'gitlab.com';
+  return { gitlabInstance, projectPath: source.path, serverUrl: `https://${gitlabInstance}` };
+}
+
+/**
+ * Create the resolver every reader uses to turn `component:` values written in one document into URLs `new URL()` can
+ * parse. References without variables get `https://` prefixed; variables expand from {@link lookupExpansionContext},
+ * which runs at most once per resolver — create one per document pass, not per line.
+ */
+export function createReferenceResolver(forUri: vscode.Uri): (reference: string) => Promise<ResolvedReference> {
+  let context: Promise<ExpansionContext | UnresolvedReason> | undefined;
+
+  return async reference => {
+    if (!containsGitLabVariables(reference)) {
+      return { resolved: true, url: referenceToUrl(reference) };
+    }
+
+    context ??= lookupExpansionContext(forUri);
+    const resolvedContext = await context;
+    if ('kind' in resolvedContext) {
+      return { resolved: false, reason: resolvedContext };
+    }
+
+    const expandedUrl = expandComponentUrl(reference, resolvedContext);
+    if (containsGitLabVariables(expandedUrl) || expandedUrl.includes('undefined')) {
+      return { resolved: false, reason: { kind: 'incomplete', expandedUrl } };
+    }
+    return { resolved: true, url: expandedUrl };
+  };
 }
 
 /**

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { getComponentUnderCursor, resolveServerFqdn, toParseableReference } from './componentDetector';
+import { createReferenceResolver, getComponentUnderCursor, resolveServerFqdn } from './componentDetector';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
 import { getVariableCompletions } from '../utils/gitlabVariables';
 import { buildComponentReference, parseVersionCompletionPrefix } from '../utils/componentReference';
@@ -88,15 +88,15 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
     this.logger.debug(`[CompletionProvider] Component URL base: ${componentUrlBase}`, 'CompletionProvider');
     this.logger.debug(`[CompletionProvider] Current version input: "${currentVersionInput}"`, 'CompletionProvider');
 
-    const resolvedBase = await toParseableReference(componentUrlBase, forUri);
-    if (!resolvedBase) {
+    const resolved = await createReferenceResolver(forUri)(componentUrlBase);
+    if (!resolved.resolved) {
       this.logger.debug(`[CompletionProvider] Can't resolve GitLab variables for version completion: ${componentUrlBase}`, 'CompletionProvider');
       return [];
     }
 
     // The last path segment is the component/template name; the rest is the project path.
     try {
-      const url = new URL(resolvedBase);
+      const url = new URL(resolved.url);
       const gitlabInstance = url.host;
       const pathSegments = url.pathname.split('/').filter(Boolean); // remove empty segments
       if (pathSegments.length < 2) {
@@ -393,19 +393,19 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
   // Helper method to find component in cache (similar to validation provider).
   // `forUri` is the active document's URI — used so variable expansion picks
   // the GitLab host matching the file's containing repo, not workspace[0].
-  private async findComponentInCache(componentUrl: string, forUri?: vscode.Uri): Promise<CachedComponent | null> {
+  private async findComponentInCache(componentUrl: string, forUri: vscode.Uri): Promise<CachedComponent | null> {
     try {
       const cacheManager = getComponentCacheManager();
       const components = await cacheManager.getComponents();
 
-      const resolvedUrl = await toParseableReference(componentUrl, forUri);
-      if (!resolvedUrl) {
-        this.logger.debug(`[CompletionProvider] Component URL contains GitLab variables but no Git context available to expand: ${componentUrl}`, 'CompletionProvider');
+      const resolved = await createReferenceResolver(forUri)(componentUrl);
+      if (!resolved.resolved) {
+        this.logger.debug(`[CompletionProvider] Can't resolve GitLab variables in component URL: ${componentUrl}`, 'CompletionProvider');
         return null;
       }
 
       // Parse the component URL to get instance, project path, and component name
-      const url = new URL(resolvedUrl.split('@')[0]); // Remove version if present
+      const url = new URL(resolved.url.split('@')[0]); // Remove version if present
       const gitlabInstance = url.host;
       const pathSegments = url.pathname.split('/').filter(Boolean);
 

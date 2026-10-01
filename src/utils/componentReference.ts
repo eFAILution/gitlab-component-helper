@@ -6,6 +6,19 @@
 /** Matches `component: <base>@<partial-version>` at the end of a line prefix, tolerating an opening quote. */
 const VERSION_PREFIX_REGEX = /component:\s*['"]?([^\s'"@]+)@([^\s'"]*)$/;
 
+/** Matches a `component:` line (optionally a `- ` list item), capturing the value without its quotes. */
+const COMPONENT_VALUE_REGEX = /^(\s*(?:-\s*)?component:\s*['"]?)([^\s'"#]+)/;
+
+/**
+ * Extract the value of a `component:` line, unquoted.
+ *
+ * @returns The value and the column it starts at, or `null` when the line isn't a `component:` entry.
+ */
+export function matchComponentValue(line: string): { value: string; start: number } | null {
+  const match = COMPONENT_VALUE_REGEX.exec(line);
+  return match ? { value: match[2], start: match[1].length } : null;
+}
+
 /**
  * Build the value GitLab accepts for `include: component:`.
  *

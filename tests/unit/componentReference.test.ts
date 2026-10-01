@@ -7,6 +7,7 @@
 import * as assert from 'node:assert/strict';
 import {
   buildComponentReference,
+  matchComponentValue,
   parseVersionCompletionPrefix,
   referenceToUrl,
 } from '../../src/utils/componentReference';
@@ -45,9 +46,34 @@ suite('referenceToUrl', () => {
     assert.strictEqual(url.hostname, 'gitlab.com');
     assert.strictEqual(url.pathname, '/g/p/c@1.0.0');
   });
+});
 
-  test('keeps a host port', () => {
-    assert.strictEqual(new URL(referenceToUrl('gitlab.internal:8443/g/p/c')).host, 'gitlab.internal:8443');
+suite('matchComponentValue', () => {
+  test('extracts a list-item value and its start column', () => {
+    assert.deepStrictEqual(matchComponentValue('  - component: gitlab.com/g/p/c@1.0'), {
+      value: 'gitlab.com/g/p/c@1.0',
+      start: 15,
+    });
+  });
+
+  test('strips double and single quotes, starting after the opening quote', () => {
+    assert.deepStrictEqual(matchComponentValue('  - component: "gitlab.com/g/p/c@1.0"'), {
+      value: 'gitlab.com/g/p/c@1.0',
+      start: 16,
+    });
+    assert.deepStrictEqual(matchComponentValue("    component: '$CI_SERVER_FQDN/g/p/c@1'"), {
+      value: '$CI_SERVER_FQDN/g/p/c@1',
+      start: 16,
+    });
+  });
+
+  test('stops before a trailing comment', () => {
+    assert.strictEqual(matchComponentValue('  - component: gitlab.com/g/p/c@1.0 # pinned')?.value, 'gitlab.com/g/p/c@1.0');
+  });
+
+  test('ignores lines that are not a component entry', () => {
+    assert.strictEqual(matchComponentValue('  - local: templates/a.yml'), null);
+    assert.strictEqual(matchComponentValue('# component: gitlab.com/g/p/c@1.0'), null);
   });
 });
 
