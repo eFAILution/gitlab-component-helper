@@ -1,9 +1,8 @@
 /**
  * HTML-escaping and inline-Markdown rendering for text shown in webviews (component descriptions).
  *
- * `vscode`-free and pure so the unit suite can drive it directly. The webview scripts carry a client-side
- * twin of `renderInlineMarkdown` (as an injected string, since it runs in the browser); both must escape and
- * format identically, and this is the reference the twin mirrors.
+ * `vscode`-free and pure, so the unit suite can drive it directly and the client bundles can import it — the webview
+ * and the extension host render descriptions through this same module.
  */
 
 /**

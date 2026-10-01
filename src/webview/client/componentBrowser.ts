@@ -1,10 +1,9 @@
 /**
  * Client script for the Component Browser.
  *
- * Runs in the webview, not the extension host. The document still binds its controls with `onclick`/`onchange`
- * attributes, which resolve against the global scope, so the functions they name are assigned to `window` at the end
- * of this file — the bundle is an IIFE and would otherwise keep them private. Those attributes, and this export
- * block with them, go when the browser moves to delegated listeners under a CSP.
+ * Runs in the webview, not the extension host, under a nonce CSP that forbids inline handlers. Controls carry a
+ * `data-action` naming an entry in `ACTIONS`; one delegated listener per event type dispatches them, so controls this
+ * script builds at runtime need no binding of their own.
  */
 
 import { renderInlineMarkdown } from '../inlineMarkdown';
@@ -156,7 +155,7 @@ function toggleDisclosure(contentId: string, iconId: string): void {
 /**
  * Ask the extension for a component's versions, showing the card's loading state until they arrive.
  *
- * @param _projectId Unused, but part of the signature the document's `onclick` attributes call with.
+ * @param _projectId Unused. Kept so callers can pass a card's four identifying fields positionally.
  */
 function loadComponentVersions(
   componentName: string,

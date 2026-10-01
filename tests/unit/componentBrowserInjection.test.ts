@@ -3,8 +3,8 @@
  * Guards against publisher-controlled text being executed in the Component Browser.
  *
  * Component names, version tags and spec fields are set by whoever publishes the component, and git accepts quotes and
- * angle brackets in a tag name. The Component Browser's controls still bind with `onclick` attributes, so every value
- * that reaches one must be encoded for both of the contexts it passes through.
+ * angle brackets in a tag name. The browser's CSP blocks inline handlers, so the sinks that remain are the markup the
+ * client script assembles and the names it uses as object keys; `handlerArg` is guarded here while it still exists.
  */
 
 import * as assert from 'node:assert/strict';
