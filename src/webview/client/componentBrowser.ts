@@ -90,13 +90,6 @@ function findVersion(componentName: string, version: string): VersionEntry | und
   return versionStore.get(componentName)?.get(version);
 }
 
-/** A card's control, found by the `data-role` both the server and this script put on it. */
-function cardControl(componentName: string, projectId: string, role: string): HTMLElement | null {
-  return document.querySelector<HTMLElement>(
-    `[data-component-name="${CSS.escape(componentName)}"][data-project-id="${CSS.escape(projectId)}"] [data-role="${role}"]`
-  );
-}
-
 /**
  * Build the Details and Insert buttons for a component at a version.
  *
@@ -156,8 +149,8 @@ function toggleDisclosure(contentId: string, iconId: string): void {
     return;
   }
 
-  const collapsed = content.classList.toggle('is-hidden') === false;
-  icon.textContent = collapsed ? '▼' : '▶';
+  const expanded = content.classList.toggle('is-hidden') === false;
+  icon.textContent = expanded ? '▼' : '▶';
 }
 
 /**
@@ -333,17 +326,6 @@ function updateComponentVersion(componentName: string, selectedVersion: string, 
     versionInfoElement.replaceChildren(smallText(`Selected version: ${selectedVersion}`));
   }
 
-  // Repoint the buttons with listeners. Rewriting their `onclick` text would put the version string inside
-  // JavaScript source, which a tag containing a quote breaks out of.
-  const insertButton = cardControl(componentName, projectId, 'insert');
-  if (insertButton) {
-    insertButton.onclick = () => insertComponentById(componentName, selectedVersion);
-  }
-
-  const detailsButton = cardControl(componentName, projectId, 'details');
-  if (detailsButton) {
-    detailsButton.onclick = () => viewDetailsById(componentName, selectedVersion);
-  }
 }
 
 function refreshComponents(): void {
@@ -559,12 +541,15 @@ interface CardContext {
   projectId: string;
   sourcePath: string;
   gitlabInstance: string;
-  /** The version currently chosen in the card's dropdown, or its initial version when it has only one. */
+  /** The version the card's actions apply to: what the dropdown shows, or the card's default without one. */
   version: string;
 }
 
 /**
  * Read the coordinates of the card a control belongs to.
+ *
+ * The version comes from the dropdown when the user has one to choose from, and otherwise from the card's
+ * `data-version` — which carries the component's default, not merely its first tag.
  *
  * @param control An element inside a `.component-card`.
  * @returns       The card's context, or null when the control is not in a card.
@@ -576,58 +561,72 @@ function cardContext(control: HTMLElement): CardContext | null {
   }
 
   const select = card.querySelector('select.version-dropdown');
-  const single = card.querySelector('.single-version');
+  const chosen = select instanceof HTMLSelectElement ? select.value : '';
   return {
     componentName: card.dataset.componentName ?? '',
     projectId: card.dataset.projectId ?? '',
     sourcePath: card.dataset.sourcePath ?? '',
     gitlabInstance: card.dataset.gitlabInstance ?? '',
-    version: select instanceof HTMLSelectElement
-      ? select.value
-      : single?.textContent?.trim() ?? '',
+    version: chosen || card.dataset.version || '',
   };
 }
 
+/** The event each action answers to. A `<select>` emits `click` as well, so binding one action to several fires it
+ * more than once per interaction. */
+type ActionEvent = 'click' | 'change' | 'input';
+
 /** Actions a control requests by naming one in `data-action`, dispatched from the document. */
-const ACTIONS: Record<string, (control: HTMLElement, event: Event) => void> = {
-  filterComponents: () => filterComponents(),
-  refreshComponents: () => refreshComponents(),
-  updateCache: () => updateCache(),
-  resetCache: () => resetCache(),
-  updateToken: () => updateToken(),
-  setAsDefaultVersion: () => setAsDefaultVersion(),
-  alwaysUseLatest: () => alwaysUseLatest(),
-  toggleError: control => toggleError(control.dataset.target ?? ''),
-  toggleSource: control => toggleSource(control.dataset.target ?? ''),
-  toggleProject: control => toggleProject(control.dataset.target ?? ''),
-  loadVersions: control => {
-    const card = cardContext(control);
-    if (card) {
-      loadComponentVersions(card.componentName, card.sourcePath, card.gitlabInstance, card.projectId);
-    }
+const ACTIONS: Record<string, { on: ActionEvent; run: (control: HTMLElement) => void }> = {
+  filterComponents: { on: 'input', run: () => filterComponents() },
+  refreshComponents: { on: 'click', run: () => refreshComponents() },
+  updateCache: { on: 'click', run: () => updateCache() },
+  resetCache: { on: 'click', run: () => resetCache() },
+  updateToken: { on: 'click', run: () => updateToken() },
+  setAsDefaultVersion: { on: 'click', run: () => setAsDefaultVersion() },
+  alwaysUseLatest: { on: 'click', run: () => alwaysUseLatest() },
+  toggleError: { on: 'click', run: control => toggleError(control.dataset.target ?? '') },
+  toggleSource: { on: 'click', run: control => toggleSource(control.dataset.target ?? '') },
+  toggleProject: { on: 'click', run: control => toggleProject(control.dataset.target ?? '') },
+  loadVersions: {
+    on: 'click',
+    run: control => {
+      const card = cardContext(control);
+      if (card) {
+        loadComponentVersions(card.componentName, card.sourcePath, card.gitlabInstance, card.projectId);
+      }
+    },
   },
-  selectVersion: control => {
-    const card = cardContext(control);
-    if (card) {
-      updateComponentVersion(card.componentName, card.version, card.projectId);
-    }
+  selectVersion: {
+    on: 'change',
+    run: control => {
+      const card = cardContext(control);
+      if (card) {
+        updateComponentVersion(card.componentName, card.version, card.projectId);
+      }
+    },
   },
-  viewDetails: control => {
-    const card = cardContext(control);
-    if (card) {
-      viewDetailsById(card.componentName, card.version);
-    }
+  viewDetails: {
+    on: 'click',
+    run: control => {
+      const card = cardContext(control);
+      if (card) {
+        viewDetailsById(card.componentName, card.version);
+      }
+    },
   },
-  insertComponent: control => {
-    const card = cardContext(control);
-    if (card) {
-      insertComponentById(card.componentName, card.version);
-    }
+  insertComponent: {
+    on: 'click',
+    run: control => {
+      const card = cardContext(control);
+      if (card) {
+        insertComponentById(card.componentName, card.version);
+      }
+    },
   },
 };
 
 /**
- * Run the action a control names, if any.
+ * Run the action a control names, when the event matches the one it answers to.
  *
  * Delegated from the document so controls the script rebuilds at runtime need no rebinding, and so the document
  * carries no event-handler attributes for its CSP to block.
@@ -639,8 +638,13 @@ function dispatch(event: Event): void {
 
   const control = event.target.closest<HTMLElement>('[data-action]');
   const action = control?.dataset.action;
-  if (control && action) {
-    ACTIONS[action]?.(control, event);
+  if (!control || !action) {
+    return;
+  }
+
+  const handler = ACTIONS[action];
+  if (handler?.on === event.type) {
+    handler.run(control);
   }
 }
 

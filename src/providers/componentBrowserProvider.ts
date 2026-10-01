@@ -815,7 +815,7 @@ export class ComponentBrowserProvider {
               const hasVersions = component.availableVersions && component.availableVersions.length > 0;
 
               return `
-              <div class="component-card" data-name="${this.escapeHtml(component.name)}" data-description="${this.escapeHtml(component.description || '')}" data-component-name="${this.escapeHtml(component.name)}" data-project-id="${projectId}" data-source-path="${this.escapeHtml(component.sourcePath)}" data-gitlab-instance="${this.escapeHtml(component.gitlabInstance)}" id="component-${this.escapeHtml(componentKey)}">
+              <div class="component-card" data-name="${this.escapeHtml(component.name)}" data-description="${this.escapeHtml(component.description || '')}" data-component-name="${this.escapeHtml(component.name)}" data-project-id="${projectId}" data-source-path="${this.escapeHtml(component.sourcePath)}" data-gitlab-instance="${this.escapeHtml(component.gitlabInstance)}" data-version="${this.escapeHtml(initialVersion)}" id="component-${this.escapeHtml(componentKey)}">
                 <div class="component-header">
                   <span class="component-title">
                     ${this.escapeHtml(component.name)}
@@ -824,10 +824,10 @@ export class ComponentBrowserProvider {
                   <div class="component-actions" id="actions-${this.escapeHtml(componentKey)}">
                     ${hasVersions ? `
                       ${component.availableVersions.length > 1 ? `
-                        <select class="version-dropdown" data-action="selectVersion" data-version="${this.escapeHtml(initialVersion)}">
+                        <select class="version-dropdown" data-action="selectVersion">
                           ${this.renderVersionOptions(component)}
                         </select>
-                      ` : `<span class="single-version">${this.escapeHtml(component.availableVersions[0] || 'latest')}</span>`}
+                      ` : `<span class="single-version">${this.escapeHtml(initialVersion || 'latest')}</span>`}
                       <button data-role="details" data-action="viewDetails">Details</button>
                       <button data-role="insert" data-action="insertComponent">Insert</button>
                     ` : `
