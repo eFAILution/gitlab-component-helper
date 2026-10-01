@@ -1,8 +1,7 @@
 import * as vscode from 'vscode';
 import { Logger } from '../utils/logger';
 import { UrlParser } from '../services/component/urlParser';
-import { containsGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
-import { getGitRepositoryContext } from './componentDetector';
+import { toParseableReference } from './componentDetector';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
@@ -46,7 +45,6 @@ export class ComponentDocumentLinkProvider implements vscode.DocumentLinkProvide
     }
 
     const links: vscode.DocumentLink[] = [];
-    let gitContext: Awaited<ReturnType<typeof getGitRepositoryContext>> | null = null;
     const cacheManager = getComponentCacheManager();
     const cachedComponents = await cacheManager.getComponents();
 
@@ -62,21 +60,9 @@ export class ComponentDocumentLinkProvider implements vscode.DocumentLinkProvide
       const startCol = prefix.length;
       const endCol = startCol + rawUrl.length;
 
-      let expandedUrl = rawUrl;
-      if (containsGitLabVariables(rawUrl)) {
-        if (gitContext === null) {
-          gitContext = await getGitRepositoryContext();
-        }
-        if (gitContext.gitlabInstance) {
-          expandedUrl = expandComponentUrl(rawUrl, {
-            gitlabInstance: gitContext.gitlabInstance,
-            projectPath: gitContext.projectPath || '',
-            serverUrl: `https://${gitContext.gitlabInstance}`,
-            commitSha: gitContext.commitSha || 'main',
-          });
-        } else {
-          continue;
-        }
+      const expandedUrl = await toParseableReference(rawUrl, document.uri);
+      if (!expandedUrl) {
+        continue;
       }
 
       const parsed = this.urlParser.parseCustomComponentUrl(expandedUrl);

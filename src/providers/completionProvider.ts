@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
-import { getComponentUnderCursor, getGitRepositoryContext } from './componentDetector';
+import { getComponentUnderCursor, resolveServerFqdn, toParseableReference } from './componentDetector';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
-import { getVariableCompletions, containsGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
+import { getVariableCompletions } from '../utils/gitlabVariables';
+import { buildComponentReference, parseVersionCompletionPrefix } from '../utils/componentReference';
 import { Logger } from '../utils/logger';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { resolveLocalComponent } from './localComponentResolver';
@@ -41,17 +42,17 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
 
     // Check for version completions after @
     this.logger.debug(`[CompletionProvider] Checking for version pattern in line prefix: "${linePrefix}"`, 'CompletionProvider');
-    const versionMatch = linePrefix.match(/https:\/\/[^@\s]+@(.*)$/);
+    const versionMatch = parseVersionCompletionPrefix(linePrefix);
     this.logger.debug(`[CompletionProvider] Version regex match result: ${versionMatch ? 'MATCHED' : 'NO MATCH'}`, 'CompletionProvider');
     if (versionMatch) {
       this.logger.debug(`[CompletionProvider] Detected version completion request after @`, 'CompletionProvider');
-      return this.provideVersionCompletions(linePrefix);
+      return this.provideVersionCompletions(linePrefix, document.uri);
     }
 
     // Suggest components after "component: "
     if (linePrefix.trim().endsWith('component:') || linePrefix.trim().endsWith('component: ')) {
       this.logger.debug(`[CompletionProvider] Detected component completion request`, 'CompletionProvider');
-      return this.provideComponentCompletions();
+      return this.provideComponentCompletions(document);
     }
 
     // Detect if we're in a component and suggest parameters
@@ -71,30 +72,31 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
   /**
    * Provide version/tag completions for a component URL after @
    */
-  private async provideVersionCompletions(linePrefix: string): Promise<vscode.CompletionItem[]> {
+  private async provideVersionCompletions(linePrefix: string, forUri: vscode.Uri): Promise<vscode.CompletionItem[]> {
     this.logger.debug(`[CompletionProvider] Starting version completions for: "${linePrefix}"`, 'CompletionProvider');
 
     // Extract the component URL before the @
-    const urlMatch = linePrefix.match(/(https:\/\/[^@\s]+)@(.*)$/);
+    const urlMatch = parseVersionCompletionPrefix(linePrefix);
     if (!urlMatch) {
       this.logger.warn(`[CompletionProvider] Could not parse component URL from line prefix`, 'CompletionProvider');
       return [];
     }
 
-    const componentUrlBase = urlMatch[1];
-    const currentVersionInput = urlMatch[2];
+    const componentUrlBase = urlMatch.base;
+    const currentVersionInput = urlMatch.partialVersion;
 
     this.logger.debug(`[CompletionProvider] Component URL base: ${componentUrlBase}`, 'CompletionProvider');
     this.logger.debug(`[CompletionProvider] Current version input: "${currentVersionInput}"`, 'CompletionProvider');
 
-    // Parse the component URL to extract GitLab instance, project path, and component/template name
-    // Accepts URLs like:
-    //   https://gitlab.com/components/opentofu/full-pipeline
-    //   https://gitlab.instance.com/group/project/componentName
-    //   https://gitlab.instance.com/group/project/templateName
-    // We'll treat the last path segment as the component/template name, and the rest as the project path
+    const resolvedBase = await toParseableReference(componentUrlBase, forUri);
+    if (!resolvedBase) {
+      this.logger.debug(`[CompletionProvider] Can't resolve GitLab variables for version completion: ${componentUrlBase}`, 'CompletionProvider');
+      return [];
+    }
+
+    // The last path segment is the component/template name; the rest is the project path.
     try {
-      const url = new URL(componentUrlBase);
+      const url = new URL(resolvedBase);
       const gitlabInstance = url.host;
       const pathSegments = url.pathname.split('/').filter(Boolean); // remove empty segments
       if (pathSegments.length < 2) {
@@ -180,7 +182,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
   /**
    * Provide component completions after "component: "
    */
-  private async provideComponentCompletions(): Promise<vscode.CompletionItem[]> {
+  private async provideComponentCompletions(document: vscode.TextDocument): Promise<vscode.CompletionItem[]> {
     this.logger.debug(`[CompletionProvider] Providing component completions`, 'CompletionProvider');
 
     const cacheManager = getComponentCacheManager();
@@ -191,6 +193,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
     const completionItems: vscode.CompletionItem[] = [];
     const seenComponents = new Set<string>();
     const preferences = readVersionPreferences();
+    const serverFqdn = await resolveServerFqdn(document.uri);
 
     for (const component of components) {
       // Create a unique key for each component to avoid duplicates
@@ -203,7 +206,14 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
 
       const bestVersion = chooseComponentVersion(component.availableVersions ?? [], component, preferences, 'main');
 
-      let componentUrl = `https://${component.gitlabInstance}/${component.sourcePath}/${component.name}`;
+      // Suggest the best version; the user can change it afterwards.
+      const componentUrl = buildComponentReference(
+        component.gitlabInstance,
+        component.sourcePath,
+        component.name,
+        bestVersion,
+        serverFqdn,
+      );
 
       const item = new vscode.CompletionItem(component.name, vscode.CompletionItemKind.Module);
       item.detail = `Component from ${component.source}`;
@@ -222,14 +232,6 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       }
 
       item.documentation = new vscode.MarkdownString(documentation);
-
-      // For now, suggest the URL with the best version - user can change the version later
-      if (componentUrl.includes('@')) {
-        const urlBase = componentUrl.split('@')[0];
-        componentUrl = `${urlBase}@${bestVersion}`;
-      } else {
-        componentUrl = `${componentUrl}@${bestVersion}`;
-      }
 
       item.insertText = componentUrl;
       completionItems.push(item);
@@ -396,23 +398,10 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       const cacheManager = getComponentCacheManager();
       const components = await cacheManager.getComponents();
 
-      // Expand GitLab variables (e.g. $CI_SERVER_FQDN) before parsing, otherwise
-      // `new URL()` below throws and we never find the component in the cache.
-      let resolvedUrl = componentUrl;
-      if (containsGitLabVariables(componentUrl)) {
-        const gitContext = await getGitRepositoryContext(forUri);
-        if (gitContext.gitlabInstance) {
-          resolvedUrl = expandComponentUrl(componentUrl, {
-            gitlabInstance: gitContext.gitlabInstance,
-            projectPath: gitContext.projectPath,
-            serverUrl: `https://${gitContext.gitlabInstance}`,
-            commitSha: gitContext.commitSha || 'main'
-          });
-          this.logger.debug(`[CompletionProvider] Expanded component URL with variables: ${componentUrl} -> ${resolvedUrl}`, 'CompletionProvider');
-        } else {
-          this.logger.debug(`[CompletionProvider] Component URL contains GitLab variables but no Git context available to expand: ${componentUrl}`, 'CompletionProvider');
-          return null;
-        }
+      const resolvedUrl = await toParseableReference(componentUrl, forUri);
+      if (!resolvedUrl) {
+        this.logger.debug(`[CompletionProvider] Component URL contains GitLab variables but no Git context available to expand: ${componentUrl}`, 'CompletionProvider');
+        return null;
       }
 
       // Parse the component URL to get instance, project path, and component name

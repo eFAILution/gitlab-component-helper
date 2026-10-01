@@ -5,6 +5,7 @@ import { parseYamlDocuments, findDocumentWith } from '../utils/yamlParser';
 import { Component, ComponentParameter } from '../types/git-component';
 import { Logger } from '../utils/logger';
 import { expandComponentUrl, containsGitLabVariables } from '../utils/gitlabVariables';
+import { referenceToUrl } from '../utils/componentReference';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { spawn } from 'child_process';
 import { resolveLocalIncludeOutcome, isUnsupportedLocalPath } from './localComponentResolver';
@@ -275,6 +276,9 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                         // Skip input validation for URLs with unresolved variables
                         continue;
                     }
+                } else {
+                    // The lookups below parse with `new URL()`.
+                    expandedUrl = referenceToUrl(componentUrl);
                 }
 
                 // First try to find the component in cache (using expanded URL)
@@ -291,8 +295,8 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     try {
                         const fetchedComponent = await getComponentService().getComponentFromUrl(expandedUrl);
                         if (fetchedComponent) {
-                            // Add to cache for future use (using original URL as key)
-                            this.addComponentToCache(componentUrl, fetchedComponent);
+                            // Add to cache for future use, keyed by the parseable URL every lookup compares against
+                            this.addComponentToCache(expandedUrl, fetchedComponent);
                             component = fetchedComponent;
                             this.logger.debug(`[ValidationProvider] Successfully fetched component: ${fetchedComponent.name}`, 'ValidationProvider');
                         } else {
@@ -1912,7 +1916,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         const versionsByBase = new Map<string, readonly string[] | undefined>();
         await Promise.all(
             bases.map(async rawBase => {
-                let lookupUrl = rawBase;
+                let lookupUrl = referenceToUrl(rawBase);
                 if (containsGitLabVariables(rawBase)) {
                     if (!workspaceContext?.gitlabInstance) {
                         return; // can't resolve the instance for this file — leave the component unchecked

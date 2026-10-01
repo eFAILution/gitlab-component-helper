@@ -3,6 +3,7 @@ import { getComponentService } from '../services/component';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
 import { containsGitLabVariables, detectGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
+import { referenceToUrl } from '../utils/componentReference';
 import { Logger } from '../utils/logger';
 import { spawn } from 'child_process';
 import { detectLocalIncludeComponent } from './localComponentResolver';
@@ -270,6 +271,9 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
 
     // Use the expanded URL for further processing
     componentUrl = expandedUrl;
+  } else {
+    // Everything below parses with `new URL()`.
+    componentUrl = referenceToUrl(componentUrl);
   }
 
   // First, try to find the component in our cache
@@ -814,6 +818,43 @@ export async function getGitRepositoryContext(forUri?: vscode.Uri): Promise<{
     logger.debug(`[ComponentDetector] Error getting Git repository context: ${error}`, 'ComponentDetector');
     return {};
   }
+}
+
+/**
+ * Resolve what `$CI_SERVER_FQDN` will be for a file: the GitLab host of its repository's git remote. Writers use this
+ * to decide whether a component reference can use the variable, and hover expands the variable from the same source,
+ * so the two always agree.
+ *
+ * @returns The host, or `undefined` when the file isn't in a repository with a GitLab remote. No configured-source
+ *          fallback — without a remote there's no way to know where the pipeline will run.
+ */
+export async function resolveServerFqdn(forUri: vscode.Uri): Promise<string | undefined> {
+  return (await getGitRepositoryContext(forUri)).gitlabInstance;
+}
+
+/**
+ * Turn a `component:` value as written in a file into a URL `new URL()` can parse: GitLab variables are expanded from
+ * the file's git remote — the same source {@link resolveServerFqdn} uses — and `https://` is added.
+ *
+ * @returns The parseable URL, or `undefined` when the value uses variables the file's repository can't resolve.
+ */
+export async function toParseableReference(reference: string, forUri?: vscode.Uri): Promise<string | undefined> {
+  if (!containsGitLabVariables(reference)) {
+    return referenceToUrl(reference);
+  }
+
+  const gitContext = await getGitRepositoryContext(forUri);
+  if (!gitContext.gitlabInstance) {
+    return undefined;
+  }
+
+  const expanded = expandComponentUrl(reference, {
+    gitlabInstance: gitContext.gitlabInstance,
+    projectPath: gitContext.projectPath,
+    serverUrl: `https://${gitContext.gitlabInstance}`,
+    commitSha: gitContext.commitSha || 'main',
+  });
+  return containsGitLabVariables(expanded) ? undefined : expanded;
 }
 
 /**
