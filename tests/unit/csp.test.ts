@@ -1,10 +1,10 @@
 // @mocha
 /**
- * Tests src/webview/csp.ts — the nonce and Content-Security-Policy meta tag every webview document is rendered with.
+ * Tests src/webview/csp.ts — the nonce and Content-Security-Policy every webview document is rendered with.
  */
 
 import * as assert from 'node:assert/strict';
-import { createNonce, cspMetaTag } from '../../src/webview/csp';
+import { createNonce, cspPolicy } from '../../src/webview/csp';
 
 const CSP_SOURCE = 'vscode-webview://test-origin';
 
@@ -38,29 +38,29 @@ suite('createNonce', () => {
   });
 });
 
-suite('cspMetaTag', () => {
+suite('cspPolicy', () => {
   test('denies everything by default', () => {
-    assert.match(cspMetaTag(CSP_SOURCE, 'abc123'), /default-src 'none'/);
+    assert.match(cspPolicy(CSP_SOURCE, 'abc123'), /default-src 'none'/);
   });
 
   test('admits scripts only with the supplied nonce', () => {
-    const tag = cspMetaTag(CSP_SOURCE, 'abc123');
+    const tag = cspPolicy(CSP_SOURCE, 'abc123');
     assert.match(tag, /script-src 'nonce-abc123'/);
     assert.doesNotMatch(tag, /script-src[^;]*'unsafe-inline'/);
   });
 
   test('admits styles from the webview origin but not inline', () => {
-    const tag = cspMetaTag(CSP_SOURCE, 'abc123');
+    const tag = cspPolicy(CSP_SOURCE, 'abc123');
     assert.match(tag, new RegExp(`style-src ${CSP_SOURCE}`));
     // Inline styles are what the external-stylesheet pattern exists to avoid; permitting them here would silently
     // undo it for every document built on this helper.
     assert.doesNotMatch(tag, /style-src[^;]*'unsafe-inline'/);
   });
 
-  test('is a well-formed meta tag carrying the webview origin', () => {
-    const tag = cspMetaTag(CSP_SOURCE, 'abc123');
-    assert.ok(tag.startsWith('<meta http-equiv="Content-Security-Policy" content="'));
-    assert.ok(tag.endsWith('">'));
-    assert.ok(tag.includes(CSP_SOURCE));
+  test('carries the webview origin and no markup', () => {
+    // The policy is an attribute value; the view renders the meta tag around it.
+    const policy = cspPolicy(CSP_SOURCE, 'abc123');
+    assert.ok(policy.includes(CSP_SOURCE));
+    assert.doesNotMatch(policy, /[<>"]/);
   });
 });
