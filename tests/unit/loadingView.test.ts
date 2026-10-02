@@ -27,7 +27,7 @@ suite('LoadingView', () => {
 
   test('escapes attribute values', () => {
     const doc = renderDocument(LoadingView, { ...PROPS, styleUri: '"><script>x</script>' });
-    assert.doesNotMatch(doc, /<script>/);
+    assert.doesNotMatch(doc, /<script>/i);
     assert.match(doc, /href="&quot;>&lt;script>x&lt;\/script>"/);
   });
 });

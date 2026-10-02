@@ -99,8 +99,8 @@ const VIEWS: Record<string, { html: string; client?: string }> = {
 
 /** Inline code the document's nonce CSP blocks, so it would silently not run. */
 const INLINE_CODE: Record<string, RegExp> = {
-  'inline <script>': /<script(?![^>]*\bsrc=)(?![^>]*type="application\/json")[^>]*>/,
-  'inline <style>': /<style[\s>]/,
+  'inline <script>': /<script(?![^>]*\bsrc=)(?![^>]*type="application\/json")[^>]*>/i,
+  'inline <style>': /<style[\s>]/i,
   'inline event handler': /<[a-z][^>]*\son[a-z]+=/i,
   'inline style attribute': /<[a-z][^>]*\sstyle=/i,
 };
@@ -138,14 +138,14 @@ suite('webview views', () => {
           html,
           /<meta http-equiv="Content-Security-Policy" content="default-src 'none'; [^"]*'nonce-NONCE123';"/,
         );
-        for (const [tag] of html.matchAll(/<script[^>]*>/g)) {
+        for (const [tag] of html.matchAll(/<script[^>]*>/gi)) {
           assert.match(tag, /\snonce="NONCE123"/, tag);
         }
       });
 
       test('keeps publisher text inert', () => {
-        assert.doesNotMatch(html, /<img/);
-        assert.doesNotMatch(html, /<script>alert/);
+        assert.doesNotMatch(html, /<img/i);
+        assert.doesNotMatch(html, /<script>alert/i);
       });
 
       if (client) {
