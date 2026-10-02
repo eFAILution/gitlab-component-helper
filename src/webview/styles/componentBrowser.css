@@ -351,3 +351,8 @@ button:hover {
   background-color: transparent;
   color: var(--vscode-disabledForeground);
 }
+
+/* Collapsed and not-yet-revealed state, carried by class because the document's CSP forbids `style` attributes. */
+.is-hidden {
+  display: none;
+}

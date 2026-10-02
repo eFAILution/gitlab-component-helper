@@ -1,10 +1,9 @@
 /**
  * Client script for the Component Browser.
  *
- * Runs in the webview, not the extension host. The document still binds its controls with `onclick`/`onchange`
- * attributes, which resolve against the global scope, so the functions they name are assigned to `window` at the end
- * of this file — the bundle is an IIFE and would otherwise keep them private. Those attributes, and this export
- * block with them, go when the browser moves to delegated listeners under a CSP.
+ * Runs in the webview, not the extension host, under a nonce CSP that forbids inline handlers. Controls carry a
+ * `data-action` naming an entry in `ACTIONS`; one delegated listener per event type dispatches them, so controls this
+ * script builds at runtime need no binding of their own.
  */
 
 import { renderInlineMarkdown } from '../inlineMarkdown';
@@ -90,30 +89,22 @@ function findVersion(componentName: string, version: string): VersionEntry | und
   return versionStore.get(componentName)?.get(version);
 }
 
-/** A card's control, found by the `data-role` both the server and this script put on it. */
-function cardControl(componentName: string, projectId: string, role: string): HTMLElement | null {
-  return document.querySelector<HTMLElement>(
-    `[data-component-name="${CSS.escape(componentName)}"][data-project-id="${CSS.escape(projectId)}"] [data-role="${role}"]`
-  );
-}
-
 /**
- * Build the Details and Insert buttons for a component at a version.
+ * Build the Details and Insert buttons for a component.
  *
- * Built as elements with listeners rather than as markup with `onclick` text: the component name and version are set
- * by whoever publishes the component, and git accepts quotes and angle brackets in a tag name, so interpolating them
- * into HTML or into a handler's JavaScript lets a tag run code in this panel.
+ * They carry a `data-action` rather than a listener, so each click resolves the component and version from the
+ * enclosing card — the version the dropdown currently shows, not the one that was selected when they were built.
  */
-function actionButtons(componentName: string, version: string): HTMLButtonElement[] {
+function actionButtons(): HTMLButtonElement[] {
   const details = document.createElement('button');
   details.textContent = 'Details';
   details.dataset.role = 'details';
-  details.onclick = () => viewDetailsById(componentName, version);
+  details.dataset.action = 'viewDetails';
 
   const insert = document.createElement('button');
   insert.textContent = 'Insert';
   insert.dataset.role = 'insert';
-  insert.onclick = () => insertComponentById(componentName, version);
+  insert.dataset.action = 'insertComponent';
 
   return [details, insert];
 }
@@ -126,12 +117,7 @@ function smallText(text: string): HTMLElement {
 }
 
 function toggleError(errorId: string): void {
-  const errorDiv = document.getElementById(errorId);
-  if (!errorDiv) {
-    return;
-  }
-  const hidden = errorDiv.style.display === 'none' || errorDiv.style.display === '';
-  errorDiv.style.display = hidden ? 'block' : 'none';
+  document.getElementById(errorId)?.classList.toggle('is-hidden');
 }
 
 function updateToken(): void {
@@ -161,15 +147,14 @@ function toggleDisclosure(contentId: string, iconId: string): void {
     return;
   }
 
-  const collapsed = content.style.display === 'none';
-  content.style.display = collapsed ? 'block' : 'none';
-  icon.textContent = collapsed ? '▼' : '▶';
+  const expanded = content.classList.toggle('is-hidden') === false;
+  icon.textContent = expanded ? '▼' : '▶';
 }
 
 /**
  * Ask the extension for a component's versions, showing the card's loading state until they arrive.
  *
- * @param _projectId Unused, but part of the signature the document's `onclick` attributes call with.
+ * @param _projectId Unused. Kept so callers can pass a card's four identifying fields positionally.
  */
 function loadComponentVersions(
   componentName: string,
@@ -180,12 +165,8 @@ function loadComponentVersions(
   const componentKey = `${componentName}-${sourcePath}`;
   const loadingElement = document.getElementById(`loading-${componentKey}`);
   const loadButton = document.getElementById(`component-${componentKey}`)?.querySelector<HTMLElement>('.load-versions-btn');
-  if (loadingElement) {
-    loadingElement.style.display = 'inline';
-  }
-  if (loadButton) {
-    loadButton.style.display = 'none';
-  }
+  loadingElement?.classList.remove('is-hidden');
+  loadButton?.classList.add('is-hidden');
   vscode.postMessage({ command: 'fetchVersions', componentName, sourcePath, gitlabInstance });
 }
 
@@ -233,8 +214,7 @@ function handleVersionsLoaded(message: {
       const labels = message.versionLabels || {};
       const select = document.createElement('select');
       select.className = 'version-dropdown';
-      select.onchange = () => updateComponentVersion(componentName, select.value, projectId);
-      select.oncontextmenu = event => showContextMenu(event, componentName, select.value, projectId);
+      select.dataset.action = 'selectVersion';
       versions.forEach(v => {
         const option = document.createElement('option');
         option.value = v;
@@ -244,7 +224,7 @@ function handleVersionsLoaded(message: {
         }
         select.appendChild(option);
       });
-      actionsDiv.replaceChildren(select, ...actionButtons(componentName, defaultVersion));
+      actionsDiv.replaceChildren(select, ...actionButtons());
 
       const descElement = document.getElementById(`desc-${componentName}-${projectId}`);
       if (descElement && !document.getElementById(`version-info-${componentName}-${projectId}`)) {
@@ -259,7 +239,9 @@ function handleVersionsLoaded(message: {
       const label = document.createElement('span');
       label.className = 'single-version';
       label.textContent = singleVersion;
-      actionsDiv.replaceChildren(label, ...actionButtons(componentName, singleVersion));
+      // No dropdown to read from, so the card's `data-version` is what the buttons resolve against.
+      componentCard.dataset.version = singleVersion;
+      actionsDiv.replaceChildren(label, ...actionButtons());
     }
   }
 
@@ -280,9 +262,7 @@ function handleVersionsError(message: {
 }): void {
   const componentKey = `${message.componentName}-${message.sourcePath}`;
   const loadingElement = document.getElementById(`loading-${componentKey}`);
-  if (loadingElement) {
-    loadingElement.style.display = 'none';
-  }
+  loadingElement?.classList.add('is-hidden');
 
   const actionsDiv = document.getElementById(`actions-${componentKey}`);
   if (actionsDiv) {
@@ -293,9 +273,7 @@ function handleVersionsError(message: {
     const retry = document.createElement('button');
     retry.className = 'load-versions-btn';
     retry.textContent = 'Retry';
-    retry.onclick = () => loadComponentVersions(
-      message.componentName, message.sourcePath, message.gitlabInstance || 'gitlab.com', ''
-    );
+    retry.dataset.action = 'loadVersions';
 
     actionsDiv.replaceChildren(failure, retry);
   }
@@ -345,17 +323,6 @@ function updateComponentVersion(componentName: string, selectedVersion: string, 
     versionInfoElement.replaceChildren(smallText(`Selected version: ${selectedVersion}`));
   }
 
-  // Repoint the buttons with listeners. Rewriting their `onclick` text would put the version string inside
-  // JavaScript source, which a tag containing a quote breaks out of.
-  const insertButton = cardControl(componentName, projectId, 'insert');
-  if (insertButton) {
-    insertButton.onclick = () => insertComponentById(componentName, selectedVersion);
-  }
-
-  const detailsButton = cardControl(componentName, projectId, 'details');
-  if (detailsButton) {
-    detailsButton.onclick = () => viewDetailsById(componentName, selectedVersion);
-  }
 }
 
 function refreshComponents(): void {
@@ -468,7 +435,7 @@ function revealGroups(
     if (hasMatch || searchText === '') {
       group.style.display = '';
       if (searchText !== '' && hasMatch) {
-        content.style.display = 'block';
+        content.classList.remove('is-hidden');
         const icon = document.getElementById(iconPrefix + id);
         if (icon) {
           icon.textContent = '▼';
@@ -565,23 +532,133 @@ function findProjectIdForComponent(componentName: string): string | null {
   return componentCard ? componentCard.getAttribute('data-project-id') : null;
 }
 
-// The document's `onclick`/`onchange` attributes resolve against the global scope, which this bundle's IIFE is not.
-Object.assign(window, {
-  alwaysUseLatest,
-  filterComponents,
-  insertComponentById,
-  loadComponentVersions,
-  refreshComponents,
-  resetCache,
-  setAsDefaultVersion,
-  showContextMenu,
-  toggleError,
-  toggleProject,
-  toggleSource,
-  updateCache,
-  updateComponentVersion,
-  updateToken,
-  viewDetailsById,
+/** The component card a control sits in, and the coordinates the card carries. */
+interface CardContext {
+  componentName: string;
+  projectId: string;
+  sourcePath: string;
+  gitlabInstance: string;
+  /** The version the card's actions apply to: what the dropdown shows, or the card's default without one. */
+  version: string;
+}
+
+/**
+ * Read the coordinates of the card a control belongs to.
+ *
+ * The version comes from the dropdown when the user has one to choose from, and otherwise from the card's
+ * `data-version` — which carries the component's default, not merely its first tag.
+ *
+ * @param control An element inside a `.component-card`.
+ * @returns       The card's context, or null when the control is not in a card.
+ */
+function cardContext(control: HTMLElement): CardContext | null {
+  const card = control.closest<HTMLElement>('.component-card');
+  if (!card) {
+    return null;
+  }
+
+  const select = card.querySelector('select.version-dropdown');
+  const chosen = select instanceof HTMLSelectElement ? select.value : '';
+  return {
+    componentName: card.dataset.componentName ?? '',
+    projectId: card.dataset.projectId ?? '',
+    sourcePath: card.dataset.sourcePath ?? '',
+    gitlabInstance: card.dataset.gitlabInstance ?? '',
+    version: chosen || card.dataset.version || '',
+  };
+}
+
+/** The event each action answers to. A `<select>` emits `click` as well, so binding one action to several fires it
+ * more than once per interaction. */
+type ActionEvent = 'click' | 'change' | 'input';
+
+/** Actions a control requests by naming one in `data-action`, dispatched from the document. */
+const ACTIONS: Record<string, { on: ActionEvent; run: (control: HTMLElement) => void }> = {
+  filterComponents: { on: 'input', run: () => filterComponents() },
+  refreshComponents: { on: 'click', run: () => refreshComponents() },
+  updateCache: { on: 'click', run: () => updateCache() },
+  resetCache: { on: 'click', run: () => resetCache() },
+  updateToken: { on: 'click', run: () => updateToken() },
+  setAsDefaultVersion: { on: 'click', run: () => setAsDefaultVersion() },
+  alwaysUseLatest: { on: 'click', run: () => alwaysUseLatest() },
+  toggleError: { on: 'click', run: control => toggleError(control.dataset.target ?? '') },
+  toggleSource: { on: 'click', run: control => toggleSource(control.dataset.target ?? '') },
+  toggleProject: { on: 'click', run: control => toggleProject(control.dataset.target ?? '') },
+  loadVersions: {
+    on: 'click',
+    run: control => {
+      const card = cardContext(control);
+      if (card) {
+        loadComponentVersions(card.componentName, card.sourcePath, card.gitlabInstance, card.projectId);
+      }
+    },
+  },
+  selectVersion: {
+    on: 'change',
+    run: control => {
+      const card = cardContext(control);
+      if (card) {
+        updateComponentVersion(card.componentName, card.version, card.projectId);
+      }
+    },
+  },
+  viewDetails: {
+    on: 'click',
+    run: control => {
+      const card = cardContext(control);
+      if (card) {
+        viewDetailsById(card.componentName, card.version);
+      }
+    },
+  },
+  insertComponent: {
+    on: 'click',
+    run: control => {
+      const card = cardContext(control);
+      if (card) {
+        insertComponentById(card.componentName, card.version);
+      }
+    },
+  },
+};
+
+/**
+ * Run the action a control names, when the event matches the one it answers to.
+ *
+ * Delegated from the document so controls the script rebuilds at runtime need no rebinding, and so the document
+ * carries no event-handler attributes for its CSP to block.
+ */
+function dispatch(event: Event): void {
+  if (!(event.target instanceof HTMLElement)) {
+    return;
+  }
+
+  const control = event.target.closest<HTMLElement>('[data-action]');
+  const action = control?.dataset.action;
+  if (!control || !action) {
+    return;
+  }
+
+  const handler = ACTIONS[action];
+  if (handler?.on === event.type) {
+    handler.run(control);
+  }
+}
+
+for (const eventName of ['click', 'change', 'input'] as const) {
+  document.addEventListener(eventName, dispatch);
+}
+
+document.addEventListener('contextmenu', event => {
+  if (!(event.target instanceof HTMLElement)) {
+    return;
+  }
+
+  const control = event.target.closest<HTMLElement>('select.version-dropdown');
+  const card = control && cardContext(control);
+  if (card) {
+    showContextMenu(event, card.componentName, card.version, card.projectId);
+  }
 });
 
 export {};

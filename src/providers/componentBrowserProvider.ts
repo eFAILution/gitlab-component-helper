@@ -9,7 +9,7 @@ import type { HoverContext } from './hoverContentBuilder';
 import { containsGitLabVariables } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
-import { escapeHtml, handlerArg, renderInlineMarkdown } from '../webview/inlineMarkdown';
+import { escapeHtml, renderInlineMarkdown } from '../webview/inlineMarkdown';
 import { serializeForScript } from '../webview/scriptData';
 import { generateComponentText } from './componentBrowserGenerate';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
@@ -748,6 +748,7 @@ export class ComponentBrowserProvider {
     componentGroups: SourceGroup[],
     cacheErrors: Record<string, string> = {}
   ): string {
+    const nonce = createNonce();
     const styleUri = assetUri(webview, this.context.extensionUri, 'styles/componentBrowser.css');
     const scriptUri = assetUri(webview, this.context.extensionUri, 'client/componentBrowser.js');
     const hasErrors = Object.keys(cacheErrors).length > 0;
@@ -789,12 +790,12 @@ export class ComponentBrowserProvider {
           <div class="error-item">
             <div class="error-source">${this.escapeHtml(source)}</div>
             <div class="error-summary">${this.escapeHtml(summary)}</div>
-            <button class="error-toggle" onclick="toggleError('error-${index}')">Show Details</button>
-            <div class="error-details" id="error-${index}" style="display: none;">${this.escapeHtml(error)}</div>
+            <button class="error-toggle" data-action="toggleError" data-target="error-${index}">Show Details</button>
+            <div class="error-details is-hidden" id="error-${index}">${this.escapeHtml(error)}</div>
           </div>
           `;
         }).join('')}
-        ${hasAuthError ? '<button class="update-token-btn" onclick="updateToken()">Update Token</button>' : ''}
+        ${hasAuthError ? '<button class="update-token-btn" data-action="updateToken">Update Token</button>' : ''}
       </div>
     ` : '';
 
@@ -814,7 +815,7 @@ export class ComponentBrowserProvider {
               const hasVersions = component.availableVersions && component.availableVersions.length > 0;
 
               return `
-              <div class="component-card" data-name="${this.escapeHtml(component.name)}" data-description="${this.escapeHtml(component.description || '')}" data-component-name="${this.escapeHtml(component.name)}" data-project-id="${projectId}" data-source-path="${this.escapeHtml(component.sourcePath)}" data-gitlab-instance="${this.escapeHtml(component.gitlabInstance)}" id="component-${this.escapeHtml(componentKey)}">
+              <div class="component-card" data-name="${this.escapeHtml(component.name)}" data-description="${this.escapeHtml(component.description || '')}" data-component-name="${this.escapeHtml(component.name)}" data-project-id="${projectId}" data-source-path="${this.escapeHtml(component.sourcePath)}" data-gitlab-instance="${this.escapeHtml(component.gitlabInstance)}" data-version="${this.escapeHtml(initialVersion)}" id="component-${this.escapeHtml(componentKey)}">
                 <div class="component-header">
                   <span class="component-title">
                     ${this.escapeHtml(component.name)}
@@ -823,15 +824,15 @@ export class ComponentBrowserProvider {
                   <div class="component-actions" id="actions-${this.escapeHtml(componentKey)}">
                     ${hasVersions ? `
                       ${component.availableVersions.length > 1 ? `
-                        <select class="version-dropdown" onchange="updateComponentVersion(${this.jsArg(component.name)}, this.value, ${this.jsArg(projectId)})" oncontextmenu="showContextMenu(event, ${this.jsArg(component.name)}, this.value, ${this.jsArg(projectId)})">
+                        <select class="version-dropdown" data-action="selectVersion">
                           ${this.renderVersionOptions(component)}
                         </select>
-                      ` : `<span class="single-version">${this.escapeHtml(component.availableVersions[0] || 'latest')}</span>`}
-                      <button data-role="details" onclick="viewDetailsById(${this.jsArg(component.name)}, ${this.jsArg(initialVersion)})">Details</button>
-                      <button data-role="insert" onclick="insertComponentById(${this.jsArg(component.name)}, ${this.jsArg(initialVersion)})">Insert</button>
+                      ` : `<span class="single-version">${this.escapeHtml(initialVersion || 'latest')}</span>`}
+                      <button data-role="details" data-action="viewDetails">Details</button>
+                      <button data-role="insert" data-action="insertComponent">Insert</button>
                     ` : `
-                      <button class="load-versions-btn" onclick="loadComponentVersions(${this.jsArg(component.name)}, ${this.jsArg(component.sourcePath)}, ${this.jsArg(component.gitlabInstance)}, ${this.jsArg(projectId)})">Load Versions</button>
-                      <span class="loading-versions" id="loading-${this.escapeHtml(componentKey)}" style="display: none;">Loading...</span>
+                      <button class="load-versions-btn" data-action="loadVersions">Load Versions</button>
+                      <span class="loading-versions is-hidden" id="loading-${this.escapeHtml(componentKey)}">Loading...</span>
                     `}
                   </div>
                 </div>
@@ -847,12 +848,12 @@ export class ComponentBrowserProvider {
 
           return `
             <div class="project-group">
-              <div class="project-header" onclick="toggleProject('${projectId}')">
+              <div class="project-header" data-action="toggleProject" data-target="${projectId}">
                 <span class="project-icon" id="project-icon-${projectId}">${project.isExpanded ? '▼' : '▶'}</span>
                 <span class="project-title">${this.escapeHtml(project.name)} (${components.length})</span>
                 <span class="project-path">${this.escapeHtml(project.gitlabInstance)}/${this.escapeHtml(project.path)}</span>
               </div>
-              <div class="project-content" id="project-content-${projectId}" style="display: ${project.isExpanded ? 'block' : 'none'}">
+              <div class="project-content ${project.isExpanded ? '' : 'is-hidden'}" id="project-content-${projectId}">
                 ${componentsHtml}
               </div>
             </div>
@@ -861,11 +862,11 @@ export class ComponentBrowserProvider {
 
         return `
           <div class="source-group">
-            <div class="source-header" onclick="toggleSource('${sourceId}')">
+            <div class="source-header" data-action="toggleSource" data-target="${sourceId}">
               <span class="source-icon" id="source-icon-${sourceId}">${source.isExpanded ? '▼' : '▶'}</span>
               <span class="source-title">${this.escapeHtml(source.source)} (${source.projects?.length || 0} projects, ${source.totalComponents || 0} components)</span>
             </div>
-            <div class="source-content" id="source-content-${sourceId}" style="display: ${source.isExpanded ? 'block' : 'none'}">
+            <div class="source-content ${source.isExpanded ? '' : 'is-hidden'}" id="source-content-${sourceId}">
               ${projectsHtml}
             </div>
           </div>
@@ -878,18 +879,19 @@ export class ComponentBrowserProvider {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        ${cspMetaTag(webview.cspSource, nonce)}
         <title>GitLab CI/CD Components</title>
         <link rel="stylesheet" href="${styleUri}">
       </head>
       <body>
         <div class="header">
           <div class="search-container">
-            <input type="text" id="search" placeholder="Search components..." oninput="filterComponents()">
+            <input type="text" id="search" data-action="filterComponents" placeholder="Search components...">
           </div>
           <div class="cache-controls">
-            <button class="refresh-btn" onclick="refreshComponents()" title="Refresh components (reload current data)">🔄 Refresh</button>
-            <button class="update-cache-btn" onclick="updateCache()" title="Update cache (force fetch fresh data from all sources)">📥 Update Cache</button>
-            <button class="reset-cache-btn" onclick="resetCache()" title="Reset cache (clear all cached data)">🗑️ Reset Cache</button>
+            <button class="refresh-btn" data-action="refreshComponents" title="Refresh components (reload current data)">🔄 Refresh</button>
+            <button class="update-cache-btn" data-action="updateCache" title="Update cache (force fetch fresh data from all sources)">📥 Update Cache</button>
+            <button class="reset-cache-btn" data-action="resetCache" title="Reset cache (clear all cached data)">🗑️ Reset Cache</button>
           </div>
         </div>
 
@@ -901,12 +903,12 @@ export class ComponentBrowserProvider {
 
         <!-- Context Menu -->
         <div id="contextMenu" class="context-menu">
-          <div class="context-menu-item" onclick="setAsDefaultVersion()">Set as Default Version</div>
-          <div class="context-menu-item" onclick="alwaysUseLatest()">Always Use Latest</div>
+          <div class="context-menu-item" data-action="setAsDefaultVersion">Set as Default Version</div>
+          <div class="context-menu-item" data-action="alwaysUseLatest">Always Use Latest</div>
         </div>
 
-        <script type="application/json" id="component-version-data">${versionDataJson}</script>
-        <script src="${scriptUri}"></script>
+        <script type="application/json" id="component-version-data" nonce="${nonce}">${versionDataJson}</script>
+        <script nonce="${nonce}" src="${scriptUri}"></script>
       </body>
       </html>
     `;
@@ -1146,11 +1148,6 @@ export class ComponentBrowserProvider {
 
   private escapeHtml(value: string): string {
     return escapeHtml(value);
-  }
-
-  /** See {@link handlerArg}: a JS string argument, safe inside an event-handler attribute. */
-  private jsArg(value: string | undefined): string {
-    return handlerArg(value);
   }
 
   private renderInlineMarkdown(value: string): string {
