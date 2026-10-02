@@ -391,6 +391,25 @@ errors:
       - Re-enable v10 once @release-it/conventional-changelog adopts the render-function
         stack (conventional-changelog@8 / writer@9)
       reference: .github/dependabot.yml + package.json; see huntridge-labs/argus#318
+  demo_gif_recording_fails:
+    symptom: npm run record in scripts/demo-gifs fails or produces a wrong-looking GIF
+    causes:
+    - cause: 'listen EINVAL on .../1.13-main.sock or "IPC handle is longer than 103 chars"'
+      solution: Point GCH_DEMO_DIR at a short path (default /tmp/gch-demo)
+    - cause: 'mach_port_rendezvous ... Permission denied, or "Starting inspector failed: operation not permitted"'
+      solution: Run outside the command sandbox; VS Code can't start inside it
+    - cause: VS Code never opened its debug port, or a stray instance holds the profile
+      solution: pkill -9 -f "user-data-dir=/tmp/gch-demo/profile" and run again
+    - cause: Command Palette did not highlight a command
+      solution: The command title changed in VS Code; update the name in the scene or lib/vscode.mjs
+    - cause: An empty "Drag a view here" pane or a side bar shows up
+      solution: prepareScene hides side bars by checking visibility; check the .part.* selectors still match
+    - cause: Typing lands at the wrong indent or Enter accepts a suggestion
+      solution: Scenes rely on fixtures/settings.json (wordBasedSuggestions off) and VS Code's YAML auto-indent;
+        re-check those after a VS Code update
+    - cause: A webview element is never found
+      solution: Webviews are out-of-process frames that only attach while the script is connected; open the
+        panel inside the same run and use webviewFrame(page, selector)
 debugging:
   enable_debug_logs:
     steps:

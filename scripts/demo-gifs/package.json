@@ -1,0 +1,13 @@
+{
+  "name": "gitlab-component-helper-demo-gifs",
+  "private": true,
+  "description": "Records the README demo GIFs by driving a real VS Code. Maintainer tool, never packaged.",
+  "type": "module",
+  "scripts": {
+    "record": "node record.mjs"
+  },
+  "dependencies": {
+    "@vscode/vsce": "4.0.0",
+    "playwright-core": "1.55.0"
+  }
+}

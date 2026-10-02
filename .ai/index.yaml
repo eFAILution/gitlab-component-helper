@@ -19,6 +19,7 @@ keys:
   - cache
   - component
   - constants
+  - demo_gifs
   - errors
   - extension
   - parsers
@@ -35,6 +36,7 @@ keys:
   - build_and_package
   - debug_extension
   - fix_failing_test
+  - record_demo_gifs
   - release
   - run_tests
   - setup_dev_environment
@@ -43,6 +45,7 @@ keys:
   - BATCH_API_REQUESTS
   - CACHE_COMPONENTS
   - CENTRALIZED_ERROR_HANDLING
+  - DEMO_GIFS_RECORDED_BY_SCRIPT
   - DEPENDABOT_TARGETS_BETA
   - EXTENSION_HOST_TEST_LAYER
   - FILE_SIZE_POLICY
@@ -62,6 +65,7 @@ keys:
   - cache_issues
   - compilation_errors
   - component_not_loading
+  - demo_gif_recording_fails
   - empty_changelog_conventionalcommits_v10
   - extension_not_activating
   - hover_not_working
