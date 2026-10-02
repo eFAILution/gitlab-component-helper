@@ -143,6 +143,24 @@ components:
       publish-release.sh: Publish to VS Code marketplace
       release-and-publish.sh: Combined release and publish
       setup-github-token.sh: GitHub token configuration
+  demo_gifs:
+    location: scripts/demo-gifs/
+    purpose: Maintainer tool that records the README demo GIFs by driving a real VS Code through Playwright over CDP
+    packaged: false (scripts/** in .vscodeignore; own package.json, out/ and node_modules/ gitignored)
+    files:
+      record.mjs: Entry point. Resets the work dir, packages + installs the VSIX, warms the cache, records scenes
+      lib/config.mjs: Paths, viewport (1280x800 at 2x), GIF size (1100 wide, 12 fps), env overrides
+      lib/workspace.mjs: Throwaway profile, demo workspace (my-pipelines), vsce package + install
+      lib/vscode.mjs: Launch/stop VS Code, Command Palette, scene reset, webview frame lookup
+      lib/input.mjs: Drawn cursor, eased mouse moves, typing, wheel scrolling
+      lib/recorder.mjs: CDP screencast capture, ffmpeg GIF encode, per-second review sheet
+      scenes/: One module per GIF (browse, complete, hover, validate, versions)
+      fixtures/: Profile settings.json (component sources, quiet editor) and templates/deploy.yml for local includes
+    how_it_works:
+    - VS Code starts with --remote-debugging-port; Playwright attaches with chromium.connectOverCDP
+    - Emulation.setDeviceMetricsOverride fixes the viewport so output size doesn't depend on the screen
+    - The OS pointer isn't captured, so a cursor element is drawn in the top document and moved with page.mouse
+    - Page.startScreencast frames only arrive on change; an ffmpeg concat list holds each frame until the next
 interfaces:
   Component:
     location: src/types/git-component.ts

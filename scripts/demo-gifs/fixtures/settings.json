@@ -1,0 +1,59 @@
+{
+  "workbench.startupEditor": "none",
+  "workbench.tips.enabled": false,
+  "workbench.colorTheme": "Dark Modern",
+  "editor.minimap.enabled": false,
+  "editor.fontSize": 15,
+  "editor.lineHeight": 24,
+  "editor.hover.delay": 300,
+  "editor.stickyScroll.enabled": false,
+  "editor.renderWhitespace": "none",
+  "telemetry.telemetryLevel": "off",
+  "update.mode": "none",
+  "extensions.autoCheckUpdates": false,
+  "extensions.autoUpdate": "off",
+  "extensions.ignoreRecommendations": true,
+  "workbench.enableExperiments": false,
+  "chat.disableAIFeatures": true,
+  "security.workspace.trust.enabled": false,
+  "git.enabled": false,
+  "breadcrumbs.enabled": false,
+  "window.commandCenter": false,
+  "workbench.layoutControl.enabled": false,
+  "window.restoreWindows": "none",
+  "files.autoSave": "off",
+  "workbench.secondarySideBar.defaultVisibility": "hidden",
+  "gitlabComponentHelper.logLevel": "ERROR",
+  "gitlabComponentHelper.componentSources": [
+    {
+      "name": "OpenTofu",
+      "path": "components/opentofu",
+      "gitlabInstance": "gitlab.com"
+    },
+    {
+      "name": "SAST",
+      "path": "components/sast",
+      "gitlabInstance": "gitlab.com"
+    },
+    {
+      "name": "Secret Detection",
+      "path": "components/secret-detection",
+      "gitlabInstance": "gitlab.com"
+    },
+    {
+      "name": "Code Quality",
+      "path": "components/code-quality",
+      "gitlabInstance": "gitlab.com"
+    }
+  ],
+  "workbench.statusBar.visible": true,
+  "editor.quickSuggestions": {
+    "other": true,
+    "comments": false,
+    "strings": true
+  },
+  "redhat.telemetry.enabled": false,
+  "yaml.schemaStore.enable": false,
+  "window.dialogStyle": "custom",
+  "editor.wordBasedSuggestions": "off"
+}
