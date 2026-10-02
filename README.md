@@ -32,6 +32,9 @@
 
 ## Quick start
 
+[![AICaC](https://img.shields.io/badge/AICaC-Comprehensive-success.svg)](https://github.com/eFAILution/AICaC)
+
+
 1. Install **GitLab Component Helper** from the Extensions view, or run `code --install-extension eFAILution.gitlab-component-helper`.
 2. Open a `.gitlab-ci.yml` and type `component:`. Suggestions come with versions already filled in.
 3. Hover any component URL to read its docs and inputs.
