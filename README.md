@@ -51,7 +51,7 @@ Create the token with the **`read_api`** scope, and ensure its user has at least
 
 ```yaml
 include:
-  - component: https://gitlab.com/components/terraform@v1.0.0
+  - component: gitlab.com/components/terraform@v1.0.0
     inputs:
       terraform_version: "1.5.0"
       workspace: "default"

@@ -1,13 +1,11 @@
 import * as vscode from 'vscode';
 import { Logger } from '../utils/logger';
 import { UrlParser } from '../services/component/urlParser';
-import { containsGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
-import { getGitRepositoryContext } from './componentDetector';
+import { createReferenceResolver } from './componentDetector';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
-
-const COMPONENT_LINE = /^(\s*-?\s*component:\s*)(\S+)/;
+import { matchComponentValue } from '../utils/componentReference';
 
 export class ComponentDocumentLinkProvider implements vscode.DocumentLinkProvider, vscode.Disposable {
   private logger = Logger.getInstance();
@@ -46,40 +44,25 @@ export class ComponentDocumentLinkProvider implements vscode.DocumentLinkProvide
     }
 
     const links: vscode.DocumentLink[] = [];
-    let gitContext: Awaited<ReturnType<typeof getGitRepositoryContext>> | null = null;
     const cacheManager = getComponentCacheManager();
     const cachedComponents = await cacheManager.getComponents();
+    const resolveReference = createReferenceResolver(document.uri);
 
     for (let lineIndex = 0; lineIndex < document.lineCount; lineIndex++) {
-      const lineText = document.lineAt(lineIndex).text;
-      const match = COMPONENT_LINE.exec(lineText);
+      const match = matchComponentValue(document.lineAt(lineIndex).text);
       if (!match) {
         continue;
       }
 
-      const prefix = match[1];
-      const rawUrl = match[2];
-      const startCol = prefix.length;
-      const endCol = startCol + rawUrl.length;
+      const startCol = match.start;
+      const endCol = startCol + match.value.length;
 
-      let expandedUrl = rawUrl;
-      if (containsGitLabVariables(rawUrl)) {
-        if (gitContext === null) {
-          gitContext = await getGitRepositoryContext();
-        }
-        if (gitContext.gitlabInstance) {
-          expandedUrl = expandComponentUrl(rawUrl, {
-            gitlabInstance: gitContext.gitlabInstance,
-            projectPath: gitContext.projectPath || '',
-            serverUrl: `https://${gitContext.gitlabInstance}`,
-            commitSha: gitContext.commitSha || 'main',
-          });
-        } else {
-          continue;
-        }
+      const resolved = await resolveReference(match.value);
+      if (!resolved.resolved) {
+        continue;
       }
 
-      const parsed = this.urlParser.parseCustomComponentUrl(expandedUrl);
+      const parsed = this.urlParser.parseCustomComponentUrl(resolved.url);
       if (!parsed) {
         continue;
       }

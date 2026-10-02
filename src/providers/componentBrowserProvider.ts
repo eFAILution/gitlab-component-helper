@@ -3,10 +3,10 @@ import { getComponentService } from '../services/component';
 import { ComponentCacheManager } from '../services/cache/componentCacheManager';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
 import type { ComponentParameter, Component } from './componentDetector';
+import { resolveServerFqdn } from './componentDetector';
 import { isVersionLookupShape } from '../services/component/versionLookupShape';
 import type { SourceGroup, ComponentGroup, ComponentVersion } from './componentBrowserTypes';
 import type { HoverContext } from './hoverContentBuilder';
-import { containsGitLabVariables } from '../utils/gitlabVariables';
 import { Logger } from '../utils/logger';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
 import { escapeHtml, renderInlineMarkdown } from '../webview/inlineMarkdown';
@@ -385,90 +385,10 @@ export class ComponentBrowserProvider {
       return;
     }
 
-    // Use the GitLab instance from the component or default to gitlab.com
-    const gitlabInstance = component.gitlabInstance || 'gitlab.com';
-
-    // Create the component reference
-    // Check if we should preserve GitLab variables in the URL
-    let componentUrl: string;
-
-    // If the component has a preserved URL with variables, use that
-    if (component.originalUrl && containsGitLabVariables(component.originalUrl)) {
-      componentUrl = component.originalUrl;
-      // Update version if different
-      if (component.version && !component.originalUrl.includes('@')) {
-        componentUrl += `@${component.version}`;
-      } else if (component.version && component.originalUrl.includes('@')) {
-        componentUrl = component.originalUrl.replace(/@[^@]*$/, `@${component.version}`);
-      }
-    } else {
-      // Create standard URL
-      componentUrl = `https://${gitlabInstance}/${component.sourcePath}/${component.name}@${component.version}`;
-    }
-
-    let insertion = `  - component: ${componentUrl}`;
-
-    // Add inputs if requested and component has parameters
-    if (includeInputs && component.parameters && component.parameters.length > 0) {
-      insertion += '\n    inputs:';
-
-      // Determine which parameters to include
-      let parametersToInclude = component.parameters;
-      if (selectedInputs && selectedInputs.length > 0) {
-        // Only include specifically selected inputs
-        parametersToInclude = component.parameters.filter(param => selectedInputs.includes(param.name));
-      }
-
-      for (const param of parametersToInclude) {
-        let defaultValue = param.default;
-
-        // Format default value based on type
-        if (defaultValue !== undefined) {
-          if (typeof defaultValue === 'string') {
-            // Check if it contains GitLab variables and preserve them
-            if (containsGitLabVariables(defaultValue)) {
-              defaultValue = `"${defaultValue}"`; // Keep variables as-is in quotes
-            } else {
-              defaultValue = `"${defaultValue}"`;
-            }
-          } else if (typeof defaultValue === 'boolean') {
-            defaultValue = defaultValue.toString();
-          } else if (typeof defaultValue === 'number') {
-            defaultValue = defaultValue.toString();
-          } else {
-            defaultValue = JSON.stringify(defaultValue);
-          }
-        } else {
-          // Provide placeholder based on type and required status
-          if (param.required) {
-            switch (param.type) {
-              case 'boolean':
-                defaultValue = 'true';
-                break;
-              case 'number':
-                defaultValue = '0';
-                break;
-              default:
-                defaultValue = '"TODO: set value"';
-            }
-          } else {
-            switch (param.type) {
-              case 'boolean':
-                defaultValue = 'false';
-                break;
-              case 'number':
-                defaultValue = '0';
-                break;
-              default:
-                defaultValue = '""';
-            }
-          }
-        }
-
-        const comment = param.required ? ' # required' : ' # optional';
-        insertion += `\n      ${param.name}: ${defaultValue}${comment}`;
-      }
-    }
+    // Gate on declared parameters so a parameterless component doesn't get a bare `inputs:` line.
+    const withInputs = includeInputs && (component.parameters?.length ?? 0) > 0;
+    const serverFqdn = await resolveServerFqdn(editor.document.uri);
+    const insertion = generateComponentText(component, withInputs, withInputs ? selectedInputs : [], null, serverFqdn);
 
     // Insert at cursor position
     editor.edit(editBuilder => {
@@ -552,7 +472,8 @@ export class ComponentBrowserProvider {
                 vscode.window.showErrorMessage(`Failed to fetch version ${version} of component ${active.name}`);
                 return;
               }
-              target = updatedComponent;
+              // Keep the reference as written, so a variable form like `${CI_SERVER_FQDN}/…` survives the version swap.
+              target = { ...updatedComponent, originalUrl: active.originalUrl };
             }
 
             if (active._hoverContext) {
@@ -642,10 +563,12 @@ export class ComponentBrowserProvider {
             if (updatedComponent) {
               // Carry the hover context forward so a later insert still edits in place rather than inserting anew.
               // Carry the documentation URL forward too: a cached version carries none, and it names the project rather
-              // than a version, so dropping it would silently break the Project URL link after a version switch.
+              // than a version, so dropping it would silently break the Project URL link after a version switch. And the
+              // reference as written, so an edit keeps a variable form like `${CI_SERVER_FQDN}/…`.
               active = {
                 ...updatedComponent,
                 documentationUrl: active.documentationUrl,
+                originalUrl: active.originalUrl,
                 _hoverContext: active._hoverContext,
               };
               // Send the updated component details to the webview, with the template-file URL precomputed
@@ -1663,7 +1586,8 @@ ${sourceErrors.size > 0 ? '\nErrors:\n' + Array.from(sourceErrors.entries()).map
     const parsedExisting = await this.parseExistingComponent(document, componentRange);
     const existingComponent = isExistingComponentShape(parsedExisting) ? parsedExisting : null;
 
-    // Generate the new component text with updated inputs
+    // Generate the new component text with updated inputs. No `serverFqdn`: an edit keeps the host form the line
+    // already uses — a variable reference round-trips via `originalUrl`, a literal host stays literal.
     const newComponentText = generateComponentText(
       component,
       includeInputs,

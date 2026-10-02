@@ -12,7 +12,7 @@ import * as assert from 'node:assert/strict';
 import { generateComponentText } from '../../src/providers/componentBrowserGenerate';
 
 suite('generateComponentText — URL construction', () => {
-  test('builds a standard URL from gitlabInstance + sourcePath + name + version', () => {
+  test('builds a scheme-less reference from gitlabInstance + sourcePath + name + version', () => {
     const result = generateComponentText(
       {
         name: 'basic-component',
@@ -23,7 +23,36 @@ suite('generateComponentText — URL construction', () => {
       },
       false,
     );
-    assert.strictEqual(result, '  - component: https://gitlab.com/group/project/basic-component@v1.0.0');
+    assert.strictEqual(result, '  - component: gitlab.com/group/project/basic-component@v1.0.0');
+  });
+
+  test('never emits a scheme — GitLab rejects `https://` as "the component path is not supported"', () => {
+    const result = generateComponentText(
+      {
+        name: 'yaml-schema-lint',
+        version: 'yaml-schema-lint-1',
+        sourcePath: 'yu-life/infrastructure/yulife-devops-shared-config',
+        gitlabInstance: 'gitlab.com',
+        parameters: [],
+      },
+      false,
+    );
+    assert.strictEqual(
+      result,
+      '  - component: gitlab.com/yu-life/infrastructure/yulife-devops-shared-config/yaml-schema-lint@yaml-schema-lint-1',
+    );
+  });
+
+  test('uses $CI_SERVER_FQDN when the component is on the target repository\'s instance', () => {
+    const component = { name: 'c', version: 'v1', sourcePath: 'group/project', gitlabInstance: 'gitlab.com', parameters: [] };
+    assert.strictEqual(
+      generateComponentText(component, false, [], null, 'gitlab.com'),
+      '  - component: $CI_SERVER_FQDN/group/project/c@v1',
+    );
+    assert.strictEqual(
+      generateComponentText(component, false, [], null, 'gitlab.example.com'),
+      '  - component: gitlab.com/group/project/c@v1',
+    );
   });
 
   test('falls back to "gitlab.com" when gitlabInstance is missing', () => {
@@ -31,7 +60,7 @@ suite('generateComponentText — URL construction', () => {
       { name: 'c', version: 'v1', sourcePath: 'group/project', parameters: [] },
       false,
     );
-    assert.strictEqual(result, '  - component: https://gitlab.com/group/project/c@v1');
+    assert.strictEqual(result, '  - component: gitlab.com/group/project/c@v1');
   });
 
   test('prefers originalUrl when it contains a bare GitLab variable, appending @version', () => {
@@ -84,7 +113,7 @@ suite('generateComponentText — URL construction', () => {
       },
       false,
     );
-    assert.strictEqual(result, '  - component: https://gitlab.com/group/project/c@v1.0.0');
+    assert.strictEqual(result, '  - component: gitlab.com/group/project/c@v1.0.0');
   });
 });
 
@@ -120,7 +149,7 @@ suite('generateComponentText — inputs section (includeInputs)', () => {
       true,
     );
 
-    assert.ok(result.includes('component: https://gitlab.com/g/p/p@v1.0.0'));
+    assert.ok(result.includes('component: gitlab.com/g/p/p@v1.0.0'));
     assert.ok(result.includes('inputs:'));
     assert.ok(result.includes('environment: "TODO: set value" # required'), result);
     assert.ok(result.includes('debug: false # optional'), result);
