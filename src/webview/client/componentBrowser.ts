@@ -90,22 +90,21 @@ function findVersion(componentName: string, version: string): VersionEntry | und
 }
 
 /**
- * Build the Details and Insert buttons for a component at a version.
+ * Build the Details and Insert buttons for a component.
  *
- * Built as elements with listeners rather than as markup with `onclick` text: the component name and version are set
- * by whoever publishes the component, and git accepts quotes and angle brackets in a tag name, so interpolating them
- * into HTML or into a handler's JavaScript lets a tag run code in this panel.
+ * They carry a `data-action` rather than a listener, so each click resolves the component and version from the
+ * enclosing card — the version the dropdown currently shows, not the one that was selected when they were built.
  */
-function actionButtons(componentName: string, version: string): HTMLButtonElement[] {
+function actionButtons(): HTMLButtonElement[] {
   const details = document.createElement('button');
   details.textContent = 'Details';
   details.dataset.role = 'details';
-  details.onclick = () => viewDetailsById(componentName, version);
+  details.dataset.action = 'viewDetails';
 
   const insert = document.createElement('button');
   insert.textContent = 'Insert';
   insert.dataset.role = 'insert';
-  insert.onclick = () => insertComponentById(componentName, version);
+  insert.dataset.action = 'insertComponent';
 
   return [details, insert];
 }
@@ -215,8 +214,7 @@ function handleVersionsLoaded(message: {
       const labels = message.versionLabels || {};
       const select = document.createElement('select');
       select.className = 'version-dropdown';
-      select.onchange = () => updateComponentVersion(componentName, select.value, projectId);
-      select.oncontextmenu = event => showContextMenu(event, componentName, select.value, projectId);
+      select.dataset.action = 'selectVersion';
       versions.forEach(v => {
         const option = document.createElement('option');
         option.value = v;
@@ -226,7 +224,7 @@ function handleVersionsLoaded(message: {
         }
         select.appendChild(option);
       });
-      actionsDiv.replaceChildren(select, ...actionButtons(componentName, defaultVersion));
+      actionsDiv.replaceChildren(select, ...actionButtons());
 
       const descElement = document.getElementById(`desc-${componentName}-${projectId}`);
       if (descElement && !document.getElementById(`version-info-${componentName}-${projectId}`)) {
@@ -241,7 +239,9 @@ function handleVersionsLoaded(message: {
       const label = document.createElement('span');
       label.className = 'single-version';
       label.textContent = singleVersion;
-      actionsDiv.replaceChildren(label, ...actionButtons(componentName, singleVersion));
+      // No dropdown to read from, so the card's `data-version` is what the buttons resolve against.
+      componentCard.dataset.version = singleVersion;
+      actionsDiv.replaceChildren(label, ...actionButtons());
     }
   }
 
@@ -273,9 +273,7 @@ function handleVersionsError(message: {
     const retry = document.createElement('button');
     retry.className = 'load-versions-btn';
     retry.textContent = 'Retry';
-    retry.onclick = () => loadComponentVersions(
-      message.componentName, message.sourcePath, message.gitlabInstance || 'gitlab.com', ''
-    );
+    retry.dataset.action = 'loadVersions';
 
     actionsDiv.replaceChildren(failure, retry);
   }
