@@ -4,6 +4,7 @@
  * inside the unit suite.
  */
 
+import { buildComponentReference } from '../utils/componentReference';
 import { containsGitLabVariables } from '../utils/gitlabVariables';
 
 /**
@@ -47,7 +48,8 @@ type ExistingComponent = { inputs?: Record<string, unknown> };
  *  - If `component.originalUrl` contains GitLab variables (e.g. `${CI_SERVER_FQDN}`), use it verbatim and either
  *    append `@version` or replace the existing trailing `@…` with the new version. This preserves user-written
  *    variable expressions on round-trip.
- *  - Otherwise rebuild the URL from `gitlabInstance`, `sourcePath`, `name`, and `version`.
+ *  - Otherwise rebuild the reference from `gitlabInstance`, `sourcePath`, `name`, and `version`, without a scheme —
+ *    GitLab rejects `https://` in a `component:` value. A component on `serverFqdn` is written as `$CI_SERVER_FQDN/…`.
  *
  * Inputs strategy:
  *  - With no `selectedInputs` and `includeInputs === false`, emit no `inputs:` section.
@@ -62,6 +64,8 @@ type ExistingComponent = { inputs?: Record<string, unknown> };
  * @param selectedInputs    Names of inputs to keep when editing — only these will appear in the `inputs:` block.
  * @param existingComponent Previous inputs to preserve verbatim during an edit; defaults are only used for newly
  *                          selected inputs that weren't already set.
+ * @param serverFqdn        GitLab host of the target file's repository (from its git remote), or `undefined` when the
+ *                          file isn't in a GitLab repository.
  * @returns                 YAML snippet ready to splice into a `.gitlab-ci.yml` `include:` list.
  */
 export function generateComponentText(
@@ -69,6 +73,7 @@ export function generateComponentText(
   includeInputs: boolean,
   selectedInputs: string[] = [],
   existingComponent: ExistingComponent | null = null,
+  serverFqdn?: string,
 ): string {
   const gitlabInstance = component.gitlabInstance || 'gitlab.com';
 
@@ -81,7 +86,13 @@ export function generateComponentText(
       componentUrl = component.originalUrl.replace(/@[^@]*$/, `@${component.version}`);
     }
   } else {
-    componentUrl = `https://${gitlabInstance}/${component.sourcePath}/${component.name}@${component.version}`;
+    componentUrl = buildComponentReference(
+      gitlabInstance,
+      component.sourcePath ?? '',
+      component.name,
+      component.version,
+      serverFqdn,
+    );
   }
 
   let insertion = `  - component: ${componentUrl}`;

@@ -27,7 +27,7 @@ jobs:
         run: npm ci
 
       - name: Run lint
-        run: npm run lint
+        run: npm run lint:ci
 
       - name: Run compile
         run: node esbuild.js

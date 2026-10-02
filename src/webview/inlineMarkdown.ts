@@ -1,9 +1,8 @@
 /**
  * HTML-escaping and inline-Markdown rendering for text shown in webviews (component descriptions).
  *
- * `vscode`-free and pure so the unit suite can drive it directly. The webview scripts carry a client-side
- * twin of `renderInlineMarkdown` (as an injected string, since it runs in the browser); both must escape and
- * format identically, and this is the reference the twin mirrors.
+ * `vscode`-free and pure, so the unit suite can drive it directly and the client bundles can import it — the webview
+ * and the extension host render descriptions through this same module.
  */
 
 /**
@@ -19,6 +18,21 @@ export function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/**
+ * Encode a value as a JavaScript string argument inside a double-quoted HTML event-handler attribute, e.g.
+ * `onclick="insertComponentById(${handlerArg(name)})"`.
+ *
+ * Two contexts, so two encodings, in order: `JSON.stringify` makes a JS string literal (escaping `"` and `\\`), then
+ * {@link escapeHtml} makes that safe inside the attribute. `escapeHtml` alone is not enough, because the browser decodes
+ * `&#39;` back to `'` before the handler runs, so a value containing a quote breaks out of `'...'` into code.
+ *
+ * @param value The value to pass; `undefined` becomes an empty string.
+ * @returns     Attribute-safe text that the handler sees as exactly one string literal equal to `value`.
+ */
+export function handlerArg(value: string | undefined): string {
+  return escapeHtml(JSON.stringify(value ?? ''));
 }
 
 /**

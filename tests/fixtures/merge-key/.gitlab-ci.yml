@@ -1,0 +1,7 @@
+include:
+  - local: "merge-key/templates/deploy.yml"
+    inputs:
+      job_name: deploy-prod
+      # Deliberately unknown: gives the test a diagnostic to wait for, so asserting the *absence* of a
+      # missing-required-input for the merge-inherited inputs cannot pass before validation has run.
+      bogus_input: oops
