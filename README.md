@@ -26,7 +26,7 @@
   <a href="#troubleshooting">Troubleshooting</a>
 </p>
 
-![Browsing and inserting a component from the Component Browser](https://github.com/user-attachments/assets/6e4ad12e-d3f5-4165-8b72-c59bda51ae38)
+![Searching the Component Browser, picking inputs, and inserting a component](https://github.com/user-attachments/assets/83dd2645-7cdc-4bfa-a6bc-4a315f0c1ea8)
 
 [GitLab CI/CD components](https://docs.gitlab.com/ci/components/) make pipelines reusable, but writing them means jumping between your editor, the catalog, and each component's docs to find the right path, version, and inputs. This extension brings all of that into the file you're editing.
 
@@ -49,13 +49,13 @@ The Component Browser lists every component from your configured projects and gr
 
 Context-aware completion for component paths, versions, and input names. GitLab CI/CD variables such as `$CI_SERVER_FQDN` and `$CI_PROJECT_PATH` are resolved in component URLs.
 
-![Autocompleting a component and its version](https://github.com/user-attachments/assets/a76ba19a-240b-4799-a08f-88a78a5cf004)
+![Autocompleting a component and picking its version](https://github.com/user-attachments/assets/84e9a936-ed33-471b-8f59-5e8126b23577)
 
 ### Docs on hover
 
 Hover a component to see its description, inputs, defaults, and version status. If a component has no description of its own, the opening paragraph of its `README.md` stands in.
 
-![Hover documentation for a component](https://github.com/user-attachments/assets/3c92f336-db04-4a68-80cf-43732d96b6f1)
+![Hovering a component and one of its inputs](https://github.com/user-attachments/assets/4c945758-e077-4890-8285-cf69dfb16891)
 
 ### Inputs that check themselves
 
@@ -69,8 +69,7 @@ include:
       workspace: "default"
 ```
 
-![Inserting component inputs](https://github.com/user-attachments/assets/098f4eaf-3c4a-45a8-9caf-9a1351730b93)
-![Validating component inputs](https://github.com/user-attachments/assets/54d4b2ce-ad84-4bbc-8cd7-911a01565536)
+![Fixing a mistyped input, then filling a local template's inputs](https://github.com/user-attachments/assets/97f44dd4-105b-4002-9bf5-8584cfee0940)
 
 ### Local includes too
 
@@ -91,6 +90,8 @@ When a component is pinned to a semantic version (`X.Y.Z`, optionally `v`-prefix
 - Hover shows `✓ up to date` or `⚠️ update available` next to your version.
 - An outdated pin gets a warning squiggle with an **Update to `X.Y.Z`** Quick Fix (`Ctrl+.` / `Cmd+.`).
 - **GitLab CI: Update All Component Versions to Latest** bumps every outdated pin in the file at once.
+
+![Updating an outdated pin with a Quick Fix, then updating the rest](https://github.com/user-attachments/assets/85ecce79-7187-42b3-9b97-c88437026e1c)
 
 Floating refs (`main`, `latest`, `~latest`), partial pins (`1`, `1.2`), and commit SHAs are left alone, and pre-releases are never suggested. The check runs when a CI file is opened or saved and reuses the version cache.
 
