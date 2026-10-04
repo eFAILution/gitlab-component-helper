@@ -1,11 +1,14 @@
 import * as vscode from 'vscode';
-import { getComponentUnderCursor, getGitRepositoryContext } from './componentDetector';
+import { createReferenceResolver, getComponentUnderCursor, resolveServerFqdn } from './componentDetector';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
-import { getVariableCompletions, containsGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
+import { getVariableCompletions } from '../utils/gitlabVariables';
+import { buildComponentReference, parseVersionCompletionPrefix } from '../utils/componentReference';
 import { Logger } from '../utils/logger';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { resolveLocalComponent } from './localComponentResolver';
-import { findCompletionInputContextAtLine, buildInputInsertValue, renderOptionValue } from './completionInputContext';
+import { chooseComponentVersion } from './componentBrowserTransform';
+import { readVersionPreferences } from './versionPreferenceSettings';
+import { findCompletionInputContextAtLine, buildInputInsertValue, renderOptionValue, allowedValuesFor } from './completionInputContext';
 import type { ComponentParameter } from '../types/git-component';
 import type { CachedComponent } from '../types/cache';
 
@@ -39,17 +42,17 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
 
     // Check for version completions after @
     this.logger.debug(`[CompletionProvider] Checking for version pattern in line prefix: "${linePrefix}"`, 'CompletionProvider');
-    const versionMatch = linePrefix.match(/https:\/\/[^@\s]+@(.*)$/);
+    const versionMatch = parseVersionCompletionPrefix(linePrefix);
     this.logger.debug(`[CompletionProvider] Version regex match result: ${versionMatch ? 'MATCHED' : 'NO MATCH'}`, 'CompletionProvider');
     if (versionMatch) {
       this.logger.debug(`[CompletionProvider] Detected version completion request after @`, 'CompletionProvider');
-      return this.provideVersionCompletions(linePrefix);
+      return this.provideVersionCompletions(linePrefix, document.uri);
     }
 
     // Suggest components after "component: "
     if (linePrefix.trim().endsWith('component:') || linePrefix.trim().endsWith('component: ')) {
       this.logger.debug(`[CompletionProvider] Detected component completion request`, 'CompletionProvider');
-      return this.provideComponentCompletions();
+      return this.provideComponentCompletions(document);
     }
 
     // Detect if we're in a component and suggest parameters
@@ -69,30 +72,31 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
   /**
    * Provide version/tag completions for a component URL after @
    */
-  private async provideVersionCompletions(linePrefix: string): Promise<vscode.CompletionItem[]> {
+  private async provideVersionCompletions(linePrefix: string, forUri: vscode.Uri): Promise<vscode.CompletionItem[]> {
     this.logger.debug(`[CompletionProvider] Starting version completions for: "${linePrefix}"`, 'CompletionProvider');
 
     // Extract the component URL before the @
-    const urlMatch = linePrefix.match(/(https:\/\/[^@\s]+)@(.*)$/);
+    const urlMatch = parseVersionCompletionPrefix(linePrefix);
     if (!urlMatch) {
       this.logger.warn(`[CompletionProvider] Could not parse component URL from line prefix`, 'CompletionProvider');
       return [];
     }
 
-    const componentUrlBase = urlMatch[1];
-    const currentVersionInput = urlMatch[2];
+    const componentUrlBase = urlMatch.base;
+    const currentVersionInput = urlMatch.partialVersion;
 
     this.logger.debug(`[CompletionProvider] Component URL base: ${componentUrlBase}`, 'CompletionProvider');
     this.logger.debug(`[CompletionProvider] Current version input: "${currentVersionInput}"`, 'CompletionProvider');
 
-    // Parse the component URL to extract GitLab instance, project path, and component/template name
-    // Accepts URLs like:
-    //   https://gitlab.com/components/opentofu/full-pipeline
-    //   https://gitlab.instance.com/group/project/componentName
-    //   https://gitlab.instance.com/group/project/templateName
-    // We'll treat the last path segment as the component/template name, and the rest as the project path
+    const resolved = await createReferenceResolver(forUri)(componentUrlBase);
+    if (!resolved.resolved) {
+      this.logger.debug(`[CompletionProvider] Can't resolve GitLab variables for version completion: ${componentUrlBase}`, 'CompletionProvider');
+      return [];
+    }
+
+    // The last path segment is the component/template name; the rest is the project path.
     try {
-      const url = new URL(componentUrlBase);
+      const url = new URL(resolved.url);
       const gitlabInstance = url.host;
       const pathSegments = url.pathname.split('/').filter(Boolean); // remove empty segments
       if (pathSegments.length < 2) {
@@ -141,8 +145,13 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       const filteredVersions = availableVersions.filter(version =>
         version.toLowerCase().includes(currentVersionInput.toLowerCase())
       );
+      // The version the component would be inserted with leads the list, so the 10-entry cap never drops it.
+      const chosenVersion = chooseComponentVersion(availableVersions, targetComponent, readVersionPreferences(), 'main');
+      const orderedVersions = filteredVersions.includes(chosenVersion)
+        ? [chosenVersion, ...filteredVersions.filter(version => version !== chosenVersion)]
+        : filteredVersions;
       // Limit to top 10 versions to avoid overwhelming the user
-      const versionsToShow = filteredVersions.slice(0, 10);
+      const versionsToShow = orderedVersions.slice(0, 10);
       for (const version of versionsToShow) {
         const item = new vscode.CompletionItem(version, vscode.CompletionItemKind.Reference);
         item.detail = `Version ${version}`;
@@ -150,12 +159,15 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
         // Set the insertion text to just the version (since we're after the @)
         item.insertText = version;
         // Add sort priority based on version type
-        if (version === 'main' || version === 'master') {
-          item.sortText = '0' + version; // High priority for main branches
+        if (version === chosenVersion) {
+          item.sortText = '0' + version;
+          item.preselect = true;
+        } else if (version === 'main' || version === 'master') {
+          item.sortText = '1' + version; // High priority for main branches
         } else if (version.match(/^\d+\.\d+\.\d+$/)) {
-          item.sortText = '1' + version; // Medium priority for semantic versions
+          item.sortText = '2' + version; // Medium priority for semantic versions
         } else {
-          item.sortText = '2' + version; // Lower priority for other versions
+          item.sortText = '3' + version; // Lower priority for other versions
         }
         completionItems.push(item);
       }
@@ -170,7 +182,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
   /**
    * Provide component completions after "component: "
    */
-  private async provideComponentCompletions(): Promise<vscode.CompletionItem[]> {
+  private async provideComponentCompletions(document: vscode.TextDocument): Promise<vscode.CompletionItem[]> {
     this.logger.debug(`[CompletionProvider] Providing component completions`, 'CompletionProvider');
 
     const cacheManager = getComponentCacheManager();
@@ -180,6 +192,8 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
 
     const completionItems: vscode.CompletionItem[] = [];
     const seenComponents = new Set<string>();
+    const preferences = readVersionPreferences();
+    const serverFqdn = await resolveServerFqdn(document.uri);
 
     for (const component of components) {
       // Create a unique key for each component to avoid duplicates
@@ -190,14 +204,16 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       }
       seenComponents.add(componentKey);
 
-      // Get the best version to suggest
-      let bestVersion = 'main';
-      if (component.availableVersions && component.availableVersions.length > 0) {
-        // Find the best version using priority logic
-        bestVersion = this.getBestVersionForComponent(component.availableVersions, component.name);
-      }
+      const bestVersion = chooseComponentVersion(component.availableVersions ?? [], component, preferences, 'main');
 
-      let componentUrl = `https://${component.gitlabInstance}/${component.sourcePath}/${component.name}`;
+      // Suggest the best version; the user can change it afterwards.
+      const componentUrl = buildComponentReference(
+        component.gitlabInstance,
+        component.sourcePath,
+        component.name,
+        bestVersion,
+        serverFqdn,
+      );
 
       const item = new vscode.CompletionItem(component.name, vscode.CompletionItemKind.Module);
       item.detail = `Component from ${component.source}`;
@@ -217,83 +233,12 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
 
       item.documentation = new vscode.MarkdownString(documentation);
 
-      // For now, suggest the URL with the best version - user can change the version later
-      if (componentUrl.includes('@')) {
-        const urlBase = componentUrl.split('@')[0];
-        componentUrl = `${urlBase}@${bestVersion}`;
-      } else {
-        componentUrl = `${componentUrl}@${bestVersion}`;
-      }
-
       item.insertText = componentUrl;
       completionItems.push(item);
     }
 
     this.logger.debug(`[CompletionProvider] Created ${completionItems.length} component completion items`, 'CompletionProvider');
     return completionItems;
-  }
-
-  /**
-   * Get the best version for a component based on priority logic
-   */
-  private getBestVersionForComponent(availableVersions: string[], componentName: string): string {
-    if (!availableVersions || availableVersions.length === 0) {
-      return 'main';
-    }
-
-    // Check user preferences first
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-    const defaultVersions = config.get<Record<string, string>>('defaultVersions', {});
-    const alwaysLatest = config.get<string[]>('alwaysUseLatest', []);
-
-    if (alwaysLatest.includes(componentName)) {
-      // User wants always latest - find the highest semantic version or fall back to main
-      const semanticVersions = availableVersions.filter(v => v.match(/^\d+\.\d+\.\d+$/));
-      if (semanticVersions.length > 0) {
-        // Sort semantic versions in descending order
-        semanticVersions.sort((a, b) => {
-          const aParts = a.split('.').map(Number);
-          const bParts = b.split('.').map(Number);
-          for (let i = 0; i < 3; i++) {
-            if (aParts[i] !== bParts[i]) {
-              return bParts[i] - aParts[i];
-            }
-          }
-          return 0;
-        });
-        return semanticVersions[0];
-      }
-    }
-
-    if (defaultVersions[componentName] && availableVersions.includes(defaultVersions[componentName])) {
-      return defaultVersions[componentName];
-    }
-
-    // Default priority: main > master > highest semantic version > first available
-    if (availableVersions.includes('main')) {
-      return 'main';
-    }
-    if (availableVersions.includes('master')) {
-      return 'master';
-    }
-
-    // Find highest semantic version
-    const semanticVersions = availableVersions.filter(v => v.match(/^\d+\.\d+\.\d+$/));
-    if (semanticVersions.length > 0) {
-      semanticVersions.sort((a, b) => {
-        const aParts = a.split('.').map(Number);
-        const bParts = b.split('.').map(Number);
-        for (let i = 0; i < 3; i++) {
-          if (aParts[i] !== bParts[i]) {
-            return bParts[i] - aParts[i];
-          }
-        }
-        return 0;
-      });
-      return semanticVersions[0];
-    }
-
-    return availableVersions[0];
   }
 
   private provideParameterCompletions(parameters: ComponentParameter[]): vscode.CompletionItem[] {
@@ -389,16 +334,21 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       // it also declares a default — the default is just the pre-filled choice, not a reason to hide the others.
       if (context.slot === 'value') {
         const param = component.parameters.find((p: ComponentParameter) => p.name === context.inputName);
-        if (!param?.options?.length) {
+        // A `boolean` input is a closed two-value enum, so offer `true`/`false` even though it declares no `options:`.
+        const values = param ? allowedValuesFor(param) : undefined;
+        if (!values?.length) {
           this.logger.debug(`[CompletionProvider] Value slot for ${context.inputName} has no options to offer`, 'CompletionProvider');
           return null;
         }
-        return param.options.map((value, index) => {
+        return values.map((value, index) => {
           const rendered = renderOptionValue(value);
           const item = new vscode.CompletionItem(String(value), vscode.CompletionItemKind.EnumMember);
           item.insertText = rendered;
-          item.detail = `${param.type || 'string'} option`;
-          // Preserve the declared order of `options:` in the dropdown.
+          // Flag the declared default rather than reordering around it — the list stays in a stable, scannable
+          // order (`true` before `false`, or the spec's own `options:` order) whatever the default happens to be.
+          const isDefault = param?.default !== undefined && param.default === value;
+          item.detail = `${param?.type || 'string'} option${isDefault ? ' (default)' : ''}`;
+          // Preserve the declared order of the allowed values in the dropdown.
           item.sortText = String(index).padStart(4, '0');
           return item;
         });
@@ -443,32 +393,19 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
   // Helper method to find component in cache (similar to validation provider).
   // `forUri` is the active document's URI — used so variable expansion picks
   // the GitLab host matching the file's containing repo, not workspace[0].
-  private async findComponentInCache(componentUrl: string, forUri?: vscode.Uri): Promise<CachedComponent | null> {
+  private async findComponentInCache(componentUrl: string, forUri: vscode.Uri): Promise<CachedComponent | null> {
     try {
       const cacheManager = getComponentCacheManager();
       const components = await cacheManager.getComponents();
 
-      // Expand GitLab variables (e.g. $CI_SERVER_FQDN) before parsing, otherwise
-      // `new URL()` below throws and we never find the component in the cache.
-      let resolvedUrl = componentUrl;
-      if (containsGitLabVariables(componentUrl)) {
-        const gitContext = await getGitRepositoryContext(forUri);
-        if (gitContext.gitlabInstance) {
-          resolvedUrl = expandComponentUrl(componentUrl, {
-            gitlabInstance: gitContext.gitlabInstance,
-            projectPath: gitContext.projectPath,
-            serverUrl: `https://${gitContext.gitlabInstance}`,
-            commitSha: gitContext.commitSha || 'main'
-          });
-          this.logger.debug(`[CompletionProvider] Expanded component URL with variables: ${componentUrl} -> ${resolvedUrl}`, 'CompletionProvider');
-        } else {
-          this.logger.debug(`[CompletionProvider] Component URL contains GitLab variables but no Git context available to expand: ${componentUrl}`, 'CompletionProvider');
-          return null;
-        }
+      const resolved = await createReferenceResolver(forUri)(componentUrl);
+      if (!resolved.resolved) {
+        this.logger.debug(`[CompletionProvider] Can't resolve GitLab variables in component URL: ${componentUrl}`, 'CompletionProvider');
+        return null;
       }
 
       // Parse the component URL to get instance, project path, and component name
-      const url = new URL(resolvedUrl.split('@')[0]); // Remove version if present
+      const url = new URL(resolved.url.split('@')[0]); // Remove version if present
       const gitlabInstance = url.host;
       const pathSegments = url.pathname.split('/').filter(Boolean);
 

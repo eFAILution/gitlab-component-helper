@@ -17,6 +17,7 @@
     ".vscode-test",
     "out",
     "out-test",
-    "tests/extension-host"
+    "tests/extension-host",
+    "src/webview/client"
   ]
 }

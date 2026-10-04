@@ -1,0 +1,30 @@
+body {
+  font-family: var(--vscode-font-family);
+  color: var(--vscode-editor-foreground);
+  padding: 20px;
+  background-color: var(--vscode-editor-background);
+}
+
+.guidance {
+  background-color: var(--vscode-panel-background);
+  padding: 20px;
+  border-radius: 5px;
+  margin: 20px 0;
+}
+
+pre {
+  background-color: var(--vscode-textCodeBlock-background);
+  padding: 10px;
+  border-radius: 3px;
+  overflow-x: auto;
+}
+
+button {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  padding: 8px 16px;
+  border-radius: 2px;
+  cursor: pointer;
+  margin-top: 10px;
+}
