@@ -392,25 +392,57 @@ errors:
         stack (conventional-changelog@8 / writer@9)
       reference: .github/dependabot.yml + package.json; see huntridge-labs/argus#318
   demo_gif_recording_fails:
-    symptom: npm run record in scripts/demo-gifs fails or produces a wrong-looking GIF
+    symptom: npm run record in scripts/demo-gifs fails or produces a wrong-looking
+      GIF
     causes:
-    - cause: 'listen EINVAL on .../1.13-main.sock or "IPC handle is longer than 103 chars"'
-      solution: Point GCH_DEMO_DIR at a short folder named gch-demo*, e.g. /tmp/gch-demo2 (default /tmp/gch-demo).
-        Other names are refused because the folder is wiped on every run
-    - cause: 'mach_port_rendezvous ... Permission denied, or "Starting inspector failed: operation not permitted"'
+    - cause: listen EINVAL on .../1.13-main.sock or "IPC handle is longer than 103
+        chars"
+      solution: Point GCH_DEMO_DIR at a short folder named gch-demo*, e.g. /tmp/gch-demo2
+        (default /tmp/gch-demo). Other names are refused because the folder is wiped
+        on every run
+    - cause: 'mach_port_rendezvous ... Permission denied, or "Starting inspector failed:
+        operation not permitted"'
       solution: Run outside the command sandbox; VS Code can't start inside it
-    - cause: VS Code never wrote DevToolsActivePort, or a stray instance from a crashed run holds the profile
-      solution: pkill -9 -f "user-data-dir=${GCH_DEMO_DIR:-/tmp/gch-demo}/profile" and run again
+    - cause: VS Code never wrote DevToolsActivePort, or a stray instance from a crashed
+        run holds the profile
+      solution: pkill -9 -f "user-data-dir=${GCH_DEMO_DIR:-/tmp/gch-demo}/profile"
+        and run again
     - cause: Command Palette did not highlight a command
-      solution: The command title changed in VS Code; update the name in the scene or lib/vscode.mjs
+      solution: The command title changed in VS Code; update the name in the scene
+        or lib/vscode.mjs
     - cause: An empty "Drag a view here" pane or a side bar shows up
-      solution: prepareScene hides side bars by checking visibility; check the .part.* selectors still match
+      solution: prepareScene hides side bars by checking visibility; check the .part.*
+        selectors still match
     - cause: Typing lands at the wrong indent or Enter accepts a suggestion
-      solution: Scenes rely on fixtures/settings.json (wordBasedSuggestions off) and VS Code's YAML auto-indent;
-        re-check those after a VS Code update
+      solution: Scenes rely on fixtures/settings.json (wordBasedSuggestions off) and
+        VS Code's YAML auto-indent; re-check those after a VS Code update
     - cause: A webview element is never found
-      solution: Webviews are out-of-process frames that only attach while the script is connected; open the
-        panel inside the same run and use webviewFrame(page, selector)
+      solution: Webviews are out-of-process frames that only attach while the script
+        is connected; open the panel inside the same run and use webviewFrame(page,
+        selector)
+    common_causes:
+    - listen EINVAL on .../1.13-main.sock or "IPC handle is longer than 103 chars"
+    - 'mach_port_rendezvous ... Permission denied, or "Starting inspector failed:
+      operation not permitted"'
+    - VS Code never wrote DevToolsActivePort, or a stray instance from a crashed run
+      holds the profile
+    - Command Palette did not highlight a command
+    - An empty "Drag a view here" pane or a side bar shows up
+    - Typing lands at the wrong indent or Enter accepts a suggestion
+    - A webview element is never found
+    solutions:
+    - Point GCH_DEMO_DIR at a short folder named gch-demo*, e.g. /tmp/gch-demo2 (default
+      /tmp/gch-demo). Other names are refused because the folder is wiped on every
+      run
+    - Run outside the command sandbox; VS Code can't start inside it
+    - pkill -9 -f "user-data-dir=${GCH_DEMO_DIR:-/tmp/gch-demo}/profile" and run again
+    - The command title changed in VS Code; update the name in the scene or lib/vscode.mjs
+    - prepareScene hides side bars by checking visibility; check the .part.* selectors
+      still match
+    - Scenes rely on fixtures/settings.json (wordBasedSuggestions off) and VS Code's
+      YAML auto-indent; re-check those after a VS Code update
+    - Webviews are out-of-process frames that only attach while the script is connected;
+      open the panel inside the same run and use webviewFrame(page, selector)
 debugging:
   enable_debug_logs:
     steps:
