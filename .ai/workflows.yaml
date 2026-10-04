@@ -146,14 +146,16 @@ workflows:
     - ffmpeg on PATH
     - Network access to gitlab.com (scenes use public components/opentofu, sast, secret-detection, code-quality)
     - Run outside any command sandbox; VS Code needs its mach port and debug port
+    - Root dependencies installed (npm ci at the repo root); vsce package runs the root vscode:prepublish build
     steps:
     - action: install_recorder_dependencies
-      command: cd scripts/demo-gifs && npm install
+      command: cd scripts/demo-gifs && npm ci
       note: Own package.json/lock, separate from the extension's; root npm install never touches it
     - action: record
       command: npm run record
       note: 'All scenes, or name some: npm run record -- hover versions. Packages the extension with vsce,
-        installs it into a throwaway profile under /tmp/gch-demo (GCH_DEMO_DIR), drives VS Code over CDP,
+        installs it into a throwaway profile under /tmp/gch-demo (GCH_DEMO_DIR, which is wiped each run and must be
+        named gch-demo*), drives VS Code over CDP on a free debug port,
         writes out/<scene>.gif and out/<scene>-review.png'
     - action: privacy_review
       check: Open every out/<scene>-review.png (one tile per second) and confirm no names, paths, accounts,

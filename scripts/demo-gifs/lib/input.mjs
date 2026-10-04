@@ -18,6 +18,7 @@ export async function showCursor(page, x, y) {
     el.style.cssText = `position:fixed;left:0;top:0;width:22px;height:28px;z-index:2147483647;pointer-events:none;transform:translate(${x}px,${y}px);background:url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}") no-repeat`;
     document.body.appendChild(el);
   }, { id: CURSOR_ID, svg: CURSOR_SVG, x, y });
+  await page.mouse.move(x, y);
   cursor = { x, y };
 }
 

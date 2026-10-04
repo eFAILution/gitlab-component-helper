@@ -11,10 +11,10 @@ import * as versions from './scenes/versions.mjs';
 import { showCursor } from './lib/input.mjs';
 import { Recorder, encodeGif, writeReviewSheet } from './lib/recorder.mjs';
 import { launchVsCode, prepareScene, runCommand, sleep, stopVsCode, webviewFrame } from './lib/vscode.mjs';
-import { installExtension, resetWorkDir } from './lib/workspace.mjs';
+import { installExtension, readFixtureSettings, resetWorkDir } from './lib/workspace.mjs';
 
 const SCENES = { browse, complete, hover, validate, versions };
-const SOURCE_COUNT = 4;
+const SOURCE_COUNT = readFixtureSettings()['gitlabComponentHelper.componentSources'].length;
 
 /** Open the Component Browser once so every source is cached before the first take. */
 async function warmCache(page) {

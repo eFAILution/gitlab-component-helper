@@ -25,7 +25,8 @@ export async function perform(page) {
   await page.keyboard.press('Enter');
   await sleep(1500);
   // Drop the version that came with the suggestion to show the version picker.
-  await press(page, 'Backspace', 5);
+  const line = await page.locator('.view-line', { hasText: 'opentofu/plan@' }).first().innerText();
+  await press(page, 'Backspace', line.trimEnd().length - line.lastIndexOf('@') - 1);
   await sleep(600);
   await page.keyboard.press('Control+Space');
   await sleep(1800);

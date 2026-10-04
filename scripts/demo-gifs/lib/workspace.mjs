@@ -24,6 +24,10 @@ export function installExtension() {
   ], { stdio: 'inherit' });
 }
 
+export function readFixtureSettings() {
+  return JSON.parse(fs.readFileSync(path.join(FIXTURES_DIR, 'settings.json'), 'utf8'));
+}
+
 export function writeWorkspaceFile(relativePath, content) {
   const target = path.join(WORKSPACE_DIR, relativePath);
   fs.mkdirSync(path.dirname(target), { recursive: true });

@@ -1,9 +1,9 @@
 // Launches VS Code with a debug port and drives the workbench through Playwright over CDP.
+import fs from 'node:fs';
+import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
-import {
-  DEBUG_PORT, DEVICE_SCALE, EXTENSIONS_DIR, PROFILE_DIR, VIEWPORT, VSCODE_BIN, WORKSPACE_DIR,
-} from './config.mjs';
+import { DEVICE_SCALE, EXTENSIONS_DIR, PROFILE_DIR, VIEWPORT, VSCODE_BIN, WORKSPACE_DIR } from './config.mjs';
 import { writeWorkspaceFile } from './workspace.mjs';
 
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -20,13 +20,17 @@ async function poll(attempt, attempts = LAUNCH_ATTEMPTS) {
   return undefined;
 }
 
-export async function launchVsCode() {
-  const child = spawn(VSCODE_BIN, [
-    `--remote-debugging-port=${DEBUG_PORT}`, `--user-data-dir=${PROFILE_DIR}`, `--extensions-dir=${EXTENSIONS_DIR}`,
-    '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--new-window', WORKSPACE_DIR,
-  ], { stdio: 'ignore' });
-  const browser = await poll(() => chromium.connectOverCDP(`http://127.0.0.1:${DEBUG_PORT}`));
-  if (!browser) throw new Error(`VS Code never opened its debug port ${DEBUG_PORT}`);
+/** Port 0 lets Chromium pick a free port and write it here, so we always attach to the copy we just started. */
+async function readDebugPort() {
+  const file = path.join(PROFILE_DIR, 'DevToolsActivePort');
+  return poll(async () => Number(fs.readFileSync(file, 'utf8').split('\n')[0]) || undefined);
+}
+
+async function attach(child) {
+  const port = await readDebugPort();
+  if (!port) throw new Error('VS Code never wrote DevToolsActivePort');
+  const browser = await poll(() => chromium.connectOverCDP(`http://127.0.0.1:${port}`));
+  if (!browser) throw new Error(`VS Code never answered on debug port ${port}`);
   const page = await poll(async () => browser.contexts().flatMap((c) => c.pages()).find((p) => p.url().includes('workbench')));
   if (!page) throw new Error('VS Code workbench window not found');
   await page.waitForSelector('.monaco-workbench', { timeout: 30000 });
@@ -35,6 +39,19 @@ export async function launchVsCode() {
   await cdp.send('Emulation.setDeviceMetricsOverride', { ...VIEWPORT, deviceScaleFactor: DEVICE_SCALE, mobile: false });
   await sleep(800);
   return { browser, page, cdp, child };
+}
+
+export async function launchVsCode() {
+  const child = spawn(VSCODE_BIN, [
+    '--remote-debugging-port=0', `--user-data-dir=${PROFILE_DIR}`, `--extensions-dir=${EXTENSIONS_DIR}`,
+    '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--new-window', WORKSPACE_DIR,
+  ], { stdio: 'ignore' });
+  try {
+    return await attach(child);
+  } catch (error) {
+    child.kill('SIGKILL');
+    throw error;
+  }
 }
 
 export async function stopVsCode({ browser, child }) {
