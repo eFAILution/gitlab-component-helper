@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.22](https://github.com/eFAILution/gitlab-component-helper/compare/0.16.12...0.17.22) (2026-10-04)
+
+### Bug Fixes
+
+* **ai:** repair dangling component references in architecture.yaml ([#298](https://github.com/eFAILution/gitlab-component-helper/issues/298)) ([8a93745](https://github.com/eFAILution/gitlab-component-helper/commit/8a9374500072e47cea57eb9aece48711a36bbe6d)), closes [#275](https://github.com/eFAILution/gitlab-component-helper/issues/275) [#271](https://github.com/eFAILution/gitlab-component-helper/issues/271) [#158](https://github.com/eFAILution/gitlab-component-helper/issues/158) [#290](https://github.com/eFAILution/gitlab-component-helper/issues/290)
+* **browser:** make version preferences save ([#313](https://github.com/eFAILution/gitlab-component-helper/issues/313)) ([7d253a4](https://github.com/eFAILution/gitlab-component-helper/commit/7d253a44a687eff584a85ab72162e9bedcd2c904))
+* **completion:** a !reference tag anywhere in the file breaks all input completion ([#263](https://github.com/eFAILution/gitlab-component-helper/issues/263)) ([d3e81de](https://github.com/eFAILution/gitlab-component-helper/commit/d3e81debb42ecf64f9f6797569a026b1524260ea))
+* **completion:** treat boolean inputs as booleans, not quoted strings ([#283](https://github.com/eFAILution/gitlab-component-helper/issues/283)) ([a2f4b09](https://github.com/eFAILution/gitlab-component-helper/commit/a2f4b09bb006a57aae4d976fca7fd9a43994c91d))
+* **component:** drop the https:// scheme from inserted components ([#323](https://github.com/eFAILution/gitlab-component-helper/issues/323)) ([81cab30](https://github.com/eFAILution/gitlab-component-helper/commit/81cab30f2f5462aed6565907daf7097454662898))
+* **details:** make Refresh Versions work in the browser-opened details panel ([#280](https://github.com/eFAILution/gitlab-component-helper/issues/280)) ([e3cac4f](https://github.com/eFAILution/gitlab-component-helper/commit/e3cac4f9628788e3cb3364a1455d1d263dbfcbdc)), closes [#281](https://github.com/eFAILution/gitlab-component-helper/issues/281)
+* **details:** share one message handler across both details-panel entry points ([#300](https://github.com/eFAILution/gitlab-component-helper/issues/300)) ([8f1a991](https://github.com/eFAILution/gitlab-component-helper/commit/8f1a9911574939a49dd6e9ec6048cf28fa11e280))
+* **parser:** merge YAML merge keys (`<<:`) as GitLab does ([#274](https://github.com/eFAILution/gitlab-component-helper/issues/274)) ([8bd3ed0](https://github.com/eFAILution/gitlab-component-helper/commit/8bd3ed0e6ca8f8d91ed9c04ed9608c0f8cb129a9))
+* **parser:** tolerate any local YAML tag, not just sequence !reference ([#273](https://github.com/eFAILution/gitlab-component-helper/issues/273)) ([42d310c](https://github.com/eFAILution/gitlab-component-helper/commit/42d310c33770e3d4dff30001367da62fc9e53d1c))
+* **providers:** match cached component templatePath regardless of ref ([#276](https://github.com/eFAILution/gitlab-component-helper/issues/276)) ([#278](https://github.com/eFAILution/gitlab-component-helper/issues/278)) ([dfed502](https://github.com/eFAILution/gitlab-component-helper/commit/dfed5024f9655d5cd272b122face22414811034a))
+* **webview:** restore version switching in the component browser and details panel ([#290](https://github.com/eFAILution/gitlab-component-helper/issues/290)) ([324dc3d](https://github.com/eFAILution/gitlab-component-helper/commit/324dc3d3d2d7a12fa2dc6d0e0291166c6b9744b3))
+
 ## [0.16.12](https://github.com/eFAILution/gitlab-component-helper/compare/0.16.11...0.16.12) (2026-09-01)
 
 ## [0.16.11](https://github.com/eFAILution/gitlab-component-helper/compare/0.16.10...0.16.11) (2026-08-10)
