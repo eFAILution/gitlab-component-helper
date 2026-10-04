@@ -427,6 +427,38 @@ decisions:
     - .mocharc.cjs
     - package.json (test scripts)
     title: Mocha Over Jest
+  DEMO_GIFS_RECORDED_BY_SCRIPT:
+    date: '2026-10'
+    status: accepted
+    context: README/Marketplace GIFs were hand-recorded, went stale as the UI changed, and risked showing the
+      maintainer's own projects and paths
+    decision: Record them with scripts/demo-gifs (Playwright driving a packaged VSIX in a throwaway profile) and
+      host the output as GitHub user-attachments linked from README.md
+    rationale:
+    - Re-recording after a UI change is one command, and every take looks the same
+    - Fresh profile, neutral my-pipelines folder and public gitlab.com components keep personal details out
+    - Installing the packaged VSIX keeps "[Extension Development Host]" out of the title bar
+    - user-attachments URLs are public for a public repo and render on the Marketplace; committing GIFs would
+      grow the repo by ~4 MB per re-record
+    consequences:
+      positive:
+      - Demos can be refreshed with every UI change
+      - Review sheets make the privacy check quick
+      negative:
+      - macOS + local VS Code only; not run in CI
+      - user-attachments links stop rendering publicly if the repo goes private, and GitHub doesn't promise
+        they last forever
+    alternatives_considered:
+    - name: manual screen recording
+      rejected_because: Inconsistent, slow to redo, easy to leak personal details
+    - name: commit GIFs under images/
+      rejected_because: Repo growth on every re-record
+    - name: extensionDevelopmentPath instead of a VSIX
+      rejected_because: Title bar shows [Extension Development Host]
+    references:
+    - scripts/demo-gifs/record.mjs
+    - .ai/workflows.yaml (record_demo_gifs)
+    title: Demo GIFs Recorded By Script
 future_decisions:
 - question: Should we support other CI/CD platforms (GitHub Actions, CircleCI)?
   status: under_consideration

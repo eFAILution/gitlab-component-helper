@@ -1,0 +1,16 @@
+spec:
+  inputs:
+    environment:
+      description: Where to deploy.
+      options: [staging, production]
+    app_name:
+      description: Name of the app to deploy.
+    replicas:
+      type: number
+      default: 2
+      description: How many pods to run.
+---
+deploy-$[[ inputs.environment ]]:
+  stage: deploy
+  script:
+    - ./deploy.sh "$[[ inputs.app_name ]]" "$[[ inputs.environment ]]" "$[[ inputs.replicas ]]"
