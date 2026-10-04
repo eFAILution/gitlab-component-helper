@@ -138,6 +138,40 @@ workflows:
       command: npm test
     - action: commit_changes
       command: 'git commit -m ''chore: update dependencies'''
+  record_demo_gifs:
+    description: Re-record the README demo GIFs (browse, complete, hover, validate, versions) after a UI change
+    location: scripts/demo-gifs/
+    prerequisites:
+    - macOS with VS Code installed at /Applications (override with VSCODE_BIN / VSCODE_CLI)
+    - ffmpeg on PATH
+    - Network access to gitlab.com (scenes use public components/opentofu, sast, secret-detection, code-quality)
+    - Run outside any command sandbox; VS Code needs its mach port and debug port
+    - Root dependencies installed (npm ci at the repo root); vsce package runs the root vscode:prepublish build
+    steps:
+    - action: install_recorder_dependencies
+      command: cd scripts/demo-gifs && npm ci
+      note: Own package.json/lock, separate from the extension's; root npm install never touches it
+    - action: record
+      command: npm run record
+      note: 'All scenes, or name some: npm run record -- hover versions. Packages the extension with vsce,
+        installs it into a throwaway profile under /tmp/gch-demo (GCH_DEMO_DIR, which is wiped each run and must be
+        named gch-demo*), drives VS Code over CDP on a free debug port,
+        writes out/<scene>.gif and out/<scene>-review.png'
+    - action: privacy_review
+      check: Open every out/<scene>-review.png (one tile per second) and confirm no names, paths, accounts,
+        private projects or tokens appear. The profile is fresh and the folder is my-pipelines, but check anyway
+    - action: publish
+      steps:
+      - Drag the GIFs into a comment on the README PR on GitHub and post it
+      - Copy the github.com/user-attachments/assets/<id> URLs from the comment into README.md
+      - Confirm each URL loads without logging in (curl -sL -o /dev/null -w '%{http_code}' <url> returns 200)
+      note: GIFs are not committed; see decisions.yaml DEMO_GIFS_RECORDED_BY_SCRIPT
+    - action: add_or_change_a_scene
+      location: scripts/demo-gifs/scenes/{name}.mjs
+      contract: Export cursorStart, prepare(page) and perform(page); register it in SCENES in record.mjs
+      helpers: lib/vscode.mjs (prepareScene, runCommand, webviewFrame), lib/input.mjs (moveTo, clickOn, typeSlow,
+        wordPosition, scrollIntoView)
+    reference: scripts/demo-gifs/record.mjs
 common_commands:
   compile: npm run compile
   watch: npm run watch
@@ -145,6 +179,7 @@ common_commands:
   debug: F5 (in VS Code)
   package: npm run package
   lint: npm run lint
+  lint_ci: npm run lint:ci (eslint + stylelint with GitHub annotation formatters; run by CI)
 git_workflow:
   branch_naming: feature/description or fix/description
   commit_format: 'type(scope): description'

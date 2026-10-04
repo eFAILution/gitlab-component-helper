@@ -4,14 +4,13 @@ import { getComponentCacheManager } from '../services/cache/componentCacheManage
 import { parseYamlDocuments, findDocumentWith } from '../utils/yamlParser';
 import { Component, ComponentParameter } from '../types/git-component';
 import { Logger } from '../utils/logger';
-import { expandComponentUrl, containsGitLabVariables } from '../utils/gitlabVariables';
+import { createReferenceResolver } from './componentDetector';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
-import { spawn } from 'child_process';
 import { resolveLocalIncludeOutcome, isUnsupportedLocalPath } from './localComponentResolver';
 import { attachDiagnosticMetadata, readDiagnosticMetadata } from './validationMetadata';
+import { renderDefaultValue } from './completionInputContext';
 import { isAuthError } from '../errors';
 import type { MissingRequiredInputMetadata } from './validationMetadata';
-import type { GitApi, GitRepository } from '../types/vscode-git';
 import type { CachedComponent } from '../types/cache';
 import {
     collectSemverComponentBases,
@@ -176,6 +175,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         const rawIncludes: unknown[] = Array.isArray(parsedYaml.include) ? parsedYaml.include : [parsedYaml.include];
         const includes: IncludeEntry[] = rawIncludes.filter(isIncludeEntry);
         this.logger.debug(`[ValidationProvider] Found ${includes.length} include entries`, 'ValidationProvider');
+        const resolveReference = createReferenceResolver(document.uri);
 
         for (let includeIndex = 0; includeIndex < includes.length; includeIndex++) {
             const include = includes[includeIndex];
@@ -189,92 +189,34 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                 this.logger.debug(`[ValidationProvider] Include object:`, 'ValidationProvider');
                 this.logger.debug(JSON.stringify(include, null, 2), 'ValidationProvider');
 
-                // Check if component URL contains GitLab variables and expand them
-                let expandedUrl = componentUrl;
-                if (containsGitLabVariables(componentUrl)) {
-                    this.logger.debug(`[ValidationProvider] Component URL contains variables, expanding: ${componentUrl}`, 'ValidationProvider');
+                const resolved = await resolveReference(componentUrl);
+                if (!resolved.resolved) {
+                    const { reason } = resolved;
+                    const isNonGitlabRepo = reason.kind === 'non-gitlab-repo';
+                    const message = isNonGitlabRepo
+                        ? `Component URL contains unresolved GitLab variables: '${componentUrl}'. This project is hosted on ${reason.hostname}, not GitLab. GitLab Component Helper requires a GitLab repository to resolve CI/CD variables like $CI_SERVER_FQDN and $CI_PROJECT_PATH.`
+                        : `Component URL contains unresolved GitLab variables: '${componentUrl}'. Configure component sources in settings to resolve these variables.`;
 
-                    // Try to get some context from workspace/git for expansion.
-                    // Pass the document URI so multi-repo workspaces resolve to
-                    // the GitLab host of the file's containing repo.
-                    const workspaceContext = await this.getWorkspaceContext(document.uri);
+                    const line = this.findLineForComponent(document, includes, includeIndex);
+                    const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
+                    const diagnostic = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Information);
+                    diagnostic.code = 'unresolved-variables';
+                    diagnostic.source = 'gitlab-component-helper';
+                    attachDiagnosticMetadata(diagnostic, {
+                        code: 'unresolved-variables',
+                        componentUrl,
+                        expandedUrl: reason.kind === 'incomplete' ? reason.expandedUrl : componentUrl,
+                        includeInputs: include.inputs || {},
+                        isNonGitlabRepo,
+                    });
 
-                    // Only attempt expansion if we have sufficient context
-                    if (workspaceContext.gitlabInstance && workspaceContext.projectPath) {
-                        expandedUrl = expandComponentUrl(componentUrl, workspaceContext);
-                        this.logger.debug(`[ValidationProvider] Expanded URL: ${expandedUrl}`, 'ValidationProvider');
-                    } else {
-                        this.logger.debug(`[ValidationProvider] Insufficient context for expansion. GitLab instance: ${workspaceContext.gitlabInstance}, Project path: ${workspaceContext.projectPath}`, 'ValidationProvider');
+                    this.logger.debug(`[ValidationProvider] Created unresolved variables diagnostic (${reason.kind}) for ${componentUrl}`, 'ValidationProvider');
+                    diagnostics.push(diagnostic);
 
-                        // Check if we're in a non-GitLab repository
-                        const workspaceFolders = vscode.workspace.workspaceFolders;
-                        const nonGitlabInfo = workspaceFolders ? await this.detectNonGitLabRepository(workspaceFolders[0].uri.fsPath) : null;
-                        this.logger.debug(`[ValidationProvider] Non-GitLab repository detection result: ${nonGitlabInfo ? JSON.stringify(nonGitlabInfo) : 'null'}`, 'ValidationProvider');
-
-                        if (nonGitlabInfo) {
-                            // We're in a non-GitLab repository, create unresolved variables diagnostic
-                            let diagnosticMessage = `Component URL contains unresolved GitLab variables: '${componentUrl}'. `;
-                            diagnosticMessage += `This project is hosted on ${nonGitlabInfo.hostname}, not GitLab. GitLab Component Helper requires a GitLab repository to resolve CI/CD variables like $CI_SERVER_FQDN and $CI_PROJECT_PATH.`;
-
-                            const line = this.findLineForComponent(document, includes, includeIndex);
-                            const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
-
-                            const diagnostic = new vscode.Diagnostic(
-                                range,
-                                diagnosticMessage,
-                                vscode.DiagnosticSeverity.Information
-                            );
-
-                            diagnostic.code = 'unresolved-variables';
-                            diagnostic.source = 'gitlab-component-helper';
-                            attachDiagnosticMetadata(diagnostic, {
-                                code: 'unresolved-variables',
-                                componentUrl: componentUrl,
-                                expandedUrl: expandedUrl,
-                                includeInputs: include.inputs || {},
-                                isNonGitlabRepo: true
-                            });
-
-                            this.logger.debug(`[ValidationProvider] Created unresolved variables diagnostic for non-GitLab repo: ${componentUrl}`, 'ValidationProvider');
-                            diagnostics.push(diagnostic);
-
-                            // Skip input validation for URLs with unresolved variables in non-GitLab repos
-                            continue;
-                        }
-
-                        // If no non-GitLab repo detected, check for configured component sources
-                        this.logger.debug(`[ValidationProvider] No non-GitLab repository detected, checking for configured component sources`, 'ValidationProvider');
-                    }
-
-                    // If expansion didn't help (still contains variables), treat as unresolved
-                    if (containsGitLabVariables(expandedUrl) || expandedUrl.includes('undefined') || expandedUrl === componentUrl) {
-                        this.logger.debug(`[ValidationProvider] URL expansion failed or incomplete: ${expandedUrl}`, 'ValidationProvider');
-
-                        const line = this.findLineForComponent(document, includes, includeIndex);
-                        const range = new vscode.Range(line, 0, line, document.lineAt(line).text.length);
-
-                        const diagnostic = new vscode.Diagnostic(
-                            range,
-                            `Component URL contains unresolved GitLab variables: '${componentUrl}'. Configure component sources in settings to resolve these variables.`,
-                            vscode.DiagnosticSeverity.Information
-                        );
-
-                        diagnostic.code = 'unresolved-variables';
-                        diagnostic.source = 'gitlab-component-helper';
-                        attachDiagnosticMetadata(diagnostic, {
-                            code: 'unresolved-variables',
-                            componentUrl: componentUrl,
-                            expandedUrl: expandedUrl,
-                            includeInputs: include.inputs || {}
-                        });
-
-                        this.logger.debug(`[ValidationProvider] Created unresolved variables diagnostic for ${componentUrl}`, 'ValidationProvider');
-                        diagnostics.push(diagnostic);
-
-                        // Skip input validation for URLs with unresolved variables
-                        continue;
-                    }
+                    // Skip input validation for URLs with unresolved variables
+                    continue;
                 }
+                const expandedUrl = resolved.url;
 
                 // First try to find the component in cache (using expanded URL)
                 let component = await this.findComponentInCache(expandedUrl);
@@ -290,8 +232,8 @@ export class ValidationProvider implements vscode.CodeActionProvider {
                     try {
                         const fetchedComponent = await getComponentService().getComponentFromUrl(expandedUrl);
                         if (fetchedComponent) {
-                            // Add to cache for future use (using original URL as key)
-                            this.addComponentToCache(componentUrl, fetchedComponent);
+                            // Add to cache for future use, keyed by the parseable URL every lookup compares against
+                            this.addComponentToCache(expandedUrl, fetchedComponent);
                             component = fetchedComponent;
                             this.logger.debug(`[ValidationProvider] Successfully fetched component: ${fetchedComponent.name}`, 'ValidationProvider');
                         } else {
@@ -1319,7 +1261,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             quickPick.items = (args.missingInputs || []).map(input => ({
                 label: input.name,
                 description: input.required ? 'Required' : 'Optional',
-                detail: `${input.description} (${input.type}${input.default !== undefined ? `, default: ${JSON.stringify(input.default)}` : ''})`
+                detail: `${input.description} (${input.type}${input.default !== undefined ? `, default: ${renderDefaultValue(input.default)}` : ''})`
             }));
         }
 
@@ -1361,9 +1303,10 @@ export class ValidationProvider implements vscode.CodeActionProvider {
 
                     insertText += `${indentation}${inputName}: `;
 
-                    // Add appropriate default value
+                    // Add appropriate default value, rendered as the YAML the input's type expects — `JSON.stringify`
+                    // would quote every scalar, inserting `"false"`/`"production"` where a bare scalar belongs.
                     if (inputInfo?.default !== undefined) {
-                        insertText += `${JSON.stringify(inputInfo.default)}`;
+                        insertText += renderDefaultValue(inputInfo.default);
                     } else {
                         switch (inputInfo?.type?.toLowerCase()) {
                             case 'boolean':
@@ -1443,398 +1386,6 @@ export class ValidationProvider implements vscode.CodeActionProvider {
     }
 
     /**
-     * Get workspace context for GitLab variable expansion.
-     *
-     * `forUri` is the URI of the document being validated. When supplied, the
-     * GitLab repo lookup is scoped to the file's containing repo so multi-repo
-     * workspaces resolve to the correct host.
-     */
-    private async getWorkspaceContext(forUri?: vscode.Uri): Promise<{
-        gitlabInstance?: string;
-        projectPath?: string;
-        serverUrl?: string;
-        commitSha?: string;
-    }> {
-        try {
-            // Try to get git information from the workspace
-            const workspaceFolders = vscode.workspace.workspaceFolders;
-            if (!workspaceFolders || workspaceFolders.length === 0) {
-                return {};
-            }
-
-            const workspaceFolder = workspaceFolders[0].uri.fsPath;
-
-            // Try to get Git remote information for the current repository
-            const gitContext = await this.getGitRepositoryContext(workspaceFolder, forUri);
-            if (gitContext.gitlabInstance && gitContext.projectPath) {
-                this.logger.debug(`[ValidationProvider] Using Git repository context: ${gitContext.gitlabInstance}/${gitContext.projectPath}`, 'ValidationProvider');
-                return {
-                    gitlabInstance: gitContext.gitlabInstance,
-                    projectPath: gitContext.projectPath,
-                    serverUrl: `https://${gitContext.gitlabInstance}`,
-                    commitSha: gitContext.commitSha || 'main'
-                };
-            }
-
-            // Check if we're in a non-GitLab repository - if so, don't fall back to component sources for variable expansion
-            const nonGitlabInfo = await this.detectNonGitLabRepository(workspaceFolder);
-            this.logger.debug(`[ValidationProvider] Non-GitLab repository detection result: ${nonGitlabInfo ? JSON.stringify(nonGitlabInfo) : 'null'}`, 'ValidationProvider');
-
-            if (nonGitlabInfo) {
-                this.logger.debug(`[ValidationProvider] Detected non-GitLab repository (${nonGitlabInfo.hostname}), not using component sources for variable expansion`, 'ValidationProvider');
-                return {}; // Return empty context to trigger unresolved variables diagnostic
-            }
-
-            // Fallback to configured component sources only if we're not in a detected non-GitLab repository
-            const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-            const componentSources = config.get<Array<{
-                name: string;
-                path: string;
-                gitlabInstance?: string;
-            }>>('componentSources', []);
-
-            this.logger.debug(`[ValidationProvider] Found ${componentSources.length} configured component sources`, 'ValidationProvider');
-
-            // Use first component source if available
-            if (componentSources.length > 0) {
-                const source = componentSources[0];
-                this.logger.debug(`[ValidationProvider] Using configured component source: ${source.gitlabInstance}/${source.path}`, 'ValidationProvider');
-                return {
-                    gitlabInstance: source.gitlabInstance || 'gitlab.com',
-                    projectPath: source.path,
-                    serverUrl: `https://${source.gitlabInstance || 'gitlab.com'}`,
-                    commitSha: 'main'
-                };
-            }
-
-            // Final fallback to basic defaults
-            const gitlabInstance = config.get<string>('defaultGitlabInstance') || 'gitlab.com';
-            const projectPath = config.get<string>('defaultProjectPath');
-
-            return {
-                gitlabInstance,
-                projectPath,
-                serverUrl: `https://${gitlabInstance}`,
-                commitSha: 'main'
-            };
-        } catch (error) {
-            this.logger.debug(`[ValidationProvider] Error getting workspace context: ${error}`, 'ValidationProvider');
-            return {};
-        }
-    }
-
-    /**
-     * Extract Git repository information from the workspace.
-     *
-     * When `forUri` is supplied, the lookup resolves to the repository that
-     * contains that specific file — required for multi-repo workspaces where
-     * workspaceFolders[0] would otherwise pick the wrong GitLab host.
-     */
-    private async getGitRepositoryContext(workspacePath: string, forUri?: vscode.Uri): Promise<{
-        gitlabInstance?: string;
-        projectPath?: string;
-        commitSha?: string;
-    }> {
-        try {
-            // Use VS Code's Git extension API if available
-            const gitExtension = vscode.extensions.getExtension('vscode.git');
-            if (gitExtension) {
-                const git: GitApi | undefined = gitExtension.exports.getAPI(1);
-                if (git) {
-                    let repo: GitRepository | null = null;
-                    if (forUri) {
-                        // File-relative lookup; null if file isn't in any repo.
-                        // Do NOT fall through to workspace[0] here.
-                        repo = git.getRepository(forUri);
-                    } else if (git.repositories.length > 0) {
-                        repo = git.repositories.find(r =>
-                            workspacePath.startsWith(r.rootUri.fsPath)
-                        ) || git.repositories[0];
-                    }
-
-                    if (repo) {
-                        // Get remote URLs
-                        const remotes = repo.state.remotes;
-                        const origin = remotes.find(r => r.name === 'origin') || remotes[0];
-
-                        if (origin && origin.fetchUrl) {
-                            const gitlabInfo = this.parseGitLabRemoteUrl(origin.fetchUrl);
-                            if (gitlabInfo) {
-                                // Try to get current commit SHA
-                                let commitSha = 'main';
-                                try {
-                                    if (repo.state.HEAD && repo.state.HEAD.commit) {
-                                        commitSha = repo.state.HEAD.commit;
-                                    } else if (repo.state.HEAD && repo.state.HEAD.name) {
-                                        commitSha = repo.state.HEAD.name;
-                                    }
-                                } catch (error) {
-                                    this.logger.debug(`[ValidationProvider] Could not get commit SHA: ${error}`, 'ValidationProvider');
-                                }
-
-                                return {
-                                    gitlabInstance: gitlabInfo.gitlabInstance,
-                                    projectPath: gitlabInfo.projectPath,
-                                    commitSha: commitSha
-                                };
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Fallback: try to read git config directly
-            return await this.getGitInfoFromCommand(workspacePath);
-        } catch (error) {
-            this.logger.debug(`[ValidationProvider] Error getting Git repository context: ${error}`, 'ValidationProvider');
-            return {};
-        }
-    }
-
-    /**
-     * Parse GitLab remote URL to extract instance and project path
-     */
-    private parseGitLabRemoteUrl(remoteUrl: string): { gitlabInstance: string; projectPath: string } | null {
-        try {
-            // Handle both HTTPS and SSH URLs
-            // HTTPS: https://gitlab.com/owner/repo.git
-            // SSH: git@gitlab.com:owner/repo.git
-
-            let gitlabInstance: string;
-            let projectPath: string;
-
-            if (remoteUrl.startsWith('https://')) {
-                const url = new URL(remoteUrl);
-                gitlabInstance = url.hostname;
-                projectPath = url.pathname.substring(1).replace(/\.git$/, '');
-            } else if (remoteUrl.startsWith('git@')) {
-                // git@gitlab.com:owner/repo.git
-                const match = remoteUrl.match(/git@([^:]+):(.+?)(?:\.git)?$/);
-                if (match) {
-                    gitlabInstance = match[1];
-                    projectPath = match[2];
-                } else {
-                    return null;
-                }
-            } else {
-                return null;
-            }
-
-            // Only return for GitLab instances - this extension is specifically for GitLab
-            if (gitlabInstance.includes('gitlab')) {
-                return { gitlabInstance, projectPath };
-            }
-
-            // For non-GitLab repositories, log what we detected but return null
-            this.logger.debug(`[ValidationProvider] Detected non-GitLab repository: ${gitlabInstance}. GitLab Component Helper requires a GitLab repository.`, 'ValidationProvider');
-            return null;
-        } catch (error) {
-            this.logger.debug(`[ValidationProvider] Error parsing Git remote URL: ${error}`, 'ValidationProvider');
-            return null;
-        }
-    }
-
-    /**
-     * Fallback method to get git info using git commands
-     */
-    private async getGitInfoFromCommand(_workspacePath: string): Promise<{
-        gitlabInstance?: string;
-        projectPath?: string;
-        commitSha?: string;
-    }> {
-        try {
-            // This is a simplified fallback - in a real implementation you might want to
-            // execute git commands to get remote URLs and current commit
-            // For now, return empty to rely on configuration
-            return {};
-        } catch (error) {
-            this.logger.debug(`[ValidationProvider] Error getting Git info from command: ${error}`, 'ValidationProvider');
-            return {};
-        }
-    }
-
-    /**
-     * Detect if this is a non-GitLab repository for better error messaging
-     */
-    private async detectNonGitLabRepository(workspacePath: string): Promise<{ hostname: string; projectPath: string } | null> {
-        try {
-            this.logger.debug(`[ValidationProvider] Detecting non-GitLab repository for path: ${workspacePath}`, 'ValidationProvider');
-
-            // First try VS Code's Git extension API
-            const gitExtension = vscode.extensions.getExtension('vscode.git');
-            if (gitExtension) {
-                const git: GitApi | undefined = gitExtension.exports.getAPI(1);
-                if (git && git.repositories.length > 0) {
-                    this.logger.debug(`[ValidationProvider] Found ${git.repositories.length} Git repositories via VS Code Git API`, 'ValidationProvider');
-
-                    const repo = git.repositories.find(r =>
-                        workspacePath.startsWith(r.rootUri.fsPath) ||
-                        r.rootUri.fsPath.startsWith(workspacePath)
-                    ) || git.repositories[0];
-
-                    if (repo) {
-                        this.logger.debug(`[ValidationProvider] Using Git repository: ${repo.rootUri.fsPath}`, 'ValidationProvider');
-
-                        // Get remote URLs from VS Code Git API
-                        const remotes = repo.state.remotes;
-                        const origin = remotes.find(r => r.name === 'origin') || remotes[0];
-
-                        if (origin && origin.fetchUrl) {
-                            this.logger.debug(`[ValidationProvider] Found origin remote via VS Code Git API: ${origin.fetchUrl}`, 'ValidationProvider');
-                            return await this.parseAndClassifyRepository(origin.fetchUrl);
-                        }
-                    }
-                }
-            }
-
-            // Fallback to direct Git commands if VS Code Git API doesn't work
-            this.logger.debug(`[ValidationProvider] VS Code Git API not available or no repositories found, trying direct Git commands`, 'ValidationProvider');
-            return await this.detectRepositoryViaGitCommands(workspacePath);
-        } catch (error) {
-            this.logger.debug(`[ValidationProvider] Error detecting non-GitLab repository: ${error}`, 'ValidationProvider');
-            return null;
-        }
-    }
-
-    /**
-     * Use direct Git commands to detect repository information
-     */
-    private async detectRepositoryViaGitCommands(workspacePath: string): Promise<{ hostname: string; projectPath: string } | null> {
-        try {
-            // First, check if we're in a Git repository
-            const isGitRepo = await new Promise<boolean>((resolve) => {
-                const gitCheck = spawn('git', ['rev-parse', '--is-inside-work-tree'], {
-                    cwd: workspacePath,
-                    stdio: 'pipe'
-                });
-
-                gitCheck.on('exit', (code: number | null) => {
-                    resolve(code === 0);
-                });
-
-                gitCheck.on('error', () => {
-                    resolve(false);
-                });
-            });
-
-            if (!isGitRepo) {
-                this.logger.debug(`[ValidationProvider] Not inside a Git repository`, 'ValidationProvider');
-                return null;
-            }
-
-            this.logger.debug(`[ValidationProvider] Confirmed we're in a Git repository`, 'ValidationProvider');
-
-            // Get the remote origin URL
-            const remoteUrl = await new Promise<string | null>((resolve) => {
-                const gitRemote = spawn('git', ['remote', 'get-url', 'origin'], {
-                    cwd: workspacePath,
-                    stdio: 'pipe'
-                });
-
-                let output = '';
-                gitRemote.stdout.on('data', (data: Buffer) => {
-                    output += data.toString();
-                });
-
-                gitRemote.on('exit', (code: number | null) => {
-                    if (code === 0 && output.trim()) {
-                        resolve(output.trim());
-                    } else {
-                        resolve(null);
-                    }
-                });
-
-                gitRemote.on('error', () => {
-                    resolve(null);
-                });
-            });
-
-            if (!remoteUrl) {
-                this.logger.debug(`[ValidationProvider] No origin remote found`, 'ValidationProvider');
-                return null;
-            }
-
-            this.logger.debug(`[ValidationProvider] Found origin remote via Git command: ${remoteUrl}`, 'ValidationProvider');
-            return await this.parseAndClassifyRepository(remoteUrl);
-
-        } catch (error) {
-            this.logger.debug(`[ValidationProvider] Error using Git commands: ${error}`, 'ValidationProvider');
-            return null;
-        }
-    }
-
-    /**
-     * Parse and classify a Git remote URL
-     */
-    private async parseAndClassifyRepository(remoteUrl: string): Promise<{ hostname: string; projectPath: string } | null> {
-        try {
-            const repoInfo = this.parseAnyRemoteUrl(remoteUrl);
-            if (!repoInfo) {
-                this.logger.debug(`[ValidationProvider] Failed to parse remote URL: ${remoteUrl}`, 'ValidationProvider');
-                return null;
-            }
-
-            this.logger.debug(`[ValidationProvider] Parsed repository info: hostname=${repoInfo.hostname}, projectPath=${repoInfo.projectPath}`, 'ValidationProvider');
-
-            // Check if this is NOT a GitLab repository
-            const isGitLab = repoInfo.hostname.toLowerCase().includes('gitlab');
-            this.logger.debug(`[ValidationProvider] Is GitLab repository: ${isGitLab}`, 'ValidationProvider');
-
-            if (!isGitLab) {
-                this.logger.debug(`[ValidationProvider] Detected non-GitLab repository: ${repoInfo.hostname}`, 'ValidationProvider');
-                return {
-                    hostname: repoInfo.hostname,
-                    projectPath: repoInfo.projectPath
-                };
-            }
-
-            this.logger.debug(`[ValidationProvider] This is a GitLab repository, not returning non-GitLab info`, 'ValidationProvider');
-            return null;
-        } catch (error) {
-            this.logger.debug(`[ValidationProvider] Error parsing and classifying repository: ${error}`, 'ValidationProvider');
-            return null;
-        }
-    }
-
-    /**
-     * Parse any Git remote URL to extract hostname and project path (for detection purposes)
-     */
-    private parseAnyRemoteUrl(remoteUrl: string): { hostname: string; projectPath: string } | null {
-        try {
-            // Handle both HTTPS and SSH URLs
-            let hostname: string;
-            let projectPath: string;
-
-            if (remoteUrl.startsWith('https://')) {
-                const url = new URL(remoteUrl);
-                hostname = url.hostname;
-                projectPath = url.pathname.substring(1).replace(/\.git$/, '');
-            } else if (remoteUrl.startsWith('git@')) {
-                // git@github.com:owner/repo.git
-                const match = remoteUrl.match(/git@([^:]+):(.+?)(?:\.git)?$/);
-                if (match) {
-                    hostname = match[1];
-                    projectPath = match[2];
-                } else {
-                    return null;
-                }
-            } else {
-                return null;
-            }
-
-            // Return any valid-looking Git repository info
-            if (hostname && projectPath.includes('/')) {
-                return { hostname, projectPath };
-            }
-
-            return null;
-        } catch (error) {
-            this.logger.debug(`[ValidationProvider] Error parsing remote URL for detection: ${error}`, 'ValidationProvider');
-            return null;
-        }
-    }
-
-    /**
      * Recompute the "newer version available" diagnostics for a document and publish them to the dedicated version
      * diagnostic collection. Runs on open/save (not on every keystroke) since it queries the GitLab tags API; the
      * per-project tag cache keeps repeated runs cheap. No-op — and clears existing markers — when the feature is
@@ -1901,26 +1452,17 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             return [];
         }
 
-        // Resolve workspace context once (git remote of the file's repo, or configured sources) only when some base
-        // URL actually uses variables — it can involve git lookups we don't want to pay for otherwise.
-        const workspaceContext = bases.some(base => containsGitLabVariables(base))
-            ? await this.getWorkspaceContext(document.uri)
-            : undefined;
+        // One resolver for the document, so the expansion context (which can involve git lookups) is found at most once.
+        const resolveReference = createReferenceResolver(document.uri);
 
         const versionsByBase = new Map<string, readonly string[] | undefined>();
         await Promise.all(
             bases.map(async rawBase => {
-                let lookupUrl = rawBase;
-                if (containsGitLabVariables(rawBase)) {
-                    if (!workspaceContext?.gitlabInstance) {
-                        return; // can't resolve the instance for this file — leave the component unchecked
-                    }
-                    lookupUrl = expandComponentUrl(rawBase, workspaceContext);
-                    if (containsGitLabVariables(lookupUrl) || lookupUrl.includes('undefined')) {
-                        return; // expansion was incomplete — don't guess
-                    }
+                const resolved = await resolveReference(rawBase);
+                if (!resolved.resolved) {
+                    return; // can't resolve the variables for this file — leave the component unchecked
                 }
-                versionsByBase.set(rawBase, await this.fetchVersionsForBaseUrl(lookupUrl));
+                versionsByBase.set(rawBase, await this.fetchVersionsForBaseUrl(resolved.url));
             }),
         );
 

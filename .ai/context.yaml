@@ -29,6 +29,7 @@ structure:
   types: src/types/
   utils: src/utils/
   scripts: scripts/
+  demo_gifs: scripts/demo-gifs/
 context_modules:
   architecture: architecture.yaml
   workflows: workflows.yaml

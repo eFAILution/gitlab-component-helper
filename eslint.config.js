@@ -40,4 +40,26 @@ module.exports = [
       ...js.configs.recommended.rules,
     },
   },
+  {
+    // Demo GIF recorder, a maintainer tool. Its page.evaluate callbacks run in the workbench, hence browser globals.
+    files: ['scripts/demo-gifs/**/*.mjs'],
+    languageOptions: {
+      sourceType: 'module',
+      globals: { ...globals.node, ...globals.browser },
+    },
+    rules: {
+      ...js.configs.recommended.rules,
+    },
+  },
+  {
+    // Webview client scripts run in the Electron renderer, not the extension host
+    files: ['src/webview/client/**/*.ts'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        // Injected by VS Code into the webview; not a browser global.
+        acquireVsCodeApi: 'readonly',
+      },
+    },
+  },
 ];

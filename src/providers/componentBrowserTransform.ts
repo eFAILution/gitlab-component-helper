@@ -11,6 +11,7 @@ import type {
   ComponentGroupBuilder,
 } from './componentBrowserTypes';
 import { compileTagTemplate } from '../services/component/tagScoping';
+import { preferenceFor, resolvePreferredVersion, type PreferenceComponent, type VersionPreferences } from './versionPreferences';
 
 /**
  * Convert a `https://host/group/project/name@version` component URL into the public GitLab project URL by stripping
@@ -101,6 +102,33 @@ export function selectDefaultVersion(
   );
 }
 
+/**
+ * Pick the version to offer for a component: its stored preference when that resolves to an available version,
+ * otherwise {@link selectDefaultVersion}. The Component Browser and completion both use this, so they agree.
+ *
+ * @param availableVersions Candidates. For a tag-pattern source these are full tags.
+ * @param component The component, used to look up its preference and read its `tagPattern`.
+ * @param preferences The user's version preferences.
+ * @param fallback Returned when `availableVersions` has no truthy entries and there is no usable preference.
+ * @returns The version to pre-select or insert.
+ */
+export function chooseComponentVersion(
+  availableVersions: string[],
+  component: PreferenceComponent,
+  preferences: VersionPreferences,
+  fallback: string,
+): string {
+  const preferred = resolvePreferredVersion(preferenceFor(preferences, component), availableVersions, component);
+  if (preferred !== undefined) {
+    return preferred;
+  }
+  return selectDefaultVersion(
+    availableVersions,
+    fallback,
+    component.tagPattern ? { name: component.name, tagPattern: component.tagPattern } : undefined,
+  );
+}
+
 /** Optional hook for surfacing skipped entries — production passes the logger, tests can omit it. */
 export type OnSkip = (component: unknown, reason: string) => void;
 
@@ -114,11 +142,13 @@ export type OnSkip = (component: unknown, reason: string) => void;
  *
  * @param cachedComponents  The flat list pulled from `ComponentCacheManager`.
  * @param onSkip            Called once per dropped entry. Tests typically omit this.
+ * @param preferences       The user's version preferences, which decide each component's default version.
  * @returns                 An array of source-group objects.
  */
 export function transformCachedComponentsToGroups(
   cachedComponents: Array<Partial<CachedComponent>>,
   onSkip?: OnSkip,
+  preferences: VersionPreferences = {},
 ): SourceGroup[] {
   const hierarchy = new Map<string, SourceGroupBuilder>();
 
@@ -242,12 +272,11 @@ export function transformCachedComponentsToGroups(
           };
         });
 
-        const defaultVersion = selectDefaultVersion(
+        const defaultVersion = chooseComponentVersion(
           availableVersions,
+          component,
+          preferences,
           component.defaultVersion || 'latest',
-          component.tagPattern
-            ? { name: component.name, tagPattern: component.tagPattern }
-            : undefined,
         );
 
         return {

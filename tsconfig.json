@@ -25,6 +25,7 @@
     ".vscode-test",
     "out",
     "out-test",
-    "tests"
+    "tests",
+    "src/webview/client"
   ]
 }

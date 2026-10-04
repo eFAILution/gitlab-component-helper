@@ -11,7 +11,9 @@ import {
   versionPriority,
   selectDefaultVersion,
   transformCachedComponentsToGroups,
+  chooseComponentVersion,
 } from '../../src/providers/componentBrowserTransform';
+import { LATEST_VERSION_PREFERENCE } from '../../src/providers/versionPreferences';
 
 interface TransformedSource {
   source: string;
@@ -241,5 +243,62 @@ suite('transformCachedComponentsToGroups — default version selection', () => {
     ]) as TransformedSource[];
 
     assert.strictEqual(result[0].projects[0].components[0].defaultVersion, 'v10.0.0');
+  });
+});
+
+suite('chooseComponentVersion', () => {
+  const deploy = { name: 'deploy', sourcePath: 'group/project', gitlabInstance: 'gitlab.com' };
+  const deployKey = 'gitlab.com/group/project/deploy';
+
+  test('uses the ranking of selectDefaultVersion without a preference', () => {
+    assert.equal(chooseComponentVersion(['main', 'v1.0.0', 'v2.0.0'], deploy, {}, 'main'), 'v2.0.0');
+  });
+
+  test('uses an available pinned version', () => {
+    assert.equal(chooseComponentVersion(['main', '1.2.0', '2.0.0'], deploy, { [deployKey]: '1.2.0' }, 'main'), '1.2.0');
+  });
+
+  test('falls back to the ranking when the pinned version is gone', () => {
+    assert.equal(chooseComponentVersion(['main', '2.0.0'], deploy, { [deployKey]: '1.2.0' }, 'main'), '2.0.0');
+  });
+
+  test('resolves latest to the highest stable version, skipping pre-releases and `latest`', () => {
+    const versions = ['latest', 'main', 'v1.9.0', 'v1.10.0', 'v2.0.0-rc.1'];
+    assert.equal(chooseComponentVersion(versions, deploy, { [deployKey]: LATEST_VERSION_PREFERENCE }, 'main'), 'v1.10.0');
+  });
+
+  test('resolves latest by the tag pattern for a monorepo source', () => {
+    const monorepo = { ...deploy, tagPattern: '{name}-{version}' };
+    const tags = ['main', 'deploy-1.9.0', 'deploy-1.10.0'];
+    assert.equal(chooseComponentVersion(tags, monorepo, { [deployKey]: LATEST_VERSION_PREFERENCE }, 'main'), 'deploy-1.10.0');
+  });
+
+  test('ignores a preference stored for a same-named component in another project', () => {
+    const preferences = { 'gitlab.com/other/project/deploy': '1.2.0' };
+    assert.equal(chooseComponentVersion(['main', '1.2.0', '2.0.0'], deploy, preferences, 'main'), '2.0.0');
+  });
+
+  test('returns the fallback when there are no versions', () => {
+    assert.equal(chooseComponentVersion([], deploy, { [deployKey]: LATEST_VERSION_PREFERENCE }, 'main'), 'main');
+  });
+});
+
+suite('transformCachedComponentsToGroups — version preferences', () => {
+  test('pre-selects the pinned version in the browser tree', () => {
+    const result = transformCachedComponentsToGroups(
+      [
+        {
+          name: 'deploy',
+          version: 'main',
+          availableVersions: ['main', '1.2.0', '2.0.0'],
+          source: 'Source',
+          sourcePath: 'group/project',
+          gitlabInstance: 'gitlab.com',
+        },
+      ],
+      undefined,
+      { 'gitlab.com/group/project/deploy': '1.2.0' },
+    );
+    assert.equal(result[0].projects[0].components[0].defaultVersion, '1.2.0');
   });
 });
