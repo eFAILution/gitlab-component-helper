@@ -39,6 +39,7 @@ dependencies:
   runtime:
   - vscode: VS Code Extension API
   - js-yaml: YAML parsing
+  - yaml: Source ranges for placing component inserts in the include list
   dev:
   - typescript: Type-safe development
   - esbuild: Fast bundling
