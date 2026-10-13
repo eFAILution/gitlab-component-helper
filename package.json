@@ -357,7 +357,8 @@
     "stylelint-config-standard": "^40.0.0",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.71.0"
+    "typescript-eslint": "^8.71.0",
+    "yaml": "^2.9.1"
   },
   "keywords": [],
   "author": "eFAILution",

@@ -10,6 +10,7 @@ import type { HoverContext } from './hoverContentBuilder';
 import { Logger } from '../utils/logger';
 import { templateFileUrlForResolved } from '../utils/templateFileUrl';
 import { generateComponentText } from './componentBrowserGenerate';
+import { planComponentInsertion } from './componentInsertionPoint';
 import { findComponentLineRange, parseExistingComponentText } from './componentBrowserEdit';
 import { chooseComponentVersion, transformCachedComponentsToGroups } from './componentBrowserTransform';
 import { LATEST_VERSION_PREFERENCE, versionPreferenceKey } from './versionPreferences';
@@ -393,12 +394,19 @@ export class ComponentBrowserProvider {
     // Gate on declared parameters so a parameterless component doesn't get a bare `inputs:` line.
     const withInputs = includeInputs && (component.parameters?.length ?? 0) > 0;
     const serverFqdn = await resolveServerFqdn(editor.document.uri);
-    const insertion = generateComponentText(component, withInputs, withInputs ? selectedInputs : [], null, serverFqdn);
+    const snippet = generateComponentText(component, withInputs, withInputs ? selectedInputs : [], null, serverFqdn);
+    const planned = planComponentInsertion(editor.document.getText(), snippet);
+    const target = planned
+      ? new vscode.Range(planned.start.line, planned.start.character, planned.end.line, planned.end.character)
+      : new vscode.Range(editor.selection.active, editor.selection.active);
+    const position = target.start;
+    const insertion = planned?.text ?? snippet;
 
-    // Insert at cursor position
-    editor.edit(editBuilder => {
-      editBuilder.insert(editor.selection.active, insertion);
+    await editor.edit(editBuilder => {
+      editBuilder.replace(target, insertion);
     });
+    const insertedEnd = new vscode.Position(position.line + insertion.split('\n').length - 1, 0);
+    editor.revealRange(new vscode.Range(position, insertedEnd), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
 
     // Create appropriate success message
     let message = `Inserted component: ${component.name}`;
