@@ -1,7 +1,7 @@
 /**
  * Content-Security-Policy plumbing for webview documents.
  *
- * `vscode`-free and pure so the unit suite can drive it directly: `cspMetaTag` takes the webview's `cspSource` as a
+ * `vscode`-free and pure so the unit suite can drive it directly: `cspPolicy` takes the webview's `cspSource` as a
  * string rather than the webview itself, leaving `src/webview/webviewHtml.ts` to hold the parts that need the API.
  */
 
@@ -28,7 +28,7 @@ export function createNonce(): string {
 }
 
 /**
- * Builds the Content-Security-Policy meta tag for a webview document.
+ * Builds the Content-Security-Policy for a webview document, for `Page` to set on its meta tag.
  *
  * Styles and scripts must come from files under the webview's own origin — no inline `<style>`, no `style=`
  * attribute, and scripts only with the supplied nonce. Theme colours reach an external stylesheet as CSS custom
@@ -37,16 +37,14 @@ export function createNonce(): string {
  *
  * @param cspSource The webview's `cspSource`, naming the origin its own assets are served from.
  * @param nonce     The per-render nonce, as returned by {@link createNonce}.
- * @returns         A `<meta http-equiv="Content-Security-Policy">` tag, for the document's `<head>`.
+ * @returns         The `content` value of the Content-Security-Policy meta tag.
  */
-export function cspMetaTag(cspSource: string, nonce: string): string {
+export function cspPolicy(cspSource: string, nonce: string): string {
   return [
-    `<meta http-equiv="Content-Security-Policy" content="`,
     `default-src 'none'; `,
     `style-src ${cspSource}; `,
     `img-src ${cspSource} https: data:; `,
     `font-src ${cspSource}; `,
     `script-src 'nonce-${nonce}';`,
-    `">`,
   ].join('');
 }
