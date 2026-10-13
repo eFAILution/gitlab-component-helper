@@ -177,11 +177,6 @@ function planIncludeInsertion(
     return null;
   }
 
-  const keyLine = source.lineOf(keyRange[0]);
-  if (isScalar(value) && value.value === null && value.source === '') {
-    return { start: source.lineEnd(keyLine), end: source.lineEnd(keyLine), text: `\n${snippet}` };
-  }
-
   const valueEnd = source.lineEnd(source.lineOf(value.range[1] - 1));
 
   if (isSeq(value) && !value.flow) {
@@ -197,7 +192,9 @@ function planIncludeInsertion(
     return convertBlockMapping(source, value.range, valueEnd, snippet);
   }
 
-  const entries = isSeq(value) ? value.items : [value];
+  // A null value (`include:`, `include: ~`, `include: null`) holds no entries; its text is dropped.
+  const isNull = isScalar(value) && value.value === null;
+  const entries = isSeq(value) ? value.items : isNull ? [] : [value];
   const items = entries.map(entry =>
     isNode(entry) && entry.range ? source.text.slice(entry.range[0], entry.range[1]) : null,
   );

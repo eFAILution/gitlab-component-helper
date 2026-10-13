@@ -79,6 +79,19 @@ suite('planComponentInsertion — existing include list', () => {
     );
   });
 
+  for (const nullValue of ['~', 'null', 'Null']) {
+    test(`replaces an explicit \`include: ${nullValue}\` rather than listing it as an entry`, () => {
+      assert.strictEqual(
+        plannedText(`include: ${nullValue}\nstages: [test]\n`),
+        `include:\n${SNIPPET}\nstages: [test]\n`,
+      );
+      assert.strictEqual(
+        plannedText(`include: ${nullValue}  # shared\nstages: [test]\n`),
+        `include: # shared\n${SNIPPET}\nstages: [test]\n`,
+      );
+    });
+  }
+
   test('positions the insert before a CRLF line ending', () => {
     const at = { line: 1, character: '  - local: a.yml'.length };
     assert.deepStrictEqual(
