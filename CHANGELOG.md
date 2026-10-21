@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+# [0.20.0](https://github.com/eFAILution/gitlab-component-helper/compare/0.18.1...0.20.0) (2026-10-21)
+
+### Features
+
+* **component-browser:** insert components into the include list ([#346](https://github.com/eFAILution/gitlab-component-helper/issues/346)) ([e8c8d7c](https://github.com/eFAILution/gitlab-component-helper/commit/e8c8d7c1b07104fb470f53e2b4971969d060da7d))
+
 ## [0.18.1](https://github.com/eFAILution/gitlab-component-helper/compare/0.18.0...0.18.1) (2026-10-04)
 
 ## [0.17.22](https://github.com/eFAILution/gitlab-component-helper/compare/0.16.12...0.17.22) (2026-10-04)
