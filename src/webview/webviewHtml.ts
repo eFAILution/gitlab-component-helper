@@ -4,11 +4,11 @@ import * as vscode from 'vscode';
  * Webview-safe asset URIs and resource roots.
  *
  * VS Code webviews cannot load extension files by path: every `<link>`/`<script>` src must be passed through
- * `webview.asWebviewUri`, and the panel must declare the roots it may load from. The CSP and nonce helpers live in
- * `./csp` so they stay `vscode`-free and unit-testable; they are re-exported here so callers have one import.
+ * `webview.asWebviewUri`, and the panel must declare the roots it may load from. The nonce helper lives in `./csp`
+ * so it stays `vscode`-free and unit-testable; it is re-exported here so builders have one import.
  */
 
-export { createNonce, cspMetaTag } from './csp';
+export { createNonce } from './csp';
 
 /** Directory the webview build emits to, relative to the extension root. */
 const ASSET_ROOT = ['out', 'webview'];
