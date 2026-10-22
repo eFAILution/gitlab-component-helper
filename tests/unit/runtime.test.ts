@@ -8,6 +8,7 @@ import * as assert from 'node:assert/strict';
 import { CONFIG_DEFAULTS } from '../../src/core/config/defaults';
 import { Emitter } from '../../src/core/emitter';
 import { createDefaultRuntime, getRuntime, setRuntime } from '../../src/core/runtime';
+import { installFakeRuntime, restoreRuntime } from './support/fakeRuntime';
 
 suite('default runtime', () => {
   test('is installed before any setRuntime call', () => {
@@ -77,5 +78,23 @@ suite('Emitter', () => {
     emitter.fire();
 
     assert.equal(calls, 0);
+  });
+
+  test('a throwing listener is logged and does not stop the others or the caller', () => {
+    const fake = installFakeRuntime();
+    try {
+      const emitter = new Emitter<string>();
+      const seen: string[] = [];
+      emitter.event(() => {
+        throw new Error('listener broke');
+      });
+      emitter.event((value) => seen.push(value));
+
+      assert.doesNotThrow(() => emitter.fire('gitlab.com'));
+      assert.deepStrictEqual(seen, ['gitlab.com']);
+      assert.ok(fake.lines.some((line) => line.includes('[ERROR]') && line.includes('listener broke')));
+    } finally {
+      restoreRuntime();
+    }
   });
 });

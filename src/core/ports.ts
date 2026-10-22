@@ -19,6 +19,8 @@ export interface SecretsPort {
 }
 
 export interface StoragePort {
+  /** Whether values survive a restart of the host. Absent means they don't. */
+  readonly persistent?: boolean;
   get<T>(key: string): Promise<T | undefined>;
   update(key: string, value: unknown): Promise<void>;
 }

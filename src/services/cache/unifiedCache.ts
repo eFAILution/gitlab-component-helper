@@ -5,13 +5,12 @@
  * - Single cache manager for all cache types (component, catalog, source, versions)
  * - Hierarchical cache keys with type namespacing
  * - Automatic TTL checking and expiration
- * - Persistence to VS Code global state
+ * - Persistence through the runtime storage port (VS Code global state in the extension)
  * - Graceful fallback to stale data on fetch failures
  * - Statistics and memory estimation
  * - Singleton pattern for global access
  */
 
-import * as vscode from 'vscode';
 import {
   CacheType,
   UnifiedCacheEntry,
@@ -24,13 +23,13 @@ import {
 import { DEFAULT_CACHE_TIME_SECONDS, DEFAULT_VERSION_CACHE_TIME_SECONDS } from '../../constants/timing';
 import { CACHE_KEY_COMPONENTS } from '../../constants/cache';
 import { Logger } from '../../utils/logger';
+import { getRuntime } from '../../core/runtime';
 
 /**
  * Unified cache manager for all extension caching needs
  */
 export class UnifiedCache {
   private cache = new Map<string, UnifiedCacheEntry<unknown>>();
-  private context: vscode.ExtensionContext | null = null;
   private logger = Logger.getInstance();
   private persistenceEnabled = false;
 
@@ -41,9 +40,11 @@ export class UnifiedCache {
     staleHits: 0,
   };
 
-  constructor(context?: vscode.ExtensionContext) {
-    if (context) {
-      this.context = context;
+  /**
+   * @param persist Load from and save to the runtime storage port. Off by default, so the cache stays in memory.
+   */
+  constructor(persist: boolean = false) {
+    if (persist) {
       this.persistenceEnabled = true;
       this.loadFromPersistence().catch(error => {
         this.logger.debug(`[UnifiedCache] Failed to load from persistence: ${error}`);
@@ -327,15 +328,15 @@ export class UnifiedCache {
   }
 
   /**
-   * Load cache from VS Code global state
+   * Load cache from the runtime storage port
    */
   private async loadFromPersistence(): Promise<void> {
-    if (!this.context) {
+    if (!this.persistenceEnabled) {
       return;
     }
 
     try {
-      const serialized = this.context.globalState.get<SerializedCacheData>(CACHE_KEY_COMPONENTS);
+      const serialized = await getRuntime().storage.get<SerializedCacheData>(CACHE_KEY_COMPONENTS);
 
       if (!serialized) {
         this.logger.debug('[UnifiedCache] No persisted cache found');
@@ -369,10 +370,10 @@ export class UnifiedCache {
   }
 
   /**
-   * Save cache to VS Code global state
+   * Save cache to the runtime storage port
    */
   private async saveToPersistence(): Promise<void> {
-    if (!this.context) {
+    if (!this.persistenceEnabled) {
       return;
     }
 
@@ -396,7 +397,7 @@ export class UnifiedCache {
         version: '1.0.0',
       };
 
-      await this.context.globalState.update(CACHE_KEY_COMPONENTS, serialized);
+      await getRuntime().storage.update(CACHE_KEY_COMPONENTS, serialized);
 
       this.logger.debug(`[UnifiedCache] Persisted ${entries.length} entries`);
     } catch (error) {
@@ -438,9 +439,9 @@ let unifiedCacheInstance: UnifiedCache | null = null;
 /**
  * Get or create the singleton unified cache instance
  */
-export function getUnifiedCache(context?: vscode.ExtensionContext): UnifiedCache {
+export function getUnifiedCache(persist: boolean = false): UnifiedCache {
   if (!unifiedCacheInstance) {
-    unifiedCacheInstance = new UnifiedCache(context);
+    unifiedCacheInstance = new UnifiedCache(persist);
   }
   return unifiedCacheInstance;
 }

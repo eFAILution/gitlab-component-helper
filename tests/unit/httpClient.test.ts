@@ -31,4 +31,16 @@ suite('HttpClient under plain Node', () => {
 
     assert.ok(fake.lines.some((line) => line.includes(`HTTP Text Request failed after 1 attempts: ${UNREACHABLE_URL}`)));
   });
+
+  test('deduplication keys never hold the raw auth token', async () => {
+    installFakeRuntime({ httpTimeout: 500, retryAttempts: 0 });
+    const client = new HttpClient();
+
+    const pending = client.fetchJson(UNREACHABLE_URL, { headers: { 'PRIVATE-TOKEN': 'glpat-secret' } });
+    const { pendingKeys } = client.getDeduplicationStats();
+    await assert.rejects(pending, NetworkError);
+
+    assert.equal(pendingKeys.length, 1);
+    assert.ok(pendingKeys.every((key) => !key.includes('glpat-secret')));
+  });
 });

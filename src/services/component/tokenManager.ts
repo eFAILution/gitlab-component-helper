@@ -69,13 +69,34 @@ export class TokenManager implements Disposable {
 
   /** The GitLab instances a token has been stored for, in the order they were first stored. */
   public async getTokenInstances(): Promise<string[]> {
-    const instances = await getRuntime().storage.get<unknown>(TOKEN_INSTANCES_KEY);
-    return Array.isArray(instances) ? instances.filter((item): item is string => typeof item === 'string') : [];
+    const stored = await getRuntime().storage.get<unknown>(TOKEN_INSTANCES_KEY);
+    if (stored === undefined) return [];
+    const instances = Array.isArray(stored) ? stored.filter((item): item is string => typeof item === 'string') : [];
+    if (!Array.isArray(stored) || instances.length !== stored.length) {
+      this.logger.warn(`Ignoring malformed entries in ${TOKEN_INSTANCES_KEY}`, 'TokenManager');
+    }
+    return instances;
   }
 
+  /**
+   * Best effort: the secret store is the source of truth, and this list only helps hosts that can't enumerate it. A
+   * failed write is logged, never thrown, so a saved token still counts as saved.
+   */
   private async recordTokenInstance(gitlabInstance: string): Promise<void> {
-    const instances = await this.getTokenInstances();
-    if (instances.includes(gitlabInstance)) return;
-    await getRuntime().storage.update(TOKEN_INSTANCES_KEY, [...instances, gitlabInstance]);
+    // A misconfigured source like `oauth2:glpat-…@host` would put credentials in this unencrypted list.
+    if (gitlabInstance.includes('@')) {
+      this.logger.warn(`Not recording a GitLab instance that contains credentials in ${TOKEN_INSTANCES_KEY}`, 'TokenManager');
+      return;
+    }
+    try {
+      const instances = await this.getTokenInstances();
+      if (instances.includes(gitlabInstance)) return;
+      await getRuntime().storage.update(TOKEN_INSTANCES_KEY, [...instances, gitlabInstance]);
+    } catch (error) {
+      this.logger.warn(
+        `Token for ${gitlabInstance} saved, but ${TOKEN_INSTANCES_KEY} could not be updated: ${error}`,
+        'TokenManager'
+      );
+    }
   }
 }
