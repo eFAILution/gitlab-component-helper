@@ -4,7 +4,7 @@ import { Logger } from '../utils/logger';
 import { getVariableInfo } from '../utils/gitlabVariables';
 import { isGitLabCIFile } from '../utils/gitlabCiFileMatcher';
 import { findInputContextAtLine } from './hoverInputContext';
-import { buildComponentHoverMarkdown } from './hoverContentBuilder';
+import { buildComponentHoverMarkdown, DETACH_HOVER_COMMAND, HOVER_TRUSTED_COMMANDS } from './hoverContentBuilder';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
 import { isCleanSemver, getLatestStableSemver } from '../utils/semver';
 import type { CachedComponent } from '../types/cache';
@@ -86,7 +86,7 @@ export class HoverProvider implements vscode.HoverProvider {
           position: { line: position.line, character: position.character },
         }, latestVersion),
       );
-      hoverContent.isTrusted = true;
+      hoverContent.isTrusted = { enabledCommands: [...HOVER_TRUSTED_COMMANDS.enabledCommands] };
       hoverContent.supportThemeIcons = true;
 
       return new vscode.Hover(hoverContent);
@@ -215,10 +215,10 @@ export class HoverProvider implements vscode.HoverProvider {
           position: { line: position.line, character: position.character }
         }
       };
-      const detachCommand = vscode.Uri.parse(`command:gitlab-component-helper.detachHover?${encodeURIComponent(JSON.stringify(componentWithContext))}`);
+      const detachCommand = vscode.Uri.parse(`command:${DETACH_HOVER_COMMAND}?${encodeURIComponent(JSON.stringify(componentWithContext))}`);
       hoverContent.appendMarkdown(`---\n\n[📄 View Full Component Details](${detachCommand.toString()})`);
 
-      hoverContent.isTrusted = true;
+      hoverContent.isTrusted = { enabledCommands: [...HOVER_TRUSTED_COMMANDS.enabledCommands] };
       hoverContent.supportThemeIcons = true;
 
       // Create range for the parameter name only (not the whole line)
