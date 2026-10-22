@@ -1,12 +1,13 @@
 import * as https from 'https';
 import * as http from 'http';
-import * as vscode from 'vscode';
 import { Logger } from './logger';
 import { getRequestDeduplicator, RequestDeduplicator } from './requestDeduplicator';
 import { getPerformanceMonitor } from './performanceMonitor';
 import { NetworkError, extractStatusCode } from '../errors';
 import { API_PER_PAGE_LIMIT, MAX_PAGINATION_PAGES, MAX_REDIRECTS } from '../constants/timing';
 import { planRedirect, stripCredentialHeaders } from './redirectPolicy';
+import { CONFIG_DEFAULTS } from '../core/config/defaults';
+import { getRuntime } from '../core/runtime';
 
 interface RequestOptions {
   timeout?: number;
@@ -53,10 +54,10 @@ export class HttpClient {
   }
 
   private getConfig() {
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+    const { config } = getRuntime();
     return {
-      timeout: config.get<number>('httpTimeout', 10000),
-      retryAttempts: config.get<number>('retryAttempts', 3)
+      timeout: config.get<number>('httpTimeout', CONFIG_DEFAULTS.httpTimeout),
+      retryAttempts: config.get<number>('retryAttempts', CONFIG_DEFAULTS.retryAttempts)
     };
   }
 
