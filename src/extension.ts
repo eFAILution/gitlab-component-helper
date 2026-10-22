@@ -11,7 +11,7 @@ import { Logger } from './utils/logger';
 import { ValidationProvider } from './providers/validationProvider';
 import type { CachedComponent } from './types/cache';
 import type { GitLabYamlFragment } from './types/gitlab-catalog';
-import type { HoverContext } from './providers/hoverContentBuilder';
+import { DETACH_HOVER_COMMAND, type HoverContext } from './providers/hoverContentBuilder';
 
 /** Component payload passed to the `detachHover` command. Adds the hover-builder's location context. */
 type DetachableComponent = Component & { _hoverContext?: HoverContext };
@@ -320,7 +320,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Register command to detach hover window as a dedicated panel
     logger.debug('[Extension] Registering detachHover command...', 'Extension');
     context.subscriptions.push(
-      vscode.commands.registerCommand('gitlab-component-helper.detachHover', async (component: DetachableComponent) => {
+      vscode.commands.registerCommand(DETACH_HOVER_COMMAND, async (component: DetachableComponent) => {
         logger.info(`[Extension] Detaching hover for component: ${component?.name}`, 'Extension');
 
         if (!component) {
