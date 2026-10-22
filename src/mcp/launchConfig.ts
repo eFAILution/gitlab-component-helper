@@ -3,7 +3,7 @@
  * unit-tested without VS Code.
  */
 
-import { CONFIG_DEFAULTS, type ConfigKey } from '../core/config/defaults';
+import { CONFIG_DEFAULTS, WORKSPACE_SETTABLE_KEYS, type ConfigKey } from '../core/config/defaults';
 import { DEFAULT_GITLAB_HOST, normalizeHost } from './adapters/network';
 import { TOKENS_JSON_ENV } from './adapters/secrets';
 
@@ -34,10 +34,22 @@ export function buildServerArgs(serverScript: string, workspaceFolders: readonly
   return [serverScript, ...workspaceFolders.flatMap((folder) => ['--root', folder])];
 }
 
-/** The effective settings to pass as `GCH_CONFIG_JSON`, read through `get`, with withheld keys left out. */
-export function effectiveSettings(get: (key: ConfigKey) => unknown): Record<string, unknown> {
+/**
+ * The settings to pass as `GCH_CONFIG_JSON`, with withheld keys left out. Keys a workspace may set use the effective
+ * value; every other key (network, cache, logging) uses the user-scope value, because the server trusts this layer
+ * and the workspace's `.vscode/settings.json` must not reach it that way.
+ *
+ * @param getEffective The value VS Code resolves for the workspace.
+ * @param getUser      The user (global) value, else the default.
+ */
+export function effectiveSettings(
+  getEffective: (key: ConfigKey) => unknown,
+  getUser: (key: ConfigKey) => unknown
+): Record<string, unknown> {
   return Object.fromEntries(
-    (Object.keys(CONFIG_DEFAULTS) as ConfigKey[]).filter((key) => !WITHHELD_SETTINGS.has(key)).map((key) => [key, get(key)])
+    (Object.keys(CONFIG_DEFAULTS) as ConfigKey[])
+      .filter((key) => !WITHHELD_SETTINGS.has(key))
+      .map((key) => [key, WORKSPACE_SETTABLE_KEYS.has(key) ? getEffective(key) : getUser(key)])
   );
 }
 

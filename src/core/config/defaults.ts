@@ -31,6 +31,22 @@ export interface ConfigValues {
 /** A setting name without the `gitlabComponentHelper.` prefix. */
 export type ConfigKey = keyof ConfigValues;
 
+/**
+ * The settings a workspace (a cloned repository's files or `.vscode/settings.json`) may set for the MCP server:
+ * catalog and checking behavior only. Everything else (network, cache, logging) comes from user scope.
+ */
+export const WORKSPACE_SETTABLE_KEYS: ReadonlySet<ConfigKey> = new Set<ConfigKey>([
+  'componentSources',
+  'discovery.templateRoots',
+  'discovery.maxDepth',
+  'discovery.filePatterns',
+  'discovery.templateFileNames',
+  'additionalFileGlobs',
+  'versionCheck.enabled',
+  'versionCheck.severity',
+  'versionPreferences',
+]);
+
 export const CONFIG_DEFAULTS: Readonly<ConfigValues> = Object.freeze({
   gitlabToken: '',
   cacheTime: 3600,

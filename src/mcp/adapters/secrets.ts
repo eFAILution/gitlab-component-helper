@@ -12,6 +12,7 @@
  */
 
 import type { SecretsPort } from '../../core/ports';
+import { InvalidTokenError, normalizeToken } from '../../core/tokens';
 import { DEFAULT_GITLAB_HOST, normalizeHost } from './network';
 
 export const TOKEN_ENV_PREFIX = 'GCH_TOKEN_';
@@ -51,9 +52,23 @@ function parseTokensJson(text: string | undefined, warn: (message: string) => vo
     return exact;
   }
   for (const [host, token] of Object.entries(raw)) {
-    if (typeof token === 'string' && token !== '' && host.trim() !== '') exact.set(normalizeHost(host), token);
+    if (typeof token !== 'string' || host.trim() === '') continue;
+    const clean = cleanToken(token, `${TOKENS_JSON_ENV} entry for ${normalizeHost(host)}`, warn);
+    if (clean) exact.set(normalizeHost(host), clean);
   }
   return exact;
+}
+
+/** The trimmed token, or `undefined` (with a warning that names the source, never the token) when it's unusable. */
+function cleanToken(raw: string, source: string, warn: (message: string) => void): string | undefined {
+  if (raw.trim() === '') return undefined;
+  try {
+    return normalizeToken(raw);
+  } catch (error) {
+    if (!(error instanceof InvalidTokenError)) throw error;
+    warn(`Ignoring the ${source}: ${error.message}`);
+    return undefined;
+  }
 }
 
 /**
@@ -68,10 +83,11 @@ export function takeEnvTokens(env: NodeJS.ProcessEnv, warn: (message: string) =>
   const byEnvName = new Map<string, string>();
   for (const [name, value] of Object.entries(env)) {
     if (!name.startsWith(TOKEN_ENV_PREFIX)) continue;
-    if (value) byEnvName.set(name, value);
+    const clean = value ? cleanToken(value, name, warn) : undefined;
+    if (clean) byEnvName.set(name, clean);
     delete env[name];
   }
-  const fallbackToken = env.GITLAB_TOKEN || undefined;
+  const fallbackToken = env.GITLAB_TOKEN ? cleanToken(env.GITLAB_TOKEN, 'GITLAB_TOKEN', warn) : undefined;
   const fallbackHost = fallbackToken ? normalizeHost(env.GITLAB_HOST || DEFAULT_GITLAB_HOST) : undefined;
   delete env.GITLAB_TOKEN;
   return { exact, byEnvName, namedHosts, fallbackHost, fallbackToken };

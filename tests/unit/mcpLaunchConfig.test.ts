@@ -23,7 +23,8 @@ suite('MCP launch config', () => {
   });
 
   test('passes every setting except gitlabToken as GCH_CONFIG_JSON, plus the cache dir and Electron-as-Node', () => {
-    const settings = effectiveSettings((key: ConfigKey) => (key === 'gitlabToken' ? 'glpat-secret' : CONFIG_DEFAULTS[key]));
+    const read = (key: ConfigKey) => (key === 'gitlabToken' ? 'glpat-secret' : CONFIG_DEFAULTS[key]);
+    const settings = effectiveSettings(read, read);
     const env = buildServerEnv(settings, '/storage/mcp-cache', []);
 
     assert.equal(env.ELECTRON_RUN_AS_NODE, '1');

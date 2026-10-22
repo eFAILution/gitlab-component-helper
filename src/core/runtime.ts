@@ -66,9 +66,19 @@ export function setRuntime(ports: RuntimePorts): void {
  * (the MCP server).
  */
 export function lockRuntime(): void {
-  if (current.network) Object.freeze(current.network);
-  Object.freeze(current);
+  deepFreeze(current);
   locked = true;
+}
+
+/** Freeze an object and every object or function reachable through its own properties. */
+function deepFreeze(value: unknown, seen = new Set<unknown>()): void {
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null || seen.has(value)) return;
+  seen.add(value);
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor && 'value' in descriptor) deepFreeze(descriptor.value, seen);
+  }
+  Object.freeze(value);
 }
 
 export function isRuntimeLocked(): boolean {
