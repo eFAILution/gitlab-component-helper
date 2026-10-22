@@ -11,11 +11,22 @@ export interface SpawnedServer {
   child: ChildProcessWithoutNullStreams;
   request(method: string, params?: Record<string, unknown>): Promise<Record<string, unknown>>;
   stop(): Promise<number | null>;
+  stderr(): string;
 }
 
 export function startServer(bundle: string, args: string[] = [], env: NodeJS.ProcessEnv = {}): SpawnedServer {
   const child = spawn(process.execPath, [bundle, ...args], { cwd: REPO_ROOT, env: { ...process.env, ...env } });
   const pending = new Map<number, (message: Record<string, unknown>) => void>();
+  let stderr = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk: string) => {
+    stderr += chunk;
+  });
+  // A crashed server answers every pending request with its stderr, so tests fail fast with the reason.
+  child.on('exit', (code) => {
+    pending.forEach((resolveResponse) => resolveResponse({ error: { code: 'exited', message: `exit ${code}: ${stderr}` } }));
+    pending.clear();
+  });
   let nextId = 1;
   let buffer = '';
   child.stdout.setEncoding('utf8');
@@ -26,6 +37,7 @@ export function startServer(bundle: string, args: string[] = [], env: NodeJS.Pro
       const message = JSON.parse(buffer.slice(0, newline)) as Record<string, unknown>;
       buffer = buffer.slice(newline + 1);
       pending.get(message.id as number)?.(message);
+      pending.delete(message.id as number);
       newline = buffer.indexOf('\n');
     }
   });
@@ -39,9 +51,11 @@ export function startServer(bundle: string, args: string[] = [], env: NodeJS.Pro
       }),
     stop: () =>
       new Promise((resolveExit) => {
+        if (child.exitCode !== null) return resolveExit(child.exitCode);
         child.on('exit', (code) => resolveExit(code));
         child.stdin.end();
       }),
+    stderr: () => stderr,
   };
 }
 

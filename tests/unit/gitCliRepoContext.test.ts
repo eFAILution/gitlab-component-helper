@@ -5,9 +5,9 @@
 
 import * as assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createGitCliRepoContext } from '../../src/adapters/node/repoContext';
 
 // Spawning git a few times can take longer than mocha's default on a cold machine.
@@ -57,5 +57,20 @@ suite('createGitCliRepoContext', function () {
 
     assert.deepStrictEqual(await context.remoteContext(file), {});
     assert.equal(await context.nonGitLabRemote(file), null);
+  });
+
+  test('allowedRoots: no context for files outside the roots, and no discovery of a repository above a root', async () => {
+    const insideFile = repo('git@gitlab.com:group/inside.git');
+    const outsideFile = repo('git@gitlab.com:group/outside.git');
+    const insideRoot = realpathSync(dirname(insideFile));
+    const subRoot = join(insideRoot, 'sub');
+    mkdirSync(subRoot);
+
+    const scoped = createGitCliRepoContext({ allowedRoots: [insideRoot] });
+    assert.equal((await scoped.remoteContext(join(insideRoot, '.gitlab-ci.yml'))).projectPath, 'group/inside');
+    assert.deepStrictEqual(await scoped.remoteContext(outsideFile), {});
+
+    const belowRepo = createGitCliRepoContext({ allowedRoots: [subRoot] });
+    assert.deepStrictEqual(await belowRepo.remoteContext(join(subRoot, '.gitlab-ci.yml')), {});
   });
 });

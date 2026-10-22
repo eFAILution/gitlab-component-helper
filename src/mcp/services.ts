@@ -9,6 +9,7 @@ import { CONFIG_DEFAULTS } from '../core/config/defaults';
 import { getRuntime } from '../core/runtime';
 import { extractStatusCode, isAuthError } from '../errors';
 import { ToolError } from './server';
+import { hostNotAllowedMessage } from './adapters/network';
 import type { ComponentRef } from './tools/componentRef';
 import type { ComponentServices, SpecComponent } from './tools/getComponentSpec';
 import type { ComponentSource } from '../types/api';
@@ -36,9 +37,17 @@ export function gitlabFailure(error: unknown, ref: Pick<ComponentRef, 'gitlabIns
   return new ToolError(`Fetching ${ref.url} failed${status ? ` (HTTP ${status})` : ''}.`);
 }
 
-export function createComponentServices(): ComponentServices {
+/** Refuse, with a message saying how to allow it, a component on a host the server may not contact. */
+export function assertHostAllowed(isHostAllowed: (host: string) => boolean, ref: Pick<ComponentRef, 'gitlabInstance'>): void {
+  if (!isHostAllowed(ref.gitlabInstance)) {
+    throw new ToolError(hostNotAllowedMessage(ref.gitlabInstance));
+  }
+}
+
+export function createComponentServices(isHostAllowed: (host: string) => boolean): ComponentServices {
   return {
     fetchComponent: async (ref) => {
+      assertHostAllowed(isHostAllowed, ref);
       let component: SpecComponent | null;
       try {
         component = await getComponentService().getComponentFromUrl(ref.url);
@@ -51,6 +60,7 @@ export function createComponentServices(): ComponentServices {
       return component;
     },
     fetchVersions: async (ref) => {
+      assertHostAllowed(isHostAllowed, ref);
       const sources = getRuntime().config.get<ComponentSource[]>('componentSources', CONFIG_DEFAULTS.componentSources);
       const lookup = reconcileComponentSource(
         {
