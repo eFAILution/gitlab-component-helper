@@ -73,7 +73,14 @@ export function registerMcpServerProvider(context: vscode.ExtensionContext, toke
       const plan = serverLaunchPlan(folders.map((folder) => folder.uri.fsPath), enabled);
       if (!plan) return [];
       const { config } = getRuntime();
-      const settings = effectiveSettings((key) => config.get(key, CONFIG_DEFAULTS[key]));
+      const vscodeConfig = vscode.workspace.getConfiguration(CONFIG_SECTION);
+      const settings = effectiveSettings(
+        (key) => config.get(key, CONFIG_DEFAULTS[key]),
+        (key) => {
+          const inspected = vscodeConfig.inspect(key);
+          return inspected?.globalValue ?? inspected?.defaultValue ?? CONFIG_DEFAULTS[key];
+        }
+      );
       const cacheDir = vscode.Uri.joinPath(context.globalStorageUri, CACHE_DIR_NAME).fsPath;
       const definition = new vscode.McpStdioServerDefinition(
         SERVER_LABEL,
