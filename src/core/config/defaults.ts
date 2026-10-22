@@ -68,5 +68,5 @@ export const CONFIG_DEFAULTS: Readonly<ConfigValues> = Object.freeze({
   'versionCheck.enabled': true,
   'versionCheck.severity': 'warning',
   versionPreferences: {},
-  'mcp.enabled': true,
+  'mcp.enabled': false,
 });
