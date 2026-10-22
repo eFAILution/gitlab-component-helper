@@ -1,6 +1,7 @@
 /**
- * The MCP server's outbound request policy: HTTPS only, to GitLab instances the user configured or holds a token for,
- * and never to private, loopback, or link-local addresses.
+ * The MCP server's outbound request policy: HTTPS only, and only to GitLab instances the user configured or holds a
+ * token for. Private and loopback addresses are allowed for those hosts, because self-managed GitLab often lives on
+ * an internal network. Link-local (cloud metadata), unspecified, and multicast addresses are always refused.
  */
 
 import { lookup as dnsLookup, type LookupAddress } from 'node:dns';
@@ -21,21 +22,16 @@ function ipv4Parts(address: string): number[] {
   return address.split('.').map(Number);
 }
 
-/** Loopback, private, link-local, carrier-grade NAT, unspecified, multicast and reserved addresses. */
+/** Link-local (incl. the 169.254.169.254 cloud metadata endpoint), unspecified, multicast and reserved addresses. */
 export function isBlockedAddress(address: string): boolean {
   const mapped = address.toLowerCase().match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
   const candidate = mapped ? mapped[1] : address;
   if (isIP(candidate) === 4) {
     const [a, b] = ipv4Parts(candidate);
-    return a === 0 || a === 10 || a === 127 || a >= 224 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168);
+    return a === 0 || a >= 224 || (a === 169 && b === 254);
   }
   const lower = candidate.toLowerCase();
-  return lower === '::' || lower === '::1' ||
-    /^f[cd]/.test(lower) || /^fe[89ab]/.test(lower) || /^ff/.test(lower);
+  return lower === '::' || /^fe[89ab]/.test(lower) || /^ff/.test(lower);
 }
 
 /** A DNS lookup that fails when any resolved address is blocked. */
@@ -44,7 +40,7 @@ export const guardedLookup: LookupFunction = (hostname, options, callback) => {
     if (error) return callback(error, '', 0);
     const blocked = addresses.find((entry) => isBlockedAddress(entry.address));
     if (blocked || addresses.length === 0) {
-      return callback(new HostNotAllowedError(`${hostname} resolves to a private or local address`), '', 0);
+      return callback(new HostNotAllowedError(`${hostname} resolves to a link-local or reserved address`), '', 0);
     }
     if (options.all) return (callback as unknown as (e: null, a: LookupAddress[]) => void)(null, addresses);
     return callback(null, addresses[0].address, addresses[0].family);
@@ -77,7 +73,7 @@ export function createNetworkPolicy(allowedHosts: Iterable<string>): NetworkPoli
         throw new HostNotAllowedError(hostNotAllowedMessage(url.host));
       }
       if (isIP(url.hostname.replace(/^\[|\]$/g, '')) && isBlockedAddress(url.hostname.replace(/^\[|\]$/g, ''))) {
-        throw new HostNotAllowedError(`Refusing a request to the private or local address ${url.hostname}`);
+        throw new HostNotAllowedError(`Refusing a request to the link-local or reserved address ${url.hostname}`);
       }
     },
     lookup: guardedLookup,
