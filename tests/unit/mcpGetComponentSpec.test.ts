@@ -22,7 +22,7 @@ function fakeServices(): ComponentServices & { urls: string[] } {
       if (ref.name === 'missing') return null;
       return {
         name: 'deploy',
-        description: 'Deploys\u0007 things‮',
+        description: 'Deploys\u0007 things\u202e',
         source: 'Shared CI',
         parameters: [
           { name: 'stage', description: 'Stage', required: false, type: 'string', default: 'deploy' },

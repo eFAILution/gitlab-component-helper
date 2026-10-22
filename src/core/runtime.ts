@@ -61,9 +61,18 @@ export function setRuntime(ports: RuntimePorts): void {
   current = ports;
 }
 
-/** Refuse any later {@link setRuntime}, so nothing loaded after startup can swap the ports (the MCP server). */
+/**
+ * Refuse any later {@link setRuntime} and freeze the ports, so nothing loaded after startup can swap or patch them
+ * (the MCP server).
+ */
 export function lockRuntime(): void {
+  if (current.network) Object.freeze(current.network);
+  Object.freeze(current);
   locked = true;
+}
+
+export function isRuntimeLocked(): boolean {
+  return locked;
 }
 
 export function getRuntime(): RuntimePorts {

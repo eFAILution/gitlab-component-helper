@@ -8,7 +8,7 @@ import { NetworkError, extractStatusCode } from '../errors';
 import { API_PER_PAGE_LIMIT, MAX_PAGINATION_PAGES, MAX_REDIRECTS } from '../constants/timing';
 import { planRedirect, stripCredentialHeaders } from './redirectPolicy';
 import { CONFIG_DEFAULTS } from '../core/config/defaults';
-import { getRuntime } from '../core/runtime';
+import { getRuntime, isRuntimeLocked } from '../core/runtime';
 
 interface RequestOptions {
   timeout?: number;
@@ -250,6 +250,10 @@ export class HttpClient {
         const isHttps = urlObj.protocol === 'https:';
         const client = isHttps ? https : http;
         const { network } = getRuntime();
+        // A locked runtime is the MCP server's; without its policy, fail closed instead of contacting anything.
+        if (!network && isRuntimeLocked()) {
+          throw new NetworkError('Refusing the request: no network policy is installed');
+        }
         network?.checkRequest(urlObj);
 
         const requestOptions = {

@@ -18,20 +18,67 @@ export class HostNotAllowedError extends Error {
   }
 }
 
-function ipv4Parts(address: string): number[] {
+/** IPv4 addresses no GitLab instance lives on: cloud metadata endpoints outside link-local. */
+const BLOCKED_IPV4 = new Set(['100.100.100.200']);
+/** IPv6 metadata endpoints (AWS IMDS over IPv6). */
+const BLOCKED_IPV6 = new Set(['fd00:0ec2:0000:0000:0000:0000:0000:0254']);
+
+function parseIpv4(address: string): number[] | null {
+  if (isIP(address) !== 4) return null;
   return address.split('.').map(Number);
 }
 
-/** Link-local (incl. the 169.254.169.254 cloud metadata endpoint), unspecified, multicast and reserved addresses. */
-export function isBlockedAddress(address: string): boolean {
-  const mapped = address.toLowerCase().match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  const candidate = mapped ? mapped[1] : address;
-  if (isIP(candidate) === 4) {
-    const [a, b] = ipv4Parts(candidate);
-    return a === 0 || a >= 224 || (a === 169 && b === 254);
+/** Parse an IPv6 address (zone id allowed, dotted IPv4 tail allowed) into 16 bytes. */
+export function parseIpv6(address: string): number[] | null {
+  const bare = address.replace(/^\[|\]$/g, '').replace(/%.*$/, '');
+  if (isIP(bare) !== 6) return null;
+  let text = bare.toLowerCase();
+  const dotted = text.match(/(\d+\.\d+\.\d+\.\d+)$/);
+  if (dotted) {
+    const [a, b, c, d] = dotted[1].split('.').map(Number);
+    text = `${text.slice(0, -dotted[1].length)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
   }
-  const lower = candidate.toLowerCase();
-  return lower === '::' || /^fe[89ab]/.test(lower) || /^ff/.test(lower);
+  const [head, tail = ''] = text.split('::');
+  const headGroups = head ? head.split(':') : [];
+  const tailGroups = text.includes('::') ? (tail ? tail.split(':') : []) : [];
+  const fill = text.includes('::') ? 8 - headGroups.length - tailGroups.length : 0;
+  const groups = [...headGroups, ...Array(fill).fill('0'), ...tailGroups].map((group) => parseInt(group, 16));
+  return groups.flatMap((group) => [group >> 8, group & 0xff]);
+}
+
+function isBlockedIpv4([a, b, c, d]: number[]): boolean {
+  return a === 0 || a >= 224 || (a === 169 && b === 254) || BLOCKED_IPV4.has(`${a}.${b}.${c}.${d}`);
+}
+
+/** The IPv4 address an IPv6 address carries: mapped, compatible, NAT64 (64:ff9b::/96, 64:ff9b:1::/48), or 6to4. */
+function embeddedIpv4(bytes: number[]): number[] | null {
+  const zeros = (from: number, to: number) => bytes.slice(from, to).every((byte) => byte === 0);
+  if (zeros(0, 10) && bytes[10] === 0xff && bytes[11] === 0xff) return bytes.slice(12);
+  if (zeros(0, 12) && !zeros(12, 16) && !(zeros(12, 15) && bytes[15] === 1)) return bytes.slice(12);
+  if (bytes[0] === 0x00 && bytes[1] === 0x64 && bytes[2] === 0xff && bytes[3] === 0x9b) return bytes.slice(12);
+  if (bytes[0] === 0x20 && bytes[1] === 0x02) return bytes.slice(2, 6);
+  return null;
+}
+
+function ipv6Key(bytes: number[]): string {
+  return Array.from({ length: 8 }, (_, index) => ((bytes[index * 2] << 8) | bytes[index * 2 + 1]).toString(16).padStart(4, '0')).join(':');
+}
+
+/**
+ * Link-local (incl. the 169.254.169.254 cloud metadata endpoint), unspecified, multicast and reserved addresses, and
+ * known metadata endpoints, also when an IPv6 address carries one of them as embedded IPv4. Private and loopback
+ * addresses are allowed: self-managed GitLab lives there.
+ */
+export function isBlockedAddress(address: string): boolean {
+  const ipv4 = parseIpv4(address);
+  if (ipv4) return isBlockedIpv4(ipv4);
+  const bytes = parseIpv6(address);
+  if (!bytes) return false;
+  if (bytes.every((byte) => byte === 0)) return true;
+  if (bytes[0] === 0xff || (bytes[0] === 0xfe && (bytes[1] & 0xc0) === 0x80)) return true;
+  if (BLOCKED_IPV6.has(ipv6Key(bytes))) return true;
+  const embedded = embeddedIpv4(bytes);
+  return embedded ? isBlockedIpv4(embedded) : false;
 }
 
 /** A DNS lookup that fails when any resolved address is blocked. */
@@ -81,7 +128,7 @@ export function createNetworkPolicy(allowedHosts: Iterable<string>): NetworkPoli
       if (!isAllowed(url.host)) {
         throw new HostNotAllowedError(hostNotAllowedMessage(url.host));
       }
-      if (isIP(url.hostname.replace(/^\[|\]$/g, '')) && isBlockedAddress(url.hostname.replace(/^\[|\]$/g, ''))) {
+      if (isBlockedAddress(url.hostname)) {
         throw new HostNotAllowedError(`Refusing a request to the link-local or reserved address ${url.hostname}`);
       }
     },
