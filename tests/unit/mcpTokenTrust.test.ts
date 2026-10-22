@@ -79,4 +79,10 @@ suite('MCP token trust (bootstrap)', function () {
     assert.equal(result.hosts['gitlab-example.com'].allowed, false);
     assert.equal(result.hosts['gitlab.com'].allowed, true);
   });
+
+  test('GCH_TOKEN_GITLAB_COM works for gitlab.com without naming it', () => {
+    const result = probe({ GCH_TOKEN_GITLAB_COM: 'public-token' }, root, cache, ['gitlab.com']);
+
+    assert.deepStrictEqual(result.hosts['gitlab.com'], { token: 'public-token', allowed: true });
+  });
 });
