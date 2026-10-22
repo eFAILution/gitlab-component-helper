@@ -16,8 +16,11 @@ export const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 const MIN_TIMEOUT_MS = 1000;
 const MAX_TIMEOUT_MS = 60000;
 const MAX_RETRY_ATTEMPTS = 5;
-/** The whole request (headers and body) must finish within this many socket timeouts... */
-const DEADLINE_TIMEOUTS = 3;
+/**
+ * The whole request (headers and body) must finish within this many socket timeouts (60s at the default 10s), so a
+ * slow but steady download on a VPN still finishes...
+ */
+const DEADLINE_TIMEOUTS = 6;
 /** ...and never take longer than this. */
 const MAX_DEADLINE_MS = 180000;
 
@@ -86,9 +89,11 @@ export class HttpClient {
   /** The timeout and retry count for one call: the caller's, else the settings, clamped to sane bounds. */
   private limitsFor(options: RequestOptions): { timeout: number; retryAttempts: number } {
     const config = this.getConfig();
+    // `httpTimeout: 0` meant "no timeout" to Node; the closest we allow is the longest timeout.
+    const requested = options.timeout ?? config.timeout;
     return {
-      timeout: clamp(options.timeout || config.timeout, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, CONFIG_DEFAULTS.httpTimeout),
-      retryAttempts: clamp(options.retryAttempts || config.retryAttempts, 0, MAX_RETRY_ATTEMPTS, CONFIG_DEFAULTS.retryAttempts),
+      timeout: requested === 0 ? MAX_TIMEOUT_MS : clamp(requested, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, CONFIG_DEFAULTS.httpTimeout),
+      retryAttempts: clamp(options.retryAttempts ?? config.retryAttempts, 0, MAX_RETRY_ATTEMPTS, CONFIG_DEFAULTS.retryAttempts),
     };
   }
 
@@ -279,6 +284,8 @@ export class HttpClient {
     redirectsRemaining: number = MAX_REDIRECTS
   ): Promise<{ body: string; headers: Record<string, string> }> {
     return new Promise((resolve, reject) => {
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      let req: http.ClientRequest | undefined;
       try {
         const urlObj = new URL(url);
         const isHttps = urlObj.protocol === 'https:';
@@ -306,12 +313,12 @@ export class HttpClient {
           clearTimeout(deadline);
           finish();
         };
-        const deadline = setTimeout(() => {
-          req.destroy();
+        deadline = setTimeout(() => {
+          req?.destroy();
           reject(new NetworkError(`Request to ${url} passed its ${deadlineMs}ms deadline`, { statusCode: 408 }));
         }, deadlineMs);
 
-        const req = client.request(requestOptions, (res) => {
+        req = client.request(requestOptions, (res) => {
           const statusCode = res.statusCode ?? 0;
 
           // Resolve redirects before reading the body. `planRedirect` enforces the credential-safe,
@@ -352,7 +359,7 @@ export class HttpClient {
             receivedBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
             if (receivedBytes > MAX_RESPONSE_BYTES) {
               tooLarge = true;
-              req.destroy();
+              req?.destroy();
               settle(() => reject(new NetworkError(`Response from ${urlObj.host} is too large (over ${MAX_RESPONSE_BYTES} bytes)`)));
               return;
             }
@@ -380,7 +387,7 @@ export class HttpClient {
         });
 
         req.on('timeout', () => {
-          req.destroy();
+          req?.destroy();
           settle(() => reject(new NetworkError(`Request timeout after ${options.timeout}ms for ${url}`, { statusCode: 408 })));
         });
 
@@ -390,6 +397,7 @@ export class HttpClient {
 
         req.end();
       } catch (error) {
+        clearTimeout(deadline);
         reject(new NetworkError(extractMessage(error), { cause: toError(error) }));
       }
     });
@@ -420,7 +428,7 @@ export class HttpClient {
       'User-Agent': 'VSCode-GitLabComponentHelper',
       ...options.headers
     };
-    const timeout = options.timeout || this.getConfig().timeout;
+    const { timeout } = this.limitsFor(options);
 
     const all: T[] = [];
     let page = 1;
@@ -469,7 +477,7 @@ export class HttpClient {
     const promises = requests.map(async ({ url, options = {} }) => {
       try {
         const data = await this.makeRequest(url, {
-          timeout: options.timeout || this.getConfig().timeout,
+          timeout: this.limitsFor(options).timeout,
           headers: {
             'User-Agent': 'VSCode-GitLabComponentHelper',
             ...options.headers
