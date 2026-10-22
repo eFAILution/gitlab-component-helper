@@ -29,7 +29,7 @@ This project uses **AI Context as Code (AICaC)** - structured YAML documentation
 **Purpose:** Smart autocomplete, hover docs, and component browsing for GitLab CI/CD
 
 ### Tech Stack
-- VS Code Extension API (>=1.102.0)
+- VS Code Extension API (>=1.120.0)
 - TypeScript (strict mode)
 - esbuild (bundler)
 - Mocha (testing)
@@ -39,6 +39,7 @@ This project uses **AI Context as Code (AICaC)** - structured YAML documentation
 - Extension activation: [`src/extension.ts`](src/extension.ts)
 - Providers: [`src/providers/`](src/providers/)
 - Services: [`src/services/`](src/services/)
+- MCP server: [`src/mcp/main.ts`](src/mcp/main.ts) → `out/mcp/server.js` (see [`docs/mcp.md`](docs/mcp.md))
 
 ### Common Commands
 ```bash
@@ -118,7 +119,7 @@ All tests must pass before merging. CI runs tests automatically.
 
 ## Important Constraints
 
-- Must support VS Code >=1.102.0
+- Must support VS Code >=1.120.0
 - Must support Node.js >=22.0.0
 - Must work on both gitlab.com and self-hosted GitLab
 - Component data must be cached for performance
