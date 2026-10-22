@@ -18,6 +18,11 @@ type DetachableComponent = Component & { _hoverContext?: HoverContext };
 
 import { getPerformanceMonitor } from './utils/performanceMonitor';
 import { isGitLabCIFile, invalidateFileGlobsCache } from './utils/gitlabCiFileMatcher';
+import { setRuntime } from './core/runtime';
+import { createVscodeConfig } from './adapters/vscode/config';
+import { createVscodeSecrets } from './adapters/vscode/secrets';
+import { createVscodeStorage } from './adapters/vscode/storage';
+import { attachLoggerToSettings, createOutputChannelSink } from './adapters/vscode/logger';
 
 const CI_FILE_CONTEXT_KEY = 'gitlabComponentHelper.isCiFile';
 
@@ -25,7 +30,15 @@ const CI_FILE_CONTEXT_KEY = 'gitlabComponentHelper.isCiFile';
 const PANEL_FOCUS_DELAY_MS = 100;
 
 export function activate(context: vscode.ExtensionContext) {
+  // Install the VS Code ports before anything reads settings, secrets, storage, or logs.
+  setRuntime({
+    config: createVscodeConfig(),
+    secrets: createVscodeSecrets(context.secrets),
+    storage: createVscodeStorage(context.globalState),
+    log: createOutputChannelSink(),
+  });
   const logger = Logger.getInstance();
+  context.subscriptions.push(attachLoggerToSettings(logger));
   logger.info('GitLab Component Helper is now active!', 'Extension');
   logger.info(`[Extension] VS Code version: ${vscode.version}`, 'Extension');
   logger.debug(`[Extension] Extension context: ${JSON.stringify({

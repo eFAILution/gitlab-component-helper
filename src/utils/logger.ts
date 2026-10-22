@@ -1,24 +1,6 @@
-import { createRequire } from 'node:module';
-import { outputChannel } from './outputChannel';
-import type * as VsCodeNS from 'vscode';
-
-type VsCode = typeof VsCodeNS;
-
-const requireFn = createRequire(__filename);
-
-/**
- * Resolves the `vscode` module at call time.
- *
- * @returns the live `vscode` API when running inside the extension host, or `undefined` when imported from plain
- *   Node (e.g. unit tests).
- */
-function getVscode(): VsCode | undefined {
-  try {
-    return requireFn('vscode');
-  } catch {
-    return undefined;
-  }
-}
+import { CONFIG_DEFAULTS } from '../core/config/defaults';
+import { getRuntime } from '../core/runtime';
+import type { LogLevelName } from '../core/ports';
 
 export enum LogLevel {
   DEBUG = 0,
@@ -27,51 +9,17 @@ export enum LogLevel {
   ERROR = 3
 }
 
+// Matches the precision `console.timeEnd` used before timings went through the log sink.
+const TIMER_DECIMALS = 3;
+
 export class Logger {
   private static instance: Logger;
   private currentLevel: LogLevel = LogLevel.ERROR;
-  private isInitialized: boolean = false;
+  private isLevelLoaded: boolean = false;
   private isDevelopmentMode: boolean = false;
+  private readonly timers = new Map<string, number>();
 
-  private constructor() {
-    const vscode = getVscode();
-    if (!vscode) {
-      // No vscode at module load e.g. running unit tests.
-      this.isInitialized = true;
-      return;
-    }
-
-    // Detect if we're in development mode (extension debugging)
-    this.isDevelopmentMode = this.isInDevelopmentMode(vscode);
-
-    this.updateLogLevel(false); // Don't show output channel during initialization
-
-    // Watch for configuration changes
-    vscode.workspace.onDidChangeConfiguration(e => {
-      if (e.affectsConfiguration('gitlabComponentHelper.logLevel') ||
-          e.affectsConfiguration('gitlabComponentHelper.autoShowOutput')) {
-        this.updateLogLevel(!this.isDevelopmentMode); // Don't show output in dev mode
-      }
-    });
-
-    this.isInitialized = true;
-  }  private isInDevelopmentMode(vscode: VsCode): boolean {
-    try {
-      // Check if we're running in extension development mode
-      // In development, the extension runs from source and has different characteristics
-      const extensionPath = vscode.extensions.getExtension('efailution.gitlab-component-helper')?.extensionPath;
-      return Boolean(
-        // Check for common development indicators
-        process.env.NODE_ENV === 'development' ||
-        extensionPath?.includes('src') ||
-        extensionPath?.includes('.vscode') ||
-        // Extension development path typically includes the workspace folder
-        extensionPath?.includes('gitlab-component-helper')
-      );
-    } catch {
-      return false;
-    }
-  }
+  private constructor() {}
 
   static getInstance(): Logger {
     if (!Logger.instance) {
@@ -80,15 +28,24 @@ export class Logger {
     return Logger.instance;
   }
 
-  private updateLogLevel(showOutput: boolean = false): void {
+  /**
+   * Flag an extension development host: the level line gets a `[DEV MODE]` tag and the output never auto-shows.
+   */
+  setDevelopmentMode(enabled: boolean): void {
+    this.isDevelopmentMode = enabled;
+  }
 
-    // early return if no vscode, e.g. running unit tests
-    const vscode = getVscode();
-    if (!vscode) return;
-
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-    const levelString = config.get<string>('logLevel', 'ERROR');
-    const autoShowOutput = config.get<boolean>('autoShowOutput', false);
+  /**
+   * Re-read `logLevel` and `autoShowOutput` from the runtime config. Hosts call this after installing their runtime
+   * and whenever either setting changes. The first log call loads the level if no host has.
+   *
+   * @param showOutput Reveal the log afterwards, if `autoShowOutput` is on and this isn't a development host.
+   */
+  reloadLogLevel(showOutput: boolean = false): void {
+    const { config, log } = getRuntime();
+    const levelString = config.get<string>('logLevel', CONFIG_DEFAULTS.logLevel);
+    const autoShowOutput = config.get<boolean>('autoShowOutput', CONFIG_DEFAULTS.autoShowOutput);
+    this.isLevelLoaded = true;
 
     // Make log level case-insensitive with explicit mapping
     const normalizedLevel = levelString.toUpperCase();
@@ -119,21 +76,24 @@ export class Logger {
     // 2. Not in development mode AND
     // 3. Auto show setting is enabled
     if (showOutput && !this.isDevelopmentMode && autoShowOutput) {
-      outputChannel.show(true);
+      log.show?.(true);
     }
 
     const levelName = LogLevel[this.currentLevel];
     const devMode = this.isDevelopmentMode ? ' [DEV MODE]' : '';
     const msg = `[Logger] Log level updated to: ${levelString} (normalized: ${normalizedLevel}, actual: ${levelName}, numeric: ${this.currentLevel})${devMode}`;
-    outputChannel.appendLine(msg);
+    log.appendLine(msg);
   }
 
   // Public method to explicitly show output channel (for commands that need it)
   public showOutput(): void {
-    outputChannel.show(true);
+    getRuntime().log.show?.(true);
   }
 
   private shouldLog(level: LogLevel): boolean {
+    if (!this.isLevelLoaded) {
+      this.reloadLogLevel(false);
+    }
     return level >= this.currentLevel;
   }
 
@@ -142,47 +102,47 @@ export class Logger {
     return `[${timestamp}] [${level}] [${component}] ${message}`;
   }
 
+  private write(level: LogLevelName, component: string, message: string): void {
+    getRuntime().log.appendLine(this.formatMessage(level, component, message), level);
+  }
+
   debug(message: string, component: string = 'ComponentService'): void {
     if (this.shouldLog(LogLevel.DEBUG)) {
-      const formatted = this.formatMessage('DEBUG', component, message);
-      outputChannel.appendLine(formatted);
+      this.write('DEBUG', component, message);
     }
   }
 
   info(message: string, component: string = 'ComponentService'): void {
     if (this.shouldLog(LogLevel.INFO)) {
-      const formatted = this.formatMessage('INFO', component, message);
-      outputChannel.appendLine(formatted);
+      this.write('INFO', component, message);
     }
   }
 
   warn(message: string, component: string = 'ComponentService'): void {
     if (this.shouldLog(LogLevel.WARN)) {
-      const formatted = this.formatMessage('WARN', component, message);
-      outputChannel.appendLine(formatted);
-      console.warn(formatted);
+      this.write('WARN', component, message);
     }
   }
 
   error(message: string, component: string = 'ComponentService'): void {
     if (this.shouldLog(LogLevel.ERROR)) {
-      const formatted = this.formatMessage('ERROR', component, message);
-      outputChannel.appendLine(formatted);
-      console.error(formatted);
+      this.write('ERROR', component, message);
     }
   }
 
-  // Performance timing utilities
+  // Performance timing utilities. These used to print via console.time on stdout, which the MCP server reserves
+  // for protocol messages, so they now log at DEBUG through the sink.
   time(label: string): void {
     if (this.shouldLog(LogLevel.DEBUG)) {
-      console.time(`[ComponentService] ${label}`);
+      this.timers.set(label, performance.now());
     }
   }
 
   timeEnd(label: string): void {
-    if (this.shouldLog(LogLevel.DEBUG)) {
-      console.timeEnd(`[ComponentService] ${label}`);
-    }
+    const start = this.timers.get(label);
+    this.timers.delete(label);
+    if (start === undefined) return;
+    this.debug(`${label}: ${(performance.now() - start).toFixed(TIMER_DECIMALS)}ms`, 'ComponentService');
   }
 
   // Structured logging for performance metrics
