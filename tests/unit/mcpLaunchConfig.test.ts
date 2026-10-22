@@ -4,7 +4,8 @@
  */
 
 import * as assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CONFIG_DEFAULTS, type ConfigKey } from '../../src/core/config/defaults';
 import {
@@ -40,13 +41,14 @@ suite('MCP launch config', () => {
     );
   });
 
-  test('tokens go over as one exact GCH_TOKENS_JSON map that the server binds host by host', () => {
-    const env = buildTokenEnv(new Map([['gitlab.example.com', 'one'], ['gitlab.com', 'two']]));
-    assert.deepStrictEqual(Object.keys(env), ['GCH_TOKENS_JSON']);
+  test('tokens go over as one exact map in a hand-off file that the server binds host by host', async () => {
+    const handoffDir = join(mkdtempSync(join(tmpdir(), 'gch-launch-')), 'handoff');
+    const env = await buildTokenEnv(new Map([['gitlab.example.com', 'one'], ['gitlab.com', 'two']]), handoffDir);
+    assert.deepStrictEqual(Object.keys(env), ['GCH_TOKENS_HANDOFF']);
 
     const bound = bindTokens(takeEnvTokens({ ...env }), [], () => undefined);
     assert.deepStrictEqual([...bound], [['gitlab.example.com', 'one'], ['gitlab.com', 'two']]);
-    assert.deepStrictEqual(buildTokenEnv(new Map()), {});
+    assert.deepStrictEqual(await buildTokenEnv(new Map(), handoffDir), {});
   });
 
   test('user-level source hosts become GCH_TRUSTED_HOSTS', () => {

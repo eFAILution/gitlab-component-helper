@@ -36,8 +36,10 @@ When an in-editor AI client starts the server, it gets:
 - the tokens you saved with **GitLab CI: Add Component Project/Group**, for the instances in your token list and in your
   **user** `componentSources` setting (never instances named only by workspace or folder settings)
 
-Tokens are passed to the server process as one `GCH_TOKENS_JSON` variable when VS Code starts it, and the server
-removes it from its environment right away. Tokens never appear in settings or logs. The server is off by default:
+When VS Code starts the server, the extension writes the tokens to a one-time file in its private storage folder
+(readable only by you) and passes the server just the file's path. The server reads the file and deletes it as it
+starts, and the extension deletes it after 30 seconds if the server never did. Tokens never sit in the server's
+environment, settings, or logs, so a terminal command can't read them from the running process. The server is off by default:
 turn on `gitlabComponentHelper.mcp.enabled` in your user settings to offer it. It is an application setting, so a
 workspace can't turn it on or off. After you add or change a token, VS Code restarts the server so it picks the change
 up.
@@ -98,9 +100,11 @@ The two files inside the repository (4 and 5) may only set catalog and checking 
 
 ### Tokens
 
+- `GCH_TOKENS_HANDOFF`: path to a one-time file holding the same JSON as `GCH_TOKENS_JSON`. The server reads it and
+  **deletes it**, and refuses it if it is a symlink, larger than 64 KB, or (on macOS and Linux) readable by other users
+  or owned by someone else. This is what the extension passes.
 - `GCH_TOKENS_JSON`: a JSON object of exact host (with `:port` if not 443) to token, for example
-  `{"gitlab.example.com": "glpat-..."}`. Each token is used only for exactly its host. This is what the extension
-  passes.
+  `{"gitlab.example.com": "glpat-..."}`. Each token is used only for exactly its host.
 - `GCH_TOKEN_<HOST>`: a token for one instance. The host is upper-cased, with `.`, `-`, and `:` turned into `_`, so
   `GCH_TOKEN_GITLAB_COM` is gitlab.com and `GCH_TOKEN_GITLAB_EXAMPLE_COM` is gitlab.example.com. That name could also
   belong to `gitlab-example.com`, so such a token is only used for gitlab.com or a host you name in `GCH_TOKEN_HOSTS`
@@ -114,8 +118,9 @@ Tokens are trimmed, so a trailing newline from pasting is fine. A token with con
 a warning that names the variable, not the token. The server reads all token variables once and removes them from its
 environment, so the `git` processes it starts never see them.
 
-Anyone who can read your process environment as the same OS user can read tokens passed this way. That is the same
-exposure as any CLI tool that takes a token from the environment.
+Anyone who can read your process environment as the same OS user (for example with `ps eww`) can read tokens passed
+in variables, even after the server removes them. That is the same exposure as any CLI tool that takes a token from
+the environment. The in-editor setup avoids it with the hand-off file.
 
 ### Which hosts the server contacts
 

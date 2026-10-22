@@ -1,6 +1,7 @@
 /**
  * Register the bundled MCP server with VS Code, so Copilot Chat (agent mode) and other in-editor MCP clients can
- * start it without any setup. Tokens are only added when VS Code starts the server, and never logged.
+ * start it without any setup. Tokens are only handed over when VS Code starts the server, through a one-time private
+ * file (never the environment), and never logged.
  */
 
 import * as vscode from 'vscode';
@@ -18,11 +19,13 @@ import {
   tokenCandidateHosts,
   userSourceHosts,
 } from '../../mcp/launchConfig';
+import { HANDOFF_ENV, HANDOFF_TTL_MS, purgeTokenHandoffs, removeTokenHandoff } from '../../mcp/tokenHandoff';
 
 export const MCP_PROVIDER_ID = 'gitlabComponentHelper.mcp';
 const SERVER_LABEL = 'GitLab Component Helper';
 const SERVER_SCRIPT = 'out/mcp/server.js';
 const CACHE_DIR_NAME = 'mcp-cache';
+const HANDOFF_DIR_NAME = 'mcp-handoff';
 
 export interface TokenSource {
   getTokenInstances(): Promise<string[]>;
@@ -55,6 +58,11 @@ export function registerMcpServerProvider(context: vscode.ExtensionContext, toke
     logger.info('[MCP] This VS Code has no MCP server provider API; not registering the MCP server', 'MCP');
     return undefined;
   }
+
+  // Tokens go to the server in one-time files here. Clear stale ones a previous session left behind.
+  const handoffDir = vscode.Uri.joinPath(context.globalStorageUri, HANDOFF_DIR_NAME).fsPath;
+  void purgeTokenHandoffs(handoffDir);
+  const pendingHandoffs = new Map<string, ReturnType<typeof setTimeout>>();
 
   const changed = new vscode.EventEmitter<void>();
   const fire = () => changed.fire();
@@ -95,13 +103,32 @@ export function registerMcpServerProvider(context: vscode.ExtensionContext, toke
     resolveMcpServerDefinition: async (server) => {
       const found = await collectTokens(tokens);
       logger.debug(`[MCP] Starting the MCP server with tokens for ${found.size} instance(s)`, 'MCP');
-      server.env = { ...server.env, ...buildTokenEnv(found) };
+      const tokenEnv = await buildTokenEnv(found, handoffDir);
+      const handoffFile = tokenEnv[HANDOFF_ENV];
+      if (handoffFile) {
+        // The server deletes the file as it starts; this catches a server that never did.
+        pendingHandoffs.set(handoffFile, setTimeout(() => {
+          pendingHandoffs.delete(handoffFile);
+          void removeTokenHandoff(handoffFile);
+        }, HANDOFF_TTL_MS));
+      }
+      server.env = { ...server.env, ...tokenEnv };
       return server;
     },
   };
 
   return vscode.Disposable.from(
     changed,
+    {
+      // Only this window's files: other windows share the directory.
+      dispose: () => {
+        pendingHandoffs.forEach((timer, file) => {
+          clearTimeout(timer);
+          void removeTokenHandoff(file);
+        });
+        pendingHandoffs.clear();
+      },
+    },
     vscode.lm.registerMcpServerDefinitionProvider(MCP_PROVIDER_ID, provider),
     tokens.onDidChangeToken(onTokenChange),
     vscode.workspace.onDidChangeWorkspaceFolders(fire),
