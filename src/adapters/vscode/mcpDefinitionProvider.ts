@@ -19,13 +19,12 @@ import {
   tokenCandidateHosts,
   userSourceHosts,
 } from '../../mcp/launchConfig';
-import { HANDOFF_ENV, HANDOFF_TTL_MS, purgeTokenHandoffs, removeTokenHandoff } from '../../mcp/tokenHandoff';
+import { HANDOFF_DIR_NAME, HANDOFF_ENV, HANDOFF_TTL_MS, purgeTokenHandoffs, removeTokenHandoff } from '../../mcp/tokenHandoff';
 
 export const MCP_PROVIDER_ID = 'gitlabComponentHelper.mcp';
 const SERVER_LABEL = 'GitLab Component Helper';
 const SERVER_SCRIPT = 'out/mcp/server.js';
 const CACHE_DIR_NAME = 'mcp-cache';
-const HANDOFF_DIR_NAME = 'mcp-handoff';
 
 export interface TokenSource {
   getTokenInstances(): Promise<string[]>;

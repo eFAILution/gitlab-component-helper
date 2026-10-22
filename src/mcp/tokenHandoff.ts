@@ -8,10 +8,12 @@
 import { randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, unlinkSync } from 'node:fs';
 import { chmod, lstat, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 /** The variable holding the hand-off file's path. */
 export const HANDOFF_ENV = 'GCH_TOKENS_HANDOFF';
+/** The folder hand-off files live in. The server reads (and deletes) only files directly inside a folder of this name. */
+export const HANDOFF_DIR_NAME = 'mcp-handoff';
 /** How long the extension keeps a hand-off file the server hasn't read. */
 export const HANDOFF_TTL_MS = 30_000;
 
@@ -65,15 +67,27 @@ function handoffProblem(stats: { isFile(): boolean; mode: number; uid: number; s
   return undefined;
 }
 
+/** Why a path can't be a hand-off file we wrote, so the server must neither read nor delete it. */
+function handoffLocationProblem(file: string): string | undefined {
+  if (!HANDOFF_FILE_PATTERN.test(basename(file)) || basename(dirname(file)) !== HANDOFF_DIR_NAME) {
+    return 'it is not a hand-off file';
+  }
+  if (!POSIX) return undefined;
+  const dir = lstatSync(dirname(file));
+  const ownedByUs = typeof process.getuid !== 'function' || dir.uid === process.getuid();
+  if (!dir.isDirectory() || (dir.mode & GROUP_OR_OTHER_BITS) !== 0 || !ownedByUs) return 'its folder is not private';
+  return undefined;
+}
+
 /**
- * Read a hand-off file once and delete it. Refuses (without reading) a symlink, a file other users can read or own,
- * or an oversized file.
+ * Read a hand-off file once and delete it. Refuses (without reading or deleting) anything that isn't a file we wrote
+ * in a private hand-off folder, a symlink, a file other users can read or own, or an oversized file.
  *
  * @returns The file's text, or `undefined` (with a warning that never includes its contents) when it was refused.
  */
 export function readTokenHandoff(file: string, warn: (message: string) => void): string | undefined {
   try {
-    const problem = handoffProblem(lstatSync(file));
+    const problem = handoffLocationProblem(file) ?? handoffProblem(lstatSync(file));
     if (problem) {
       warn(`Ignoring the token hand-off file: ${problem}`);
       return undefined;
@@ -88,11 +102,21 @@ export function readTokenHandoff(file: string, warn: (message: string) => void):
       return readFileSync(fd, 'utf8');
     } finally {
       closeSync(fd);
-      unlinkSync(file);
+      deleteHandoff(file, warn);
     }
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code ?? 'unknown error';
     warn(`Ignoring the token hand-off file: it could not be read (${code})`);
     return undefined;
+  }
+}
+
+/** Delete a read hand-off file. A failure is only a warning: the tokens were already read. */
+function deleteHandoff(file: string, warn: (message: string) => void): void {
+  try {
+    unlinkSync(file);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'unknown error';
+    warn(`The token hand-off file could not be deleted (${code}); the extension removes it within 30 seconds`);
   }
 }
