@@ -1,11 +1,11 @@
 /**
  * Process-wide host ports. The extension installs its VS Code adapters with {@link setRuntime} at the top of
  * `activate`; anything that runs before that, or outside VS Code, gets {@link createDefaultRuntime}: package.json
- * setting defaults, no secrets, in-memory storage, and log lines on stderr. Unit tests need no setup.
+ * setting defaults, no secrets, in-memory storage, log lines on stderr, and no auth prompt. Unit tests need no setup.
  */
 
 import { CONFIG_DEFAULTS } from './config/defaults';
-import type { ConfigPort, LogSink, RuntimePorts, SecretsPort, StoragePort } from './ports';
+import type { AuthPromptPort, ConfigPort, LogSink, RuntimePorts, SecretsPort, StoragePort } from './ports';
 
 const defaultsConfig: ConfigPort = {
   get: <T>(key: keyof typeof CONFIG_DEFAULTS, fallback: T): T =>
@@ -14,6 +14,10 @@ const defaultsConfig: ConfigPort = {
 
 const noSecrets: SecretsPort = {
   get: async () => undefined,
+};
+
+const noAuthPrompt: AuthPromptPort = {
+  promptForToken: async () => undefined,
 };
 
 function createMemoryStorage(): StoragePort {
@@ -38,7 +42,13 @@ const stderrSink: LogSink = {
 };
 
 export function createDefaultRuntime(): RuntimePorts {
-  return { config: defaultsConfig, secrets: noSecrets, storage: createMemoryStorage(), log: stderrSink };
+  return {
+    config: defaultsConfig,
+    secrets: noSecrets,
+    storage: createMemoryStorage(),
+    log: stderrSink,
+    authPrompt: noAuthPrompt,
+  };
 }
 
 let current: RuntimePorts = createDefaultRuntime();

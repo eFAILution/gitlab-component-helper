@@ -23,6 +23,7 @@ import { createVscodeConfig } from './adapters/vscode/config';
 import { createVscodeSecrets } from './adapters/vscode/secrets';
 import { createVscodeStorage } from './adapters/vscode/storage';
 import { attachLoggerToSettings, createOutputChannelSink } from './adapters/vscode/logger';
+import { createVscodeAuthPrompt } from './adapters/vscode/authPrompt';
 
 const CI_FILE_CONTEXT_KEY = 'gitlabComponentHelper.isCiFile';
 
@@ -36,6 +37,8 @@ export function activate(context: vscode.ExtensionContext) {
     secrets: createVscodeSecrets(context.secrets),
     storage: createVscodeStorage(context.globalState),
     log: createOutputChannelSink(),
+    authPrompt: createVscodeAuthPrompt((instance, token) =>
+      getComponentService().setTokenForProject(instance, token)),
   });
   const logger = Logger.getInstance();
   context.subscriptions.push(attachLoggerToSettings(logger));
@@ -142,7 +145,6 @@ export function activate(context: vscode.ExtensionContext) {
     // Register command to add project/group token
     logger.debug('[Extension] Registering addProjectToken command...', 'Extension');
     const service = getComponentService();
-    service.setSecretStorage(context.secrets);
     context.subscriptions.push(service);
     registerAddProjectTokenCommand(context, service);
 
