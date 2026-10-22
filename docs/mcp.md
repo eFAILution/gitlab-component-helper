@@ -19,12 +19,13 @@ agent applies them through its own edit and approval flow.
 
 ## Use it in VS Code with GitHub Copilot
 
-The extension registers the server with VS Code, so there is nothing to install or configure.
+The extension registers the server with VS Code, so there is nothing to install. It is off by default.
 
-1. Install or update GitLab Component Helper (0.21.5 or later on the beta channel).
-2. Open the Chat view and switch to **Agent** mode.
-3. Open the tools picker (the tools icon in the chat input) and make sure **GitLab Component Helper** is enabled.
-4. The first time an agent uses the server, VS Code may ask you to trust or start it. Allow it. You can also start,
+1. Install or update GitLab Component Helper (the latest beta).
+2. In your **user** settings, turn on `gitlabComponentHelper.mcp.enabled`.
+3. Open the Chat view and switch to **Agent** mode.
+4. Open the tools picker (the tools icon in the chat input) and make sure **GitLab Component Helper** is enabled.
+5. The first time an agent uses the server, VS Code may ask you to trust or start it. Allow it. You can also start,
    stop, and inspect it with the **MCP: List Servers** command.
 
 When an in-editor AI client starts the server, it gets:
@@ -36,9 +37,10 @@ When an in-editor AI client starts the server, it gets:
   **user** `componentSources` setting (never instances named only by workspace or folder settings)
 
 Tokens are passed to the server process as one `GCH_TOKENS_JSON` variable when VS Code starts it, and the server
-removes it from its environment right away. Tokens never appear in settings or logs. To stop offering the server, turn
-off `gitlabComponentHelper.mcp.enabled`. It is an application setting, so a workspace can't turn it back on. After you
-add or change a token, VS Code restarts the server so it picks the change up.
+removes it from its environment right away. Tokens never appear in settings or logs. The server is off by default:
+turn on `gitlabComponentHelper.mcp.enabled` in your user settings to offer it. It is an application setting, so a
+workspace can't turn it on or off. After you add or change a token, VS Code restarts the server so it picks the change
+up.
 
 ### Prompts to try
 
