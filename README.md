@@ -127,6 +127,10 @@ Add a private project or group with **GitLab CI: Add Component Project/Group**. 
 
 Component data is cached (one hour by default) and API calls are batched, so large groups stay responsive.
 
+### Let Copilot fix your components (beta)
+
+The extension includes an MCP server. In Copilot Chat agent mode, ask "Find and fix the GitLab CI component problems in this repo." The agent can validate your CI files, read each component's inputs for the exact version you pin, and apply the fixes. It also works with other MCP clients. See the [MCP server guide](https://github.com/eFAILution/gitlab-component-helper/blob/main/docs/mcp.md).
+
 ## Configuration
 
 Most people only need component sources. Add them with the command above, or in `settings.json`:
