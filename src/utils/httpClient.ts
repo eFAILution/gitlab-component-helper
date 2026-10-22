@@ -4,11 +4,32 @@ import { createHash } from 'crypto';
 import { Logger } from './logger';
 import { getRequestDeduplicator, RequestDeduplicator } from './requestDeduplicator';
 import { getPerformanceMonitor } from './performanceMonitor';
-import { NetworkError, extractStatusCode } from '../errors';
+import { GitLabComponentError, NetworkError, extractStatusCode } from '../errors';
 import { API_PER_PAGE_LIMIT, MAX_PAGINATION_PAGES, MAX_REDIRECTS } from '../constants/timing';
 import { planRedirect, stripCredentialHeaders } from './redirectPolicy';
 import { CONFIG_DEFAULTS } from '../core/config/defaults';
 import { getRuntime, isRuntimeLocked } from '../core/runtime';
+import { RequestRefusedError } from '../core/ports';
+
+/** Largest response body read; a bigger one is aborted. */
+export const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
+const MIN_TIMEOUT_MS = 1000;
+const MAX_TIMEOUT_MS = 60000;
+const MAX_RETRY_ATTEMPTS = 5;
+/** The whole request (headers and body) must finish within this many socket timeouts... */
+const DEADLINE_TIMEOUTS = 3;
+/** ...and never take longer than this. */
+const MAX_DEADLINE_MS = 180000;
+
+function clamp(value: unknown, min: number, max: number, fallback: number): number {
+  const number = typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : fallback;
+  return Math.min(Math.max(number, min), max);
+}
+
+/** Whether a request was refused by the network policy (directly, or wrapped in a NetworkError). */
+function isRefused(error: unknown): boolean {
+  return error instanceof RequestRefusedError || (error instanceof GitLabComponentError && error.cause instanceof RequestRefusedError);
+}
 
 interface RequestOptions {
   timeout?: number;
@@ -62,6 +83,15 @@ export class HttpClient {
     };
   }
 
+  /** The timeout and retry count for one call: the caller's, else the settings, clamped to sane bounds. */
+  private limitsFor(options: RequestOptions): { timeout: number; retryAttempts: number } {
+    const config = this.getConfig();
+    return {
+      timeout: clamp(options.timeout || config.timeout, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, CONFIG_DEFAULTS.httpTimeout),
+      retryAttempts: clamp(options.retryAttempts || config.retryAttempts, 0, MAX_RETRY_ATTEMPTS, CONFIG_DEFAULTS.retryAttempts),
+    };
+  }
+
   private async delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
@@ -90,9 +120,7 @@ export class HttpClient {
   }
 
   private async fetchJsonInternal<T = unknown>(url: string, options: RequestOptions = {}): Promise<T> {
-    const config = this.getConfig();
-    const timeout = options.timeout || config.timeout;
-    const retryAttempts = options.retryAttempts || config.retryAttempts;
+    const { timeout, retryAttempts } = this.limitsFor(options);
     const headers = {
       'User-Agent': 'VSCode-GitLabComponentHelper',
       ...options.headers
@@ -123,6 +151,10 @@ export class HttpClient {
 
           const statusCode = extractStatusCode(error);
           const message = extractMessage(error);
+
+          if (isRefused(error)) {
+            throw error;
+          }
 
           if (statusCode && !this.shouldRetry(statusCode)) {
             this.logger.warn(`HTTP Request failed with client error ${statusCode}: ${url}`);
@@ -158,9 +190,7 @@ export class HttpClient {
   }
 
   private async fetchTextInternal(url: string, options: RequestOptions = {}): Promise<string> {
-    const config = this.getConfig();
-    const timeout = options.timeout || config.timeout;
-    const retryAttempts = options.retryAttempts || config.retryAttempts;
+    const { timeout, retryAttempts } = this.limitsFor(options);
     const headers = {
       'User-Agent': 'VSCode-GitLabComponentHelper',
       ...options.headers
@@ -182,6 +212,10 @@ export class HttpClient {
 
           const statusCode = extractStatusCode(error);
           const message = extractMessage(error);
+
+          if (isRefused(error)) {
+            throw error;
+          }
 
           if (statusCode && !this.shouldRetry(statusCode)) {
             this.logger.warn(`HTTP Text Request failed with client error ${statusCode}: ${url}`);
@@ -252,7 +286,7 @@ export class HttpClient {
         const { network } = getRuntime();
         // A locked runtime is the MCP server's; without its policy, fail closed instead of contacting anything.
         if (!network && isRuntimeLocked()) {
-          throw new NetworkError('Refusing the request: no network policy is installed');
+          throw new RequestRefusedError('Refusing the request: no network policy is installed');
         }
         network?.checkRequest(urlObj);
 
@@ -266,6 +300,17 @@ export class HttpClient {
           ...(network?.lookup ? { lookup: network.lookup } : {})
         };
 
+        // Socket idle timeouts don't bound a server that trickles bytes, so the whole request also has a deadline.
+        const deadlineMs = Math.min(options.timeout * DEADLINE_TIMEOUTS, MAX_DEADLINE_MS);
+        const settle = (finish: () => void) => {
+          clearTimeout(deadline);
+          finish();
+        };
+        const deadline = setTimeout(() => {
+          req.destroy();
+          reject(new NetworkError(`Request to ${url} passed its ${deadlineMs}ms deadline`, { statusCode: 408 }));
+        }, deadlineMs);
+
         const req = client.request(requestOptions, (res) => {
           const statusCode = res.statusCode ?? 0;
 
@@ -276,19 +321,20 @@ export class HttpClient {
             redirect = planRedirect(url, statusCode, res.headers.location);
           } catch (policyError) {
             res.resume(); // drain so the socket can be released
-            reject(policyError);
+            settle(() => reject(policyError));
             return;
           }
 
           if (redirect) {
             res.resume(); // discard the redirect response body
             if (redirectsRemaining <= 0) {
-              reject(new NetworkError(`Too many redirects while fetching ${url}`, { statusCode }));
+              settle(() => reject(new NetworkError(`Too many redirects while fetching ${url}`, { statusCode })));
               return;
             }
             const nextHeaders = redirect.stripCredentials
               ? stripCredentialHeaders(options.headers)
               : options.headers;
+            clearTimeout(deadline);
             this.makeRequestWithHeaders(
               redirect.nextUrl,
               { timeout: options.timeout, headers: nextHeaders },
@@ -298,12 +344,24 @@ export class HttpClient {
           }
 
           let data = '';
+          let receivedBytes = 0;
+          let tooLarge = false;
 
-          res.on('data', (chunk) => {
+          res.on('data', (chunk: Buffer | string) => {
+            if (tooLarge) return;
+            receivedBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
+            if (receivedBytes > MAX_RESPONSE_BYTES) {
+              tooLarge = true;
+              req.destroy();
+              settle(() => reject(new NetworkError(`Response from ${urlObj.host} is too large (over ${MAX_RESPONSE_BYTES} bytes)`)));
+              return;
+            }
             data += chunk;
           });
 
           res.on('end', () => {
+            if (tooLarge) return;
+            clearTimeout(deadline);
             if (statusCode >= 200 && statusCode < 300) {
               const headers: Record<string, string> = {};
               for (const [key, value] of Object.entries(res.headers)) {
@@ -323,11 +381,11 @@ export class HttpClient {
 
         req.on('timeout', () => {
           req.destroy();
-          reject(new NetworkError(`Request timeout after ${options.timeout}ms for ${url}`, { statusCode: 408 }));
+          settle(() => reject(new NetworkError(`Request timeout after ${options.timeout}ms for ${url}`, { statusCode: 408 })));
         });
 
         req.on('error', (error) => {
-          reject(new NetworkError(error.message, { cause: error }));
+          settle(() => reject(new NetworkError(error.message, { cause: error })));
         });
 
         req.end();

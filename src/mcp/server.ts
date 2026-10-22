@@ -29,6 +29,10 @@ const logger = Logger.getInstance();
 
 /** Largest tool result sent, in bytes of JSON. Bigger results become a tool error asking for a narrower call. */
 export const MAX_RESULT_BYTES = 512 * 1024;
+/** How long one tool call may run. */
+export const DEFAULT_TOOL_TIMEOUT_MS = 60000;
+/** How many tool calls may run at once; more are turned away rather than queued without bound. */
+export const DEFAULT_MAX_CONCURRENT_TOOL_CALLS = 4;
 
 /** A failure the agent should see and can act on, e.g. "file not found under the workspace roots". */
 export class ToolError extends Error {
@@ -53,6 +57,18 @@ export interface McpServerOptions {
   info: ServerInfo;
   instructions?: string;
   tools: Tool[];
+  toolTimeoutMs?: number;
+  maxConcurrentToolCalls?: number;
+}
+
+class ToolTimeoutError extends Error {}
+
+function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new ToolTimeoutError()), ms);
+  });
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
 }
 
 function toolResult(output: ToolOutput, version: ProtocolVersion): CallToolResult {
@@ -70,6 +86,7 @@ function toolErrorResult(message: string): CallToolResult {
 export class McpServer {
   private readonly tools = new Map<string, Tool>();
   private protocolVersion: ProtocolVersion = SUPPORTED_PROTOCOL_VERSIONS[0];
+  private toolCallsInFlight = 0;
 
   constructor(private readonly options: McpServerOptions) {
     options.tools.forEach((tool) => this.tools.set(tool.definition.name, tool));
@@ -161,13 +178,25 @@ export class McpServer {
       throw new RpcError(ErrorCode.INVALID_PARAMS, `Invalid arguments for ${tool.definition.name}: ${problem}`);
     }
 
+    const limit = this.options.maxConcurrentToolCalls ?? DEFAULT_MAX_CONCURRENT_TOOL_CALLS;
+    if (this.toolCallsInFlight >= limit) {
+      return toolErrorResult(`Too many tool calls in progress (${limit}). Wait for one to finish, then try again.`);
+    }
+    const timeoutMs = this.options.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+
     let output: ToolOutput;
+    this.toolCallsInFlight++;
     try {
-      output = await tool.run(rawArgs as Record<string, unknown>);
+      output = await withDeadline(tool.run(rawArgs as Record<string, unknown>), timeoutMs);
     } catch (error) {
       if (error instanceof ToolError) return toolErrorResult(error.message);
+      if (error instanceof ToolTimeoutError) {
+        return toolErrorResult(`${tool.definition.name} took longer than ${timeoutMs / 1000}s and was stopped. Try a narrower path.`);
+      }
       logger.error(`[MCP] Tool ${tool.definition.name} failed: ${error}`, 'MCP');
       return toolErrorResult(`${tool.definition.name} failed unexpectedly. Check the server log for details.`);
+    } finally {
+      this.toolCallsInFlight--;
     }
 
     const result = toolResult(output, this.protocolVersion);

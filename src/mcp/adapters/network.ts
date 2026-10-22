@@ -6,12 +6,12 @@
 
 import { lookup as dnsLookup, type LookupAddress } from 'node:dns';
 import { isIP, type LookupFunction } from 'node:net';
-import type { NetworkPolicyPort } from '../../core/ports';
+import { RequestRefusedError, type NetworkPolicyPort } from '../../core/ports';
 
 export const DEFAULT_GITLAB_HOST = 'gitlab.com';
 
 /** A request the policy refused. The message says how to allow the host. */
-export class HostNotAllowedError extends Error {
+export class HostNotAllowedError extends RequestRefusedError {
   constructor(message: string) {
     super(message);
     this.name = 'HostNotAllowedError';
