@@ -6,12 +6,28 @@
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { Logger } from '../utils/logger';
-import { isYamlNode, GITLAB_CI_SCHEMA } from '../utils/yamlParser';
+import { countYamlAliases, GITLAB_CI_SCHEMA, isYamlNode, MAX_YAML_ALIASES } from '../utils/yamlParser';
 import { isParameterDefault } from '../parsers/parameterDefaultShape';
 import { buildLocalComponentUrl, isUnsupportedLocalPath } from '../providers/localIncludeParser';
 import type { ComponentParameter } from '../types/git-component';
 
 const logger = Logger.getInstance();
+
+/** Largest local include target read from disk. Bigger files are treated as unreadable. */
+export const MAX_LOCAL_INCLUDE_BYTES = 1024 * 1024;
+
+/**
+ * Whether `candidate` lies strictly inside `root`.
+ *
+ * @param pathApi `path.posix` or `path.win32`; defaults to the platform's.
+ */
+export function isInsideRoot(root: string, candidate: string, pathApi: typeof path.posix = path): boolean {
+  const relative = pathApi.relative(root, candidate);
+  return relative !== '' &&
+    relative !== '..' &&
+    !relative.startsWith(`..${pathApi.sep}`) &&
+    !pathApi.isAbsolute(relative);
+}
 
 /**
  * File access for local includes. `F` is however the host names the including document. Paths are absolute
@@ -114,6 +130,11 @@ export function parseLocalIncludeText(
   text: string,
   displayPath: string
 ): LocalIncludeOutcome {
+  const aliasCount = countYamlAliases(text);
+  if (aliasCount > MAX_YAML_ALIASES) {
+    logger.debug(`[LocalComponentResolver] ${displayPath} has ${aliasCount} YAML aliases, over the limit of ${MAX_YAML_ALIASES}; not parsing it`, 'LocalComponentResolver');
+    return { kind: 'no-spec' };
+  }
   let docs: unknown[];
   try {
     docs = yaml.loadAll(text, { schema: GITLAB_CI_SCHEMA });
@@ -154,7 +175,7 @@ export function parseLocalIncludeText(
  * Resolve a `local:` path against the resolution root of the document that includes it. Leading slashes are
  * tolerated (GitLab itself accepts both `/templates/x.yml` and `templates/x.yml`) and stripped before joining.
  *
- * @returns The absolute path, or `null` if no resolution root is available.
+ * @returns The absolute path, or `null` if no resolution root is available or the path would leave it.
  */
 export async function resolveLocalIncludePath<F>(
   localPath: string,
@@ -166,7 +187,12 @@ export async function resolveLocalIncludePath<F>(
     return null;
   }
   const relative = localPath.replace(/^\/+/, '');
-  return path.join(root, ...relative.split('/'));
+  const absolutePath = path.join(root, ...relative.split('/'));
+  if (!isInsideRoot(root, absolutePath)) {
+    logger.debug(`[LocalComponentResolver] Local include escapes its root, skipping: ${localPath}`, 'LocalComponentResolver');
+    return null;
+  }
+  return absolutePath;
 }
 
 /**

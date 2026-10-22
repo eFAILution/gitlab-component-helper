@@ -11,21 +11,64 @@ import type { RepoContextPort, RepoRemoteContext } from '../../core/referenceRes
 
 const logger = Logger.getInstance();
 
+const GIT_TIMEOUT_MS = 5000;
+const MAX_GIT_OUTPUT_BYTES = 64 * 1024;
+
+export interface CommandLimits {
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+}
+
 /**
- * Run `git` in `cwd`.
- *
- * @returns Trimmed stdout when git exits 0, else `null` (not a repository, no such remote, git missing).
+ * The environment for child git processes: no variables that point git at another repository or config, and no
+ * credential prompts.
  */
-function runGit(cwd: string, args: string[]): Promise<string | null> {
+function childEnv(): NodeJS.ProcessEnv {
+  const inherited = Object.entries(process.env).filter(
+    ([name]) => name !== 'GIT_DIR' && name !== 'GIT_WORK_TREE' && !name.startsWith('GIT_CONFIG')
+  );
+  return { ...Object.fromEntries(inherited), GIT_TERMINAL_PROMPT: '0' };
+}
+
+/**
+ * Run a fixed command (no shell) in `cwd` with a timeout and an output cap.
+ *
+ * @returns Trimmed stdout when the command exits 0 within the limits, else `null`.
+ */
+export function runCommand(command: string, cwd: string, args: string[], limits: CommandLimits = {}): Promise<string | null> {
+  const { timeoutMs = GIT_TIMEOUT_MS, maxOutputBytes = MAX_GIT_OUTPUT_BYTES } = limits;
   return new Promise((resolve) => {
-    const git = spawn('git', args, { cwd, stdio: 'pipe' });
-    let output = '';
-    git.stdout.on('data', (data: Buffer) => {
-      output += data.toString();
+    const child = spawn(command, args, {
+      cwd,
+      env: childEnv(),
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL',
     });
-    git.on('exit', (code: number | null) => resolve(code === 0 ? output.trim() : null));
-    git.on('error', () => resolve(null));
+    const chunks: Buffer[] = [];
+    let outputBytes = 0;
+    let overflowed = false;
+    child.stdout.on('data', (data: Buffer) => {
+      outputBytes += data.length;
+      if (outputBytes > maxOutputBytes) {
+        overflowed = true;
+        child.kill('SIGKILL');
+        return;
+      }
+      chunks.push(data);
+    });
+    // `close` waits for stdout to drain; `exit` can fire before the last chunk arrives.
+    child.on('close', (code: number | null) => {
+      resolve(code === 0 && !overflowed ? Buffer.concat(chunks).toString().trim() : null);
+    });
+    child.on('error', () => resolve(null));
   });
+}
+
+/** Run `git` in `cwd`; see {@link runCommand}. */
+function runGit(cwd: string, args: string[]): Promise<string | null> {
+  return runCommand('git', cwd, args);
 }
 
 /** The GitLab remote (`origin`) of the repository containing `cwd`, with its HEAD commit. */
@@ -53,20 +96,7 @@ export function createGitCliRepoContext(): RepoContextPort<string> {
 export async function detectNonGitLabRemoteViaGit(workspacePath: string): Promise<NonGitLabRemote | null> {
     try {
         // First, check if we're in a Git repository
-        const isGitRepo = await new Promise<boolean>((resolve) => {
-            const gitCheck = spawn('git', ['rev-parse', '--is-inside-work-tree'], {
-                cwd: workspacePath,
-                stdio: 'pipe'
-            });
-
-            gitCheck.on('exit', (code: number | null) => {
-                resolve(code === 0);
-            });
-
-            gitCheck.on('error', () => {
-                resolve(false);
-            });
-        });
+        const isGitRepo = (await runGit(workspacePath, ['rev-parse', '--is-inside-work-tree'])) !== null;
 
         if (!isGitRepo) {
             logger.debug(`[ComponentDetector] Not inside a Git repository`, 'ComponentDetector');
@@ -76,29 +106,7 @@ export async function detectNonGitLabRemoteViaGit(workspacePath: string): Promis
         logger.debug(`[ComponentDetector] Confirmed we're in a Git repository`, 'ComponentDetector');
 
         // Get the remote origin URL
-        const remoteUrl = await new Promise<string | null>((resolve) => {
-            const gitRemote = spawn('git', ['remote', 'get-url', 'origin'], {
-                cwd: workspacePath,
-                stdio: 'pipe'
-            });
-
-            let output = '';
-            gitRemote.stdout.on('data', (data: Buffer) => {
-                output += data.toString();
-            });
-
-            gitRemote.on('exit', (code: number | null) => {
-                if (code === 0 && output.trim()) {
-                    resolve(output.trim());
-                } else {
-                    resolve(null);
-                }
-            });
-
-            gitRemote.on('error', () => {
-                resolve(null);
-            });
-        });
+        const remoteUrl = (await runGit(workspacePath, ['remote', 'get-url', 'origin'])) || null;
 
         if (!remoteUrl) {
             logger.debug(`[ComponentDetector] No origin remote found`, 'ComponentDetector');
