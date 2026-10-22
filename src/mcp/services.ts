@@ -22,13 +22,20 @@ export function isFetchFailurePlaceholder(component: SpecComponent): boolean {
   return component.parameters.length === 0 && component.description.includes(FETCH_FAILURE_MARKER);
 }
 
+const UNAUTHORIZED = 401;
+
+/** GitLab refused the token (or there was none). Carries the 401 so `isAuthError` recognizes it. */
+export class GitLabAuthToolError extends ToolError {
+  readonly statusCode = UNAUTHORIZED;
+}
+
 /**
  * A tool error for a failed GitLab request. Response bodies are never included: they are untrusted text.
  */
 export function gitlabFailure(error: unknown, ref: Pick<ComponentRef, 'gitlabInstance' | 'url'>): ToolError {
   if (error instanceof ToolError) return error;
   if (isAuthError(error)) {
-    return new ToolError(
+    return new GitLabAuthToolError(
       `GitLab at ${ref.gitlabInstance} refused the request for ${ref.url} (missing, invalid, or expired token). ` +
         'Add a token for this instance with the "GitLab CI: Add Component Project/Group" command in VS Code, or set GCH_TOKEN_<HOST>.'
     );
