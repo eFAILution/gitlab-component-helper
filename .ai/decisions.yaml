@@ -525,24 +525,31 @@ decisions:
     status: accepted
     context: The server runs as a child process that VS Code starts from an McpStdioServerDefinition, which only takes
       command, args, and env
-    decision: The extension passes tokens as GCH_TOKEN_<HOST> env vars in resolveMcpServerDefinition, when VS Code
-      starts the server
+    decision: The extension passes tokens as one GCH_TOKENS_JSON map of exact host to token, in
+      resolveMcpServerDefinition, when VS Code starts the server
     rationale:
     - The definition API has no stdin or pipe for secrets
     - resolveMcpServerDefinition runs only when the server starts, so tokens never sit in a provided definition
+    - An exact host key avoids the lossy GCH_TOKEN_<HOST> naming, where gitlab-example.com and gitlab.example.com
+      share a variable (a review found a repo could claim a token that way)
     mitigations:
-    - The server reads the tokens once and deletes them from process.env
+    - The server reads the token variables once and deletes them from process.env
     - Child processes (git) get an env stripped of GCH_* and GITLAB_TOKEN
-    - Tokens are bound only to hosts named by GCH_TOKEN_HOSTS or the launcher's settings, never by workspace files,
-      and not at all when two hosts share a variable name
+    - The extension picks token hosts from the token index and the user's global componentSources only, never
+      workspace or folder settings
+    - GCH_TOKEN_<HOST> (terminal use) binds only to hosts in GCH_TOKEN_HOSTS or --config, and not at all when two
+      such hosts share a name
+    - Only launcher-trusted hosts (--config, GCH_TRUSTED_HOSTS from user settings, token hosts, gitlab.com) are
+      contacted; repo files can't widen the allowlist or set network settings
     - gitlabToken is refused as a setting; tokens are never accepted as tool arguments or logged
-    - Requests only go over HTTPS to allowed hosts; private addresses are allowed for them (self-managed GitLab), link-local and reserved never
+    - gitlabComponentHelper.mcp.enabled (application scope) turns the server off
     consequences:
       negative:
       - The same OS user can read a process's environment while it runs
     references:
     - src/adapters/vscode/mcpDefinitionProvider.ts
     - src/mcp/adapters/secrets.ts
+    - src/mcp/bootstrap.ts
     title: MCP Tokens Via Env From The Extension
 future_decisions:
 - question: Should we support other CI/CD platforms (GitHub Actions, CircleCI)?

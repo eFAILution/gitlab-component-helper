@@ -27,9 +27,17 @@ The extension registers the server with VS Code, so there is nothing to install 
 4. The first time an agent uses the server, VS Code may ask you to trust or start it. Allow it. You can also start,
    stop, and inspect it with the **MCP: List Servers** command.
 
-The server gets your workspace folders as its roots, your `gitlabComponentHelper.*` settings, and the tokens you saved
-with **GitLab CI: Add Component Project/Group**. Tokens are passed to the server process when VS Code starts it. They
-never appear in settings or logs.
+When an in-editor AI client starts the server, it gets:
+
+- your workspace folders as its roots (with no folder open, no server is offered)
+- your `gitlabComponentHelper.*` settings
+- the tokens you saved with **GitLab CI: Add Component Project/Group**, for the instances in your token list and in your
+  **user** `componentSources` setting (never instances named only by workspace or folder settings)
+
+Tokens are passed to the server process as one `GCH_TOKENS_JSON` variable when VS Code starts it, and the server
+removes it from its environment right away. Tokens never appear in settings or logs. To stop offering the server, turn
+off `gitlabComponentHelper.mcp.enabled`. It is an application setting, so a workspace can't turn it back on. After you
+add or change a token, VS Code restarts the server so it picks the change up.
 
 ### Prompts to try
 
@@ -80,35 +88,72 @@ Settings are read in this order, and the first that sets a key wins:
 The keys are the same as the [extension settings](../README.md#settings-reference). `gitlabToken` is refused
 everywhere: pass tokens through the environment.
 
+The two files inside the repository (4 and 5) may only set catalog and checking behavior: `componentSources`,
+`discovery.*`, `additionalFileGlobs`, `versionCheck.*`, and `versionPreferences`. Network, cache, and logging settings
+(`httpTimeout`, `retryAttempts`, `batchSize`, `cacheTime`, `logLevel`) from those files are ignored with a warning. A
+`componentSources` host that only those files name is listed but never contacted (see below).
+
 ### Tokens
 
-- `GCH_TOKEN_<HOST>` sets a token for one GitLab instance. The host is upper-cased, with `.`, `-`, and `:` turned into
-  `_`. For example, use `GCH_TOKEN_GITLAB_COM` for gitlab.com and `GCH_TOKEN_GITLAB_EXAMPLE_COM` for
-  gitlab.example.com.
-- `GITLAB_TOKEN` is used for the host in `GITLAB_HOST`, which defaults to gitlab.com.
+- `GCH_TOKENS_JSON`: a JSON object of exact host (with `:port` if not 443) to token, for example
+  `{"gitlab.example.com": "glpat-..."}`. Each token is used only for exactly its host. This is what the extension
+  passes.
+- `GCH_TOKEN_<HOST>`: a token for one instance. The host is upper-cased, with `.`, `-`, and `:` turned into `_`, so
+  `GCH_TOKEN_GITLAB_COM` is gitlab.com and `GCH_TOKEN_GITLAB_EXAMPLE_COM` is gitlab.example.com. That name could also
+  belong to `gitlab-example.com`, so such a token is only used for gitlab.com or a host you name in `GCH_TOKEN_HOSTS`
+  (comma-separated) or in `--config` `componentSources`. A host named by `GCH_CONFIG_JSON` or a repository file never
+  gets one, and if two named hosts share a variable name, neither does.
+- `GITLAB_TOKEN`: used for the host in `GITLAB_HOST`, which defaults to gitlab.com.
 
-A `GCH_TOKEN_<HOST>` token is only used for a host named in `--config` or `GCH_CONFIG_JSON` `componentSources`, or in
-`GCH_TOKEN_HOSTS` (comma-separated). A host named only in a file inside the repository never gets one. The server reads
-the token variables once and removes them from its environment, so the `git` processes it starts never see them.
+The server reads all token variables once and removes them from its environment, so the `git` processes it starts
+never see them.
 
 Anyone who can read your process environment as the same OS user can read tokens passed this way. That is the same
 exposure as any CLI tool that takes a token from the environment.
 
 ### Which hosts the server contacts
 
-Only HTTPS to gitlab.com, the `gitlabInstance` of each `componentSources` entry, and hosts you gave a token for.
-Self-managed GitLab on an internal network works, but link-local addresses (like the 169.254.169.254 cloud metadata
-endpoint), unspecified, and multicast addresses are always refused. Plain `http://` instances aren't supported. A
-component on any other host is reported with the host name and how to allow it: add it to `componentSources`.
+Only HTTPS, and only to hosts the launcher trusts:
+
+- gitlab.com
+- hosts you gave a token for
+- the `componentSources` hosts from `--config`
+- hosts in `GCH_TRUSTED_HOSTS` (comma-separated). The extension fills it from your **user** `componentSources`.
+
+Hosts are matched with their port, so `gitlab.example.com:8443` must be listed as such. A host named only by the
+repository's `.gitlab-component-helper.json` or `.vscode/settings.json` (or by `GCH_CONFIG_JSON`) is never contacted: a
+cloned repository must not choose where the server sends requests. A component on such a host is reported in
+`blockedHosts` with how to allow it: add it to your user settings, not to the repository.
+
+Self-managed GitLab on an internal network works. Link-local addresses (like the 169.254.169.254 cloud metadata
+endpoint), other known metadata endpoints, unspecified, and multicast addresses are always refused, also when written
+as IPv6 that carries an IPv4 address. Plain `http://` instances aren't supported.
+
+### Limits
+
+- Each response body is capped at 10 MB.
+- Each request must finish within three `httpTimeout` periods. `httpTimeout` is clamped to 1-60 s and `retryAttempts`
+  to 0-5. Refused requests are never retried.
+- Each tool call stops after 60 s, and at most 4 run at once.
+- A file walk covers at most 500 CI files and 5000 directories. It skips `node_modules`, `.git`, `.venv`, `venv`,
+  `target`, `dist`, `build`, `out`, `.next`, `vendor`, `.terraform`, and `coverage`.
 
 ### Which files the server reads
 
-Only regular files of up to 1 MB under the roots. Paths with `..`, symlinks that lead outside a root, and missing files
-all get the same "not found under the workspace roots" answer.
+Only regular files of up to 1 MB under the roots. A path must be inside a root as written and after resolving
+symlinks. Paths with `..`, UNC and `\\?\` paths, symlinks that lead outside a root, and missing files all get the same
+"not found under the workspace roots" answer. FIFOs and devices are never opened. The repository's config files are
+read through the same checks.
+
+### Edits
+
+Findings and `check_component_versions` results carry `suggestedEdits`. In `range` and `suggestedEdits`, `line` is
+0-based and `startCol`/`endCol` are 0-based UTF-16 offsets. Replace that range with `newText`.
 
 ## Protocol
 
 Newline-delimited JSON-RPC 2.0 over stdio. The server negotiates MCP revisions 2025-11-25, 2025-06-18, 2025-03-26, and
 2024-11-05. `structuredContent` and `outputSchema` are sent on 2025-06-18 and later. Every tool result also has a text
 block. The stateless 2026-07-28 revision isn't implemented: a client that probes with `server/discover` gets "method
-not found" and falls back to `initialize`.
+not found" and falls back to `initialize`. Invalid tool arguments come back as an `isError` tool result. A request
+cancelled with `notifications/cancelled` gets no response.
