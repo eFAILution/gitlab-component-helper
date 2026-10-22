@@ -25,6 +25,7 @@ import { createVscodeSecrets } from './adapters/vscode/secrets';
 import { createVscodeStorage } from './adapters/vscode/storage';
 import { attachLoggerToSettings, createOutputChannelSink } from './adapters/vscode/logger';
 import { createVscodeAuthPrompt } from './adapters/vscode/authPrompt';
+import { registerMcpServerProvider } from './adapters/vscode/mcpDefinitionProvider';
 
 const CI_FILE_CONTEXT_KEY = 'gitlabComponentHelper.isCiFile';
 
@@ -148,6 +149,14 @@ export function activate(context: vscode.ExtensionContext) {
     const service = getComponentService();
     context.subscriptions.push(service);
     registerAddProjectTokenCommand(context, service);
+
+    // Offer the bundled MCP server to Copilot Chat and other in-editor MCP clients. Never let it fail activation.
+    try {
+      const mcpRegistration = registerMcpServerProvider(context, service);
+      if (mcpRegistration) context.subscriptions.push(mcpRegistration);
+    } catch (mcpError) {
+      logger.error(`[Extension] Could not register the MCP server: ${mcpError}`, 'Extension');
+    }
 
     // Register component browser command
     logger.debug('[Extension] Registering browseComponents command...', 'Extension');
