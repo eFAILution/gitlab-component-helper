@@ -14,6 +14,7 @@ import type { CachedComponent, RefType } from '../types/cache';
 import { DEFAULT_BRANCH_CACHE_TIME_SECONDS } from '../constants/timing';
 import { resolveBranchFreshness, type BranchFreshnessResult } from '../utils/branchFreshness';
 import { getRuntime } from '../core/runtime';
+import type { ResolvedReference, UnresolvedReason } from '../core/references';
 
 // Re-export so existing consumers (e.g. localComponentResolver, validationProvider) keep their import path.
 export type { ComponentParameter };
@@ -748,18 +749,7 @@ interface ExpansionContext {
   commitSha?: string;
 }
 
-/** Why a reference's GitLab variables couldn't be expanded. */
-export type UnresolvedReason =
-  /** The workspace's repository is hosted somewhere other than GitLab, so the variables have no meaning. */
-  | { kind: 'non-gitlab-repo'; hostname: string; type: string }
-  /** No GitLab remote and no configured component source to expand from. */
-  | { kind: 'no-context' }
-  /** Expansion ran but left variables the extension doesn't know how to expand. */
-  | { kind: 'incomplete'; expandedUrl: string };
-
-export type ResolvedReference =
-  | { resolved: true; url: string }
-  | { resolved: false; reason: UnresolvedReason };
+export type { UnresolvedReason, ResolvedReference };
 
 /**
  * Find what GitLab variables expand from for a document: its repository's GitLab remote; failing that — unless the
