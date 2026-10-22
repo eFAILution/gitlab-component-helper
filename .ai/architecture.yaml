@@ -117,8 +117,7 @@ components:
       requestDeduplicator.ts: Reuses pending promises for identical concurrent requests
       performanceMonitor.ts: Singleton tracking slow operations (>1000ms threshold)
       yamlParser.ts: Parse GitLab CI YAML files
-      logger.ts: Centralized logging
-      outputChannel.ts: VS Code output channel management
+      logger.ts: Centralized logging over the runtime log sink
       gitlabVariables.ts: GitLab CI variable expansion
     depends_on:
     - types
@@ -132,6 +131,43 @@ components:
         PersistentCacheData
       api.ts: GitLab API request/response types
       index.ts: Barrel export
+  core:
+    location: src/core/
+    purpose: Host-neutral ports, runtime, and validation logic shared by the extension and the MCP server
+    files:
+      ports.ts: ConfigPort, SecretsPort, StoragePort, LogSink, AuthPromptPort, NetworkPolicyPort
+      runtime.ts: setRuntime/getRuntime/lockRuntime; defaults need no setup
+      referenceResolver.ts: Expands CI variables in component references over a RepoContextPort
+      localInclude.ts: Resolves and parses local includes over a WorkspacePort
+      validation/: validateIncludes, versionFindings, findings (codes, messages, ranges, suggestedEdits)
+    depends_on:
+    - utils
+    - types
+    notes: Must load under plain Node; never import vscode (tests/unit/coreValidation.test.ts checks)
+  adapters:
+    location: src/adapters/
+    purpose: Port implementations per host
+    files:
+      vscode/: Config, SecretStorage, globalState, output channel, auth prompt, workspace, MCP definition provider
+      node/: git CLI repo context, bounded file reads
+    depends_on:
+    - core
+  mcp:
+    location: src/mcp/
+    purpose: Standalone MCP server (stdio JSON-RPC) exposing validation and component tools to agents
+    files:
+      main.ts: Entry point; claims stdout for the transport, bootstraps, serves
+      bootstrap.ts: Builds and locks the runtime from args and env
+      server.ts: Dispatcher, tool registry, argument validation, result size cap
+      protocol/: JSON-RPC parsing, MCP types and version negotiation, schema validation
+      transport/stdio.ts: Newline-delimited JSON over streams; the only stdout writer
+      adapters/: Layered config, env tokens, file storage (0600), guarded workspace, network allowlist, git path
+      tools/: validate_ci_file, get_component_spec, check_component_versions, list_component_usages, list_component_versions
+      launchConfig.ts: Pure args/env/token hand-off the VS Code provider uses
+    depends_on:
+    - core
+    - services
+    notes: Bundled to out/mcp/server.js by esbuild.mcp.js; the build fails on any vscode import
   scripts:
     location: scripts/
     purpose: Build, release, and automation scripts

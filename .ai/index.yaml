@@ -16,12 +16,15 @@ keys:
   - structure
   - testing
   architecture:
+  - adapters
   - cache
   - component
   - constants
+  - core
   - demo_gifs
   - errors
   - extension
+  - mcp
   - parsers
   - providers
   - scripts
@@ -49,6 +52,10 @@ keys:
   - DEPENDABOT_TARGETS_BETA
   - EXTENSION_HOST_TEST_LAYER
   - FILE_SIZE_POLICY
+  - MCP_DISTRIBUTED_AS_RELEASE_ASSET
+  - MCP_SERVER_NEVER_WRITES_FILES
+  - MCP_STDIO_HANDROLLED
+  - MCP_TOKENS_VIA_ENV_FROM_EXTENSION
   - MOCHA_OVER_JEST
   - MODULAR_SERVICE_SPLIT
   - MULTI_SOURCE_SUPPORT

@@ -5,7 +5,7 @@ project:
   type: plugin
   language: typescript
   node_version: '>=22.0.0'
-  vscode_version: '>=1.109.0'
+  vscode_version: '>=1.120.0'
   description: VS Code extension providing intellisense for GitLab CI components
   purpose: Smart autocomplete, hover docs, and component browsing for GitLab CI/CD
 repository:
@@ -14,6 +14,8 @@ repository:
 entrypoints:
   extension: src/extension.ts
   main_output: out/extension.js
+  mcp_server: src/mcp/main.ts
+  mcp_output: out/mcp/server.js
 structure:
   source: src/
   compiled: out/
@@ -81,7 +83,7 @@ release:
     dry_run_main: npm run release:main:dry
     dry_run_beta: npm run release:beta:dry
 constraints:
-- Must work on VS Code 1.102.0+
+- Must work on VS Code 1.120.0+
 - Compatible with Node.js 22+
 - Support both gitlab.com and self-hosted GitLab instances
 - Component data cached for performance
