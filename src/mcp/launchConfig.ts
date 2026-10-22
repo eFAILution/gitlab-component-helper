@@ -5,7 +5,7 @@
 
 import { CONFIG_DEFAULTS, WORKSPACE_SETTABLE_KEYS, type ConfigKey } from '../core/config/defaults';
 import { DEFAULT_GITLAB_HOST, normalizeHost } from './adapters/network';
-import { TOKENS_JSON_ENV } from './adapters/secrets';
+import { HANDOFF_ENV, writeTokenHandoff } from './tokenHandoff';
 
 /** Settings never passed to the server: the deprecated plain-text token is not a setting the server accepts. */
 const WITHHELD_SETTINGS: ReadonlySet<ConfigKey> = new Set(['gitlabToken']);
@@ -83,8 +83,13 @@ export function tokenCandidateHosts(indexedHosts: readonly string[], userCompone
   return [...new Set([...indexedHosts.map(normalizeHost), ...userSourceHosts(userComponentSources)])].filter(Boolean);
 }
 
-/** Hand tokens over as one `GCH_TOKENS_JSON` map, so each token binds to exactly the host it was stored for. */
-export function buildTokenEnv(tokens: ReadonlyMap<string, string>): Record<string, string> {
-  if (tokens.size === 0) return {};
-  return { [TOKENS_JSON_ENV]: JSON.stringify(Object.fromEntries(tokens)) };
+/**
+ * Hand tokens over as one exact host-to-token map in a one-time private file under `handoffDir`, so each token binds to
+ * exactly the host it was stored for and none sits in the server's starting environment.
+ *
+ * @returns The env to add: just the file's path, or nothing when there are no tokens.
+ */
+export async function buildTokenEnv(tokens: ReadonlyMap<string, string>, handoffDir: string): Promise<Record<string, string>> {
+  const file = await writeTokenHandoff(handoffDir, tokens);
+  return file ? { [HANDOFF_ENV]: file } : {};
 }
