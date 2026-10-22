@@ -1,6 +1,8 @@
+Closes #
+<!-- Every PR starts from an issue. Use `Refs #N` instead for partial work. -->
+
 ## Summary
 - What changed and why?
-- Link related issue(s): Fixes #
 
 ## Change Type
 - [ ] feat
@@ -54,6 +56,8 @@ If breaking changes exist, describe migration steps:
 - One short line suitable for CHANGELOG/release notes.
 
 ## Checklist
+- [ ] Branch is named `<type>/<issue>-<description>` with this PR's issue number (AGENTS.md, Issues, branches, and records)
+- [ ] A new decision is `.ai/decisions/ADR-<issue>.yaml` (never a new key in `.ai/decisions.yaml`)
 - [ ] Branch is up to date with target branch
 - [ ] Commit messages follow conventional commits
 - [ ] Added/updated docs for behavior or settings changes

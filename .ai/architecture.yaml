@@ -179,6 +179,9 @@ components:
       publish-release.sh: Publish to VS Code marketplace
       release-and-publish.sh: Combined release and publish
       setup-github-token.sh: GitHub token configuration
+      ci/decisionRecords.ts: 'Decision record CLI (check, list, new), run by the Decision Records workflow (ADR-366)'
+      ci/decisionRecordsStore.ts: Loads both decision stores and shape-checks record files
+      ci/decisionRecordsBranch.ts: Branch rule; a record a PR adds must carry the branch's issue number
   demo_gifs:
     location: scripts/demo-gifs/
     purpose: Maintainer tool that records the README demo GIFs by driving a real VS Code through Playwright over CDP

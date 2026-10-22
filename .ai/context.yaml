@@ -31,11 +31,15 @@ structure:
   types: src/types/
   utils: src/utils/
   scripts: scripts/
+  decision_records: .ai/decisions/ (ADR-<issue>.yaml, one record per issue; .ai/decisions.yaml is closed to new keys
+    since #366; npm run decisions:list shows both)
+  decision_records_checker: scripts/ci/decisionRecords.ts
   demo_gifs: scripts/demo-gifs/
 context_modules:
   architecture: architecture.yaml
   workflows: workflows.yaml
   decisions: decisions.yaml
+  decision_records: decisions/
   errors: errors.yaml
 dependencies:
   runtime:
@@ -54,6 +58,8 @@ common_tasks:
   test: npm test
   test_extension_host: npm run test:extension-host
   package: npm run package
+  decisions_check: npm run decisions:check
+  decisions_list: npm run decisions:list
 build_system:
   bundler: esbuild
   config: esbuild.js
