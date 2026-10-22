@@ -1,7 +1,11 @@
 import * as vscode from 'vscode';
 import { Component } from './componentDetector';
 import { Logger } from '../utils/logger';
-import { parseLocalIncludeText, type LocalIncludeOutcome as CoreLocalIncludeOutcome } from '../core/localInclude';
+import {
+  resolveLocalIncludeOutcome as resolveCoreLocalIncludeOutcome,
+  type LocalIncludeOutcome as CoreLocalIncludeOutcome,
+} from '../core/localInclude';
+import { createVscodeWorkspace, getResolutionRoot } from '../adapters/vscode/workspace';
 
 // Pure parser helpers live in their own module so the unit suite can exercise them under plain Node. Re-exported
 // here so existing callers (e.g. validationProvider) keep their import path.
@@ -21,65 +25,10 @@ export {
 };
 
 const logger = Logger.getInstance();
-
-/**
- * Look up the git repository root that contains the given document via VS Code's built-in Git extension.
- *
- * Returns `null` if there's no document, no Git extension, or the document doesn't live inside a known repo. Errors
- * thrown by the Git extension API are caught and logged at debug level.
- *
- * @param document  The active document. Resolution is anchored on its URI so multi-repo workspaces map correctly.
- * @returns         The repo's `rootUri`, or `null` if it can't be determined.
- */
-function getRepositoryRoot(document?: vscode.TextDocument): vscode.Uri | null {
-  if (!document) {
-    return null;
-  }
-  try {
-    const gitExtension = vscode.extensions.getExtension('vscode.git');
-    if (gitExtension) {
-      const git = gitExtension.exports.getAPI(1);
-      const repo = git?.getRepository?.(document.uri);
-      if (repo?.rootUri) {
-        return repo.rootUri as vscode.Uri;
-      }
-    }
-  } catch (err) {
-    logger.debug(`[LocalComponentResolver] Git extension lookup failed: ${err}`, 'LocalComponentResolver');
-  }
-  return null;
-}
-
-/**
- * Pick the URI that `local:` paths resolve against. Prefers the git repo root (matching GitLab's own semantics);
- * falls back to the document's workspace folder, then to the first workspace folder, then `null`.
- *
- * The fallback chain matters for unsaved buffers, no-Git workspaces, and tests — none of these have a real repo root
- * but most can still resolve a sensible workspace-relative path.
- *
- * @param document  The active document being processed. Used for both the repo lookup and the workspace-folder fallback.
- * @returns         The root URI to join `local:` paths against, or `null` if no usable root exists.
- */
-function getResolutionRoot(document?: vscode.TextDocument): vscode.Uri | null {
-  const repoRoot = getRepositoryRoot(document);
-  if (repoRoot) {
-    return repoRoot;
-  }
-  if (document) {
-    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
-    if (folder) {
-      return folder.uri;
-    }
-  }
-  const folders = vscode.workspace.workspaceFolders;
-  return folders && folders.length > 0 ? folders[0].uri : null;
-}
+const vscodeWorkspace = createVscodeWorkspace();
 
 /**
  * Resolve a `local:` path string to an absolute URI against the chosen resolution root.
- *
- * Leading slashes are tolerated (GitLab itself accepts both `/templates/x.yml` and `templates/x.yml`) and stripped
- * before joining, so the result never contains a doubled separator.
  *
  * @param localPath  The raw path string from a parsed `include: - local:` entry.
  * @param document   The active document, used to determine the resolution root.
@@ -92,32 +41,6 @@ export function resolveLocalIncludeUri(localPath: string, document?: vscode.Text
   }
   const relative = localPath.replace(/^\/+/, '');
   return vscode.Uri.joinPath(root, ...relative.split('/'));
-}
-
-/**
- * Read the text content of a local include target, preferring the open editor buffer over the on-disk file.
- *
- * Reading from the open buffer surfaces unsaved edits immediately — without this, hovering an input on the consumer
- * file would show stale parameters whenever the template was edited but not yet saved. Falls back to
- * `vscode.workspace.fs.readFile` when the target isn't open in any editor. Read failures are logged at debug level
- * and surface to the caller as `null` so they can be converted into the right user-facing signal (e.g. a not-found
- * diagnostic from the validation provider, or a silent skip from the hover/completion providers).
- *
- * @param uri  The resolved absolute URI of the include target.
- * @returns    The file's text, or `null` if the file can't be read.
- */
-async function readIncludeTarget(uri: vscode.Uri): Promise<string | null> {
-  const openDoc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
-  if (openDoc) {
-    return openDoc.getText();
-  }
-  try {
-    const bytes = await vscode.workspace.fs.readFile(uri);
-    return Buffer.from(bytes).toString('utf8');
-  } catch (err) {
-    logger.debug(`[LocalComponentResolver] Could not read ${uri.fsPath}: ${err}`, 'LocalComponentResolver');
-    return null;
-  }
 }
 
 /** See {@link CoreLocalIncludeOutcome}; the extension's components carry the wider provider `Component` shape. */
@@ -136,21 +59,7 @@ export async function resolveLocalIncludeOutcome(
   localPath: string,
   document?: vscode.TextDocument
 ): Promise<LocalIncludeOutcome> {
-  if (isUnsupportedLocalPath(localPath)) {
-    return { kind: 'skipped' };
-  }
-
-  const uri = resolveLocalIncludeUri(localPath, document);
-  if (!uri) {
-    logger.debug(`[LocalComponentResolver] No resolution root available for: ${localPath}`, 'LocalComponentResolver');
-    return { kind: 'skipped' };
-  }
-
-  const text = await readIncludeTarget(uri);
-  if (text === null) {
-    return { kind: 'unreadable' };
-  }
-  return parseLocalIncludeText(localPath, text, uri.fsPath);
+  return resolveCoreLocalIncludeOutcome(localPath, document, vscodeWorkspace);
 }
 
 /**
