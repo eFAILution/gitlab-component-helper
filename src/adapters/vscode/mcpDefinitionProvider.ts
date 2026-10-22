@@ -12,7 +12,9 @@ import {
   buildServerArgs,
   buildServerEnv,
   buildTokenEnv,
+  definitionVersion,
   effectiveSettings,
+  serverLaunchPlan,
   tokenCandidateHosts,
   userSourceHosts,
 } from '../../mcp/launchConfig';
@@ -56,23 +58,32 @@ export function registerMcpServerProvider(context: vscode.ExtensionContext, toke
 
   const changed = new vscode.EventEmitter<void>();
   const fire = () => changed.fire();
+  // Bumped on every token change and folded into the definition version, so VS Code restarts the server with them.
+  let tokenRevision = 0;
+  const onTokenChange = () => {
+    tokenRevision++;
+    fire();
+  };
   const provider: vscode.McpServerDefinitionProvider<vscode.McpStdioServerDefinition> = {
     onDidChangeMcpServerDefinitions: changed.event,
     provideMcpServerDefinitions: () => {
       const folders = (vscode.workspace.workspaceFolders ?? []).filter((folder) => folder.uri.scheme === 'file');
+      // `mcp.enabled` is application-scoped, so a workspace can't turn the server on.
+      const enabled = vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>('mcp.enabled', CONFIG_DEFAULTS['mcp.enabled']);
+      const plan = serverLaunchPlan(folders.map((folder) => folder.uri.fsPath), enabled);
+      if (!plan) return [];
       const { config } = getRuntime();
       const settings = effectiveSettings((key) => config.get(key, CONFIG_DEFAULTS[key]));
       const cacheDir = vscode.Uri.joinPath(context.globalStorageUri, CACHE_DIR_NAME).fsPath;
-      const version = String(context.extension.packageJSON.version ?? '');
-      return [
-        new vscode.McpStdioServerDefinition(
-          SERVER_LABEL,
-          process.execPath,
-          buildServerArgs(context.asAbsolutePath(SERVER_SCRIPT), folders.map((folder) => folder.uri.fsPath)),
-          buildServerEnv(settings, cacheDir, userSourceHosts(userComponentSources())),
-          version
-        ),
-      ];
+      const definition = new vscode.McpStdioServerDefinition(
+        SERVER_LABEL,
+        process.execPath,
+        buildServerArgs(context.asAbsolutePath(SERVER_SCRIPT), plan.roots),
+        buildServerEnv(settings, cacheDir, userSourceHosts(userComponentSources())),
+        definitionVersion(String(context.extension.packageJSON.version ?? ''), tokenRevision)
+      );
+      definition.cwd = vscode.Uri.file(plan.cwd);
+      return [definition];
     },
     resolveMcpServerDefinition: async (server) => {
       const found = await collectTokens(tokens);
@@ -85,7 +96,7 @@ export function registerMcpServerProvider(context: vscode.ExtensionContext, toke
   return vscode.Disposable.from(
     changed,
     vscode.lm.registerMcpServerDefinitionProvider(MCP_PROVIDER_ID, provider),
-    tokens.onDidChangeToken(fire),
+    tokens.onDidChangeToken(onTokenChange),
     vscode.workspace.onDidChangeWorkspaceFolders(fire),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration(CONFIG_SECTION)) fire();

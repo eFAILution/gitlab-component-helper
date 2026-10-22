@@ -12,6 +12,7 @@ import {
   resultResponse,
   type JsonRpcRequest,
   type JsonRpcResponse,
+  type RequestId,
 } from './protocol/jsonrpc';
 import {
   negotiateProtocolVersion,
@@ -87,6 +88,8 @@ export class McpServer {
   private readonly tools = new Map<string, Tool>();
   private protocolVersion: ProtocolVersion = SUPPORTED_PROTOCOL_VERSIONS[0];
   private toolCallsInFlight = 0;
+  private readonly pending = new Set<RequestId>();
+  private readonly cancelled = new Set<RequestId>();
 
   constructor(private readonly options: McpServerOptions) {
     options.tools.forEach((tool) => this.tools.set(tool.definition.name, tool));
@@ -100,9 +103,11 @@ export class McpServer {
         Promise.allSettled([...inFlight]).then(() => resolve());
       });
       transport.onLine((line) => {
-        const handled = this.handleLine(line).then((response) => {
-          if (response) transport.send(response);
-        });
+        const handled = this.handleLine(line)
+          .then((response) => {
+            if (response) transport.send(response);
+          })
+          .catch((error: unknown) => logger.error(`[MCP] Could not answer a request: ${error}`, 'MCP'));
         inFlight.add(handled);
         handled.finally(() => inFlight.delete(handled));
       });
@@ -116,10 +121,32 @@ export class McpServer {
       case 'invalid':
         return errorResponse(parsed.id, parsed.error);
       case 'response':
-      case 'notification':
         return undefined;
-      case 'request':
-        return this.handleRequest(parsed.message);
+      case 'notification':
+        this.handleNotification(parsed.message.method, parsed.message.params ?? {});
+        return undefined;
+      case 'request': {
+        const { id } = parsed.message;
+        this.pending.add(id);
+        try {
+          const response = await this.handleRequest(parsed.message);
+          // A cancelled request gets no response, as the protocol asks.
+          return this.cancelled.delete(id) ? undefined : response;
+        } finally {
+          this.pending.delete(id);
+        }
+      }
+    }
+  }
+
+  /**
+   * `notifications/cancelled` marks a pending request so its result is dropped. The work itself runs to completion
+   * (or its deadline); tools don't take an abort signal.
+   */
+  private handleNotification(method: string, params: Record<string, unknown>): void {
+    const { requestId } = params;
+    if (method === 'notifications/cancelled' && (typeof requestId === 'string' || typeof requestId === 'number') && this.pending.has(requestId)) {
+      this.cancelled.add(requestId);
     }
   }
 
@@ -173,9 +200,10 @@ export class McpServer {
     if (!tool) {
       throw new RpcError(ErrorCode.INVALID_PARAMS, `Unknown tool: ${String(name)}`);
     }
+    // Bad arguments are the model's mistake to correct, so they come back as a tool error it can read.
     const problem = validateValue(tool.definition.inputSchema, rawArgs);
     if (problem) {
-      throw new RpcError(ErrorCode.INVALID_PARAMS, `Invalid arguments for ${tool.definition.name}: ${problem}`);
+      return toolErrorResult(`Invalid arguments for ${tool.definition.name}: ${problem}`);
     }
 
     const limit = this.options.maxConcurrentToolCalls ?? DEFAULT_MAX_CONCURRENT_TOOL_CALLS;

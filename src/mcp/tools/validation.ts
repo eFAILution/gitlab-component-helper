@@ -4,7 +4,7 @@
  */
 
 import { validateIncludes, type ComponentLookupPort } from '../../core/validation/validateIncludes';
-import { checkComponentVersions } from '../../core/validation/versionFindings';
+import { computeOutdatedRefs, outdatedRefToFinding, readVersionCheckSettings } from '../../core/validation/versionFindings';
 import { parseComponentRef } from '../../core/validation/componentLookup';
 import { createReferenceResolver } from '../../core/referenceResolver';
 import { resolveLocalIncludeOutcome } from '../../core/localInclude';
@@ -35,11 +35,23 @@ export interface ValidationRunner {
   validateFile(file: string, checks: ReadonlySet<Check>): Promise<FileValidation | null>;
   /** Hosts a check wanted to contact but the allowlist refused. */
   blockedHosts(): string[];
+  /** Component base URLs whose versions couldn't be looked up, so their version check didn't happen. */
+  versionLookupFailed(): string[];
+  /** Whether a version check was skipped because `versionCheck.enabled` is off. */
+  versionCheckDisabled(): boolean;
 }
 
-export function createValidationRunner(context: ToolContext): ValidationRunner {
+export interface RunnerOptions {
+  /** Run the version check even when `versionCheck.enabled` is off: the caller asked for it explicitly. */
+  forceVersionCheck?: boolean;
+}
+
+export function createValidationRunner(context: ToolContext, options: RunnerOptions = {}): ValidationRunner {
   const components = new Map<string, SpecComponent | null>();
   const blocked = new Set<string>();
+  const versionsByBase = new Map<string, Promise<readonly string[] | undefined>>();
+  const failedBases = new Set<string>();
+  let versionCheckSkipped = false;
 
   const refFor = (url: string) => {
     const identity = parseComponentRef(url);
@@ -69,18 +81,29 @@ export function createValidationRunner(context: ToolContext): ValidationRunner {
     },
   };
 
-  const fetchVersions = async (baseUrl: string) => {
+  const lookUpVersions = async (baseUrl: string): Promise<readonly string[] | undefined> => {
     const ref = refFor(baseUrl);
     if (!ref) return undefined;
     if (!context.isHostAllowed(ref.gitlabInstance)) {
       blocked.add(ref.gitlabInstance);
       return undefined;
     }
-    return context.services.fetchVersions(ref).catch(() => undefined);
+    return context.services.fetchVersions(ref).catch(() => {
+      failedBases.add(baseUrl);
+      return undefined;
+    });
+  };
+  // One lookup per base URL per run, failures included.
+  const fetchVersions = (baseUrl: string) => {
+    const cached = versionsByBase.get(baseUrl) ?? lookUpVersions(baseUrl);
+    versionsByBase.set(baseUrl, cached);
+    return cached;
   };
 
   return {
     blockedHosts: () => [...blocked],
+    versionLookupFailed: () => [...failedBases],
+    versionCheckDisabled: () => versionCheckSkipped,
     validateFile: async (file, checks) => {
       const text = await context.workspace.readText(file);
       if (text === null) return null;
@@ -97,7 +120,14 @@ export function createValidationRunner(context: ToolContext): ValidationRunner {
         findings.push(...includeFindings.filter((finding) => checks.has(checkOf(finding))));
       }
       if (checks.has('versions')) {
-        findings.push(...((await checkComponentVersions({ text, file, resolveReference, fetchVersions })) ?? []));
+        const versionInput = { text, file, resolveReference, fetchVersions };
+        const { enabled, severity } = readVersionCheckSettings();
+        if (enabled || options.forceVersionCheck) {
+          const refs = await computeOutdatedRefs(versionInput);
+          findings.push(...refs.map((ref) => outdatedRefToFinding(ref, file, severity)));
+        } else {
+          versionCheckSkipped = true;
+        }
       }
       return { file, text, findings };
     },

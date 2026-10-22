@@ -88,19 +88,43 @@ suite('McpServer JSON-RPC errors', () => {
     await client.close();
   });
 
-  test('bad tool arguments and unknown tools get -32602', async () => {
+  test('bad tool arguments come back as isError tool results; an unknown tool is -32602', async () => {
     const { client } = await initialized('2025-06-18');
 
-    const calls = [
-      { name: 'echo', arguments: {} },
-      { name: 'echo', arguments: { text: 1 } },
-      { name: 'echo', arguments: { text: 'a', extra: true } },
-      { name: 'missing', arguments: {} },
-    ];
-    for (const params of calls) {
-      const response = await client.request('tools/call', params);
-      assert.equal((response.error as { code: number }).code, -32602, JSON.stringify(params));
+    for (const params of [{ name: 'echo', arguments: {} }, { name: 'echo', arguments: { text: 1 } }, { name: 'echo', arguments: { text: 'a', extra: true } }]) {
+      const result = (await client.request('tools/call', params)).result as { isError?: boolean; content: Array<{ text: string }> };
+      assert.equal(result.isError, true, JSON.stringify(params));
+      assert.match(result.content[0].text, /Invalid arguments for echo/);
     }
+    const unknown = await client.request('tools/call', { name: 'missing', arguments: {} });
+    assert.equal((unknown.error as { code: number }).code, -32602);
+    await client.close();
+  });
+
+  test('a cancelled request gets no response', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const slow: Tool = {
+      definition: { name: 'slow', description: 'Slow', inputSchema: { type: 'object' } },
+      run: async () => {
+        await gate;
+        return { data: {} };
+      },
+    };
+    const client = connectFakeClient(new McpServer({ info: { name: 't', version: '1' }, tools: [slow] }));
+    let answered = false;
+    client.request('tools/call', { name: 'slow', arguments: {} }).then(() => {
+      answered = true;
+    });
+    client.notify('notifications/cancelled', { requestId: 1, reason: 'user' });
+    await new Promise((resolve) => setImmediate(resolve));
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.equal(answered, false);
+    assert.deepStrictEqual((await client.request('ping')).result, {});
     await client.close();
   });
 });

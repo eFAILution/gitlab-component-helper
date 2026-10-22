@@ -5,7 +5,7 @@ import { Logger } from '../../utils/logger';
 import { getPerformanceMonitor } from '../../utils/performanceMonitor';
 import { TokenManager } from './tokenManager';
 import { UrlParser } from './urlParser';
-import { VersionManager } from './versionManager';
+import { VersionManager, type VersionFetchOptions } from './versionManager';
 import { ComponentFetcher } from './componentFetcher';
 
 // Service interface for component sources
@@ -128,8 +128,8 @@ export class ComponentService implements ComponentSource {
     return this.versionManager.fetchProjectVersions(gitlabInstance, projectPath);
   }
 
-  public async fetchProjectTags(gitlabInstance: string, projectPath: string) {
-    return this.versionManager.fetchProjectTags(gitlabInstance, projectPath);
+  public async fetchProjectTags(gitlabInstance: string, projectPath: string, options?: VersionFetchOptions) {
+    return this.versionManager.fetchProjectTags(gitlabInstance, projectPath, options);
   }
 
   /**
