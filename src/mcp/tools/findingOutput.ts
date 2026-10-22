@@ -6,7 +6,7 @@
 
 import { extractLocalIncludePath } from '../../providers/localIncludeParser';
 import { splitDocumentLines, type Finding, type FindingMetadata } from '../../core/validation/findings';
-import { cleanDefault, cleanName, cleanNames, cleanText, MAX_NAME_LENGTH } from './sanitize';
+import { cleanDefault, cleanName, cleanNames, cleanPath, cleanText, MAX_NAME_LENGTH } from './sanitize';
 
 const MESSAGES: Record<string, string> = {
   'unknown-input': 'The include passes an input that the component (or local template) does not declare.',
@@ -82,7 +82,7 @@ function details(metadata: FindingMetadata | undefined): Record<string, unknown>
 
 function suggestedEdits(finding: Finding, extra: Record<string, unknown>): Array<Record<string, unknown>> {
   const edits = (finding.suggestedEdits ?? []).map((edit) => ({
-    file: edit.file,
+    file: cleanPath(edit.file),
     range: edit.range,
     newText: cleanName(edit.newText),
     title: cleanName(edit.title),
@@ -93,7 +93,7 @@ function suggestedEdits(finding: Finding, extra: Record<string, unknown>): Array
   // Only when the range covers just the input name, so replacing it renames the key and nothing else.
   if (finding.code === 'unknown-input' && input && available && range.endCol - range.startCol === input.length) {
     const intended = likelyIntendedInput(input, available);
-    if (intended) edits.push({ file: finding.file, range, newText: intended, title: `Rename input ${input} to ${intended}` });
+    if (intended) edits.push({ file: cleanPath(finding.file), range, newText: intended, title: `Rename input ${input} to ${intended}` });
   }
   return edits;
 }
@@ -109,7 +109,7 @@ export function toOutputFinding(finding: Finding, text: string): Record<string, 
     code: finding.code,
     severity: finding.severity,
     message: MESSAGES[finding.code] ?? 'See the code and details.',
-    file: finding.file,
+    file: cleanPath(finding.file),
     range: finding.range,
     ...extra,
     ...(edits.length > 0 ? { suggestedEdits: edits } : {}),

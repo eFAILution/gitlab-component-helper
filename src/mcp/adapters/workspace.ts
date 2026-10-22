@@ -21,10 +21,15 @@ export interface McpWorkspace extends WorkspacePort<string> {
   rootOf(realPath: string): string | undefined;
 }
 
-/** Reject NUL bytes and `..` segments (with `\` read as a separator) before touching the filesystem. */
+/**
+ * Reject NUL bytes, `..` segments (with `\` read as a separator), and UNC or `\\?\` device paths before touching the
+ * filesystem.
+ */
 export function isPlainPath(userPath: string): boolean {
   if (userPath === '' || userPath.includes('\0')) return false;
-  return !userPath.replace(/\\/g, '/').split('/').includes('..');
+  const slashed = userPath.replace(/\\/g, '/');
+  if (slashed.startsWith('//')) return false;
+  return !slashed.split('/').includes('..');
 }
 
 function containedRoot(roots: readonly string[], candidate: string): string | undefined {
@@ -37,9 +42,12 @@ function containedRoot(roots: readonly string[], candidate: string): string | un
  */
 export function createMcpWorkspace(rootPaths: readonly string[]): McpWorkspace {
   const roots = rootPaths.map((root) => realpathSync(path.resolve(root)));
+  // A path must sit inside a root as written (before any filesystem call), as given or as realpath'd.
+  const lexicalRoots = [...new Set([...rootPaths.map((root) => path.resolve(root)), ...roots])];
 
   const realInsideRoots = async (candidate: string): Promise<string | null> => {
     if (!isPlainPath(candidate) || !path.isAbsolute(candidate)) return null;
+    if (!containedRoot(lexicalRoots, path.resolve(candidate))) return null;
     let real: string;
     try {
       real = await realpath(candidate);
