@@ -214,6 +214,12 @@
           "default": "warning",
           "description": "Severity of the 'newer component version available' diagnostic."
         },
+        "gitlabComponentHelper.mcp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "markdownDescription": "Offer the bundled MCP server to Copilot Chat and other in-editor AI clients. When an AI client starts it, the server gets your workspace folders and the tokens for the GitLab instances in your user settings and token list. Turn off to stop offering it."
+        },
         "gitlabComponentHelper.versionPreferences": {
           "type": "object",
           "additionalProperties": {

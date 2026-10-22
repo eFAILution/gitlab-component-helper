@@ -4,6 +4,7 @@
  */
 
 import type { Readable, Writable } from 'node:stream';
+import { Logger } from '../../utils/logger';
 
 /** Longest line accepted. A client that sends more is dropped rather than buffered without bound. */
 export const MAX_LINE_BYTES = 4 * 1024 * 1024;
@@ -39,6 +40,7 @@ export function createStreamTransport(input: Readable, output: Writable): Transp
       newline = buffer.indexOf('\n');
     }
     if (Buffer.byteLength(buffer) > MAX_LINE_BYTES) {
+      Logger.getInstance().error(`[MCP] Closing the connection: the client sent a line longer than ${MAX_LINE_BYTES} bytes`, 'MCP');
       buffer = '';
       input.destroy();
       close();

@@ -107,7 +107,14 @@ export function createGetComponentSpecTool(services: ComponentServices): Tool {
       if (!component) {
         throw new ToolError(`No component found at ${ref.url}. Check the project path, component name, and version.`);
       }
-      const versions = await services.fetchVersions(ref);
+      // The spec is the point of this call; if only the version list fails, still return the inputs.
+      let versions: string[] = [];
+      let versionsNote: string | undefined;
+      try {
+        versions = await services.fetchVersions(ref);
+      } catch (error) {
+        versionsNote = `Available versions could not be listed: ${error instanceof ToolError ? error.message : 'the lookup failed'}`;
+      }
       const latestStable = getLatestStableSemver(versions);
       return {
         summary: `${component.parameters.length} inputs for ${cleanName(component.name)}@${ref.version}.`,
@@ -119,7 +126,8 @@ export function createGetComponentSpecTool(services: ComponentServices): Tool {
           source: cleanName(component.source ?? `${ref.gitlabInstance}/${ref.sourcePath}`),
           ...(describeComponentLink(component.documentationUrl) ? { documentationUrl: describeComponentLink(component.documentationUrl) } : {}),
           inputs: component.parameters.map(describeInput),
-          ...(versions.length > 0 ? { availableVersions: cleanNames(versions) } : {}),
+          ...(versions.length > 0 || versionsNote ? { availableVersions: cleanNames(versions) } : {}),
+          ...(versionsNote ? { versionsNote } : {}),
           ...(latestStable ? { latestStable } : {}),
         },
       };

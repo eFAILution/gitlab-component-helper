@@ -82,7 +82,11 @@ export function createComponentServices(isHostAllowed: (host: string) => boolean
         },
         sources
       );
-      return getComponentCacheManager({ eagerRefresh: false }).fetchComponentVersions(lookup);
+      try {
+        return await getComponentCacheManager({ eagerRefresh: false }).fetchComponentVersions(lookup, { throwOnError: true });
+      } catch (error) {
+        throw gitlabFailure(error, { gitlabInstance: ref.gitlabInstance, url: ref.baseUrl });
+      }
     },
   };
 }

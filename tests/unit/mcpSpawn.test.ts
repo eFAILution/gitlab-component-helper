@@ -74,6 +74,15 @@ suite('MCP server bundle', function () {
     assert.equal(await server.stop(), 0);
   });
 
+  test('exits cleanly when the client stops reading (EPIPE)', async () => {
+    const server = startServer(bundle, ['--cache-dir', join(dir, 'cache')]);
+    server.child.stdout.destroy();
+    for (let index = 0; index < 20; index++) server.child.stdin.write('{"jsonrpc":"2.0","id":1,"method":"ping"}\n');
+    const code = await new Promise<number | null>((resolveExit) => server.child.on('exit', resolveExit));
+
+    assert.equal(code, 0, server.stderr());
+  });
+
   test('the build fails on a vscode import', async () => {
     await assert.rejects(
       esbuild.build({
