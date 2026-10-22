@@ -1,4 +1,5 @@
-import { registerAddProjectTokenCommand, getComponentService } from './services/component';
+import { getComponentService } from './services/component';
+import { registerAddProjectTokenCommand } from './services/component/commands';
 import * as vscode from 'vscode';
 import { HoverProvider } from './providers/hoverProvider';
 import { CompletionProvider } from './providers/completionProvider';
@@ -69,7 +70,7 @@ export function activate(context: vscode.ExtensionContext) {
     logger.debug(`[Extension] About to import/initialize component cache manager...`, 'Extension');
     let cacheManager: ComponentCacheManager;
     try {
-      cacheManager = getComponentCacheManager(context);
+      cacheManager = getComponentCacheManager();
       context.subscriptions.push(cacheManager);
       logger.info(`[Extension] Component cache manager initialized successfully`, 'Extension');
     } catch (cacheError) {
@@ -83,7 +84,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (e.affectsConfiguration('gitlabComponentHelper.componentSources')) {
           logger.debug('[ComponentCache] Configuration changed, forcing refresh...', 'ComponentCache');
           cacheManager.forceRefresh().catch(error => {
-            logger.debug(`[ComponentCache] Error during config refresh: ${error}`, 'ComponentCache');
+            logger.warn(`[ComponentCache] Error during config refresh: ${error}`, 'ComponentCache');
           });
         }
       })
@@ -261,7 +262,7 @@ export function activate(context: vscode.ExtensionContext) {
         statusMessage += `📍 Location: ${cacheInfo.location}\n`;
         statusMessage += `📦 Components: ${cacheInfo.size}\n`;
         statusMessage += `🕒 Last Updated: ${cacheInfo.lastUpdate}\n`;
-        statusMessage += `💾 Persistence: ${cacheInfo.hasContext ? 'Enabled' : 'Disabled (memory only)'}\n`;
+        statusMessage += `💾 Persistence: ${cacheInfo.isPersistent ? 'Enabled' : 'Disabled (memory only)'}\n`;
 
         if (sourceErrors.size > 0) {
           statusMessage += `\n⚠️ Source Errors:\n`;

@@ -7,10 +7,14 @@
 import * as assert from 'node:assert/strict';
 import { getRuntime } from '../../src/core/runtime';
 import { TOKEN_INSTANCES_KEY, TokenManager } from '../../src/services/component/tokenManager';
+import { Logger } from '../../src/utils/logger';
 import { createMemorySecrets, installFakeRuntime, restoreRuntime } from './support/fakeRuntime';
 
 suite('TokenManager', () => {
-  teardown(restoreRuntime);
+  teardown(() => {
+    restoreRuntime();
+    Logger.getInstance().reloadLogLevel();
+  });
 
   test('reads tokens from the secrets port by instance', async () => {
     const { secrets, values } = createMemorySecrets();
@@ -53,5 +57,49 @@ suite('TokenManager', () => {
     await getRuntime().storage.update(TOKEN_INSTANCES_KEY, ['gitlab.com', 42, null]);
 
     assert.deepStrictEqual(await new TokenManager().getTokenInstances(), ['gitlab.com']);
+  });
+
+  test('a failed instance-list write still saves the token and fires onDidChangeToken', async () => {
+    const { secrets, values } = createMemorySecrets();
+    const fake = installFakeRuntime({ logLevel: 'WARN' }, {
+      secrets,
+      storage: {
+        get: async () => undefined,
+        update: async () => {
+          throw new Error('globalState write failed');
+        },
+      },
+    });
+    Logger.getInstance().reloadLogLevel();
+    const manager = new TokenManager();
+    const changed: string[] = [];
+    manager.onDidChangeToken((instance) => changed.push(instance));
+
+    await manager.setTokenForProject('gitlab.com', 'glpat-abc');
+
+    assert.equal(values.get('gitlab-token-gitlab.com'), 'glpat-abc');
+    assert.deepStrictEqual(changed, ['gitlab.com']);
+    assert.ok(fake.lines.some((line) => line.includes('[WARN]') && line.includes('globalState write failed')));
+    assert.ok(fake.lines.every((line) => !line.includes('glpat-abc')));
+  });
+
+  test('warns when the stored instance list is not a list of hostnames', async () => {
+    const fake = installFakeRuntime({ logLevel: 'WARN' });
+    Logger.getInstance().reloadLogLevel();
+    await getRuntime().storage.update(TOKEN_INSTANCES_KEY, 'not-a-list');
+
+    assert.deepStrictEqual(await new TokenManager().getTokenInstances(), []);
+    assert.ok(fake.lines.some((line) => line.includes('[WARN]') && line.includes(TOKEN_INSTANCES_KEY)));
+  });
+
+  test('never records an instance that embeds credentials', async () => {
+    const { secrets } = createMemorySecrets();
+    const fake = installFakeRuntime({}, { secrets });
+    const manager = new TokenManager();
+
+    await manager.setTokenForProject('oauth2:glpat-leak@gitlab.example.com', 'glpat-abc');
+
+    assert.deepStrictEqual(await manager.getTokenInstances(), []);
+    assert.ok(fake.lines.every((line) => !line.includes('glpat-leak')));
   });
 });

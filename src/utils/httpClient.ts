@@ -1,5 +1,6 @@
 import * as https from 'https';
 import * as http from 'http';
+import { createHash } from 'crypto';
 import { Logger } from './logger';
 import { getRequestDeduplicator, RequestDeduplicator } from './requestDeduplicator';
 import { getPerformanceMonitor } from './performanceMonitor';
@@ -71,9 +72,11 @@ export class HttpClient {
   }
 
   private buildCacheKey(url: string, headers: Record<string, string>): string {
-    // Include auth tokens in cache key to avoid mixing authenticated/unauthenticated responses
+    // Key on the auth token so authenticated and unauthenticated responses never mix. Hash it so the raw token
+    // never sits in the key, which getDeduplicationStats() hands out.
     const authToken = headers['Authorization'] || headers['PRIVATE-TOKEN'] || '';
-    return `${url}|${authToken}`;
+    const authDigest = authToken ? createHash('sha256').update(authToken).digest('hex') : '';
+    return `${url}|${authDigest}`;
   }
 
   async fetchJson<T = unknown>(url: string, options: RequestOptions = {}): Promise<T> {
