@@ -4,6 +4,7 @@ import { getComponentCacheManager } from '../services/cache/componentCacheManage
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
 import { containsGitLabVariables, detectGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
 import { matchComponentValue, referenceToUrl } from '../utils/componentReference';
+import { parseComponentIdentity, findCachedComponentVersion, findAnyCachedComponentVersion } from '../utils/cachedComponentLookup';
 import { Logger } from '../utils/logger';
 import { spawn } from 'child_process';
 import { detectLocalIncludeComponent } from './localComponentResolver';
@@ -181,49 +182,24 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
 
   // Parse the requested component URL to extract name and details
   try {
-    // GitLab component URLs are: https://gitlab.instance/project/path@version
-    let requestedProjectPath: string;
-    let requestedVersion: string | undefined;
-    let requestedName: string;
-
-    if (componentUrl.includes('@')) {
-      // Split on @ to separate project path and version
-      const urlParts = componentUrl.split('@');
-      const baseUrl = urlParts[0];
-      requestedVersion = urlParts[1];
-
-      // Extract project path and component name from base URL
-      const baseUrlObj = new URL(baseUrl);
-      const fullPath = baseUrlObj.pathname.substring(1); // Remove leading slash
-      const pathParts = fullPath.split('/');
-      requestedName = pathParts.pop() || ''; // Component name is the last segment
-      requestedProjectPath = pathParts.join('/'); // Project path is everything before the component name
-    } else {
-      // No version specified
-      const requestedUrl = new URL(componentUrl);
-      const fullPath = requestedUrl.pathname.substring(1); // Remove leading slash
-      const pathParts = fullPath.split('/');
-      requestedName = pathParts.pop() || ''; // Component name is the last segment
-      requestedProjectPath = pathParts.join('/'); // Project path is everything before the component name
-      requestedVersion = undefined;
+    const identity = parseComponentIdentity(componentUrl);
+    if (!identity) {
+      throw new Error(`Not a component URL: ${componentUrl}`);
     }
-
-    const requestedGitlabInstance = new URL(componentUrl.split('@')[0]).hostname;
+    const {
+      gitlabInstance: requestedGitlabInstance,
+      sourcePath: requestedProjectPath,
+      name: requestedName,
+      version: requestedVersion,
+    } = identity;
 
     logger.debug(`[ComponentDetector] Looking for component: ${requestedName} from ${requestedGitlabInstance}/${requestedProjectPath}${requestedVersion ? `@${requestedVersion}` : ''}`, 'ComponentDetector');
 
     // Prefer a cache entry whose version matches the request exactly; otherwise fall back to any cached entry for the
     // same component. Both go through the same freshness-checked serve/refetch path below — a branch entry is only
     // served after checkBranchFreshness confirms the branch HEAD hasn't moved.
-    const matchesComponent = (comp: CachedComponent): boolean =>
-      comp.gitlabInstance === requestedGitlabInstance &&
-      comp.sourcePath === requestedProjectPath &&
-      comp.name === requestedName;
-
     const cachedComponent =
-      (requestedVersion &&
-        cachedComponents.find(comp => matchesComponent(comp) && comp.version === requestedVersion)) ||
-      cachedComponents.find(matchesComponent);
+      findCachedComponentVersion(cachedComponents, identity) ?? findAnyCachedComponentVersion(cachedComponents, identity);
 
     if (cachedComponent) {
       logger.debug(`[ComponentDetector] Found matching component in cache: ${cachedComponent.name}`, 'ComponentDetector');

@@ -10,6 +10,8 @@ import { resolveLocalIncludeOutcome, isUnsupportedLocalPath } from './localCompo
 import { attachDiagnosticMetadata, readDiagnosticMetadata } from './validationMetadata';
 import { renderDefaultValue } from './completionInputContext';
 import { isAuthError } from '../errors';
+import { parseComponentIdentity, findCachedComponentVersion, findAnyCachedComponentVersion } from '../utils/cachedComponentLookup';
+import type { ComponentIdentity } from '../utils/cachedComponentLookup';
 import type { MissingRequiredInputMetadata } from './validationMetadata';
 import type { CachedComponent } from '../types/cache';
 import {
@@ -1030,20 +1032,14 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         try {
             const cachedComponents = await this.cacheManager.getComponents();
 
-            // Parse the URL to extract component information
-            const parsedUrl = this.parseComponentUrl(componentUrl);
-            if (!parsedUrl) {
+            const identity = this.parseComponentIdentity(componentUrl);
+            if (!identity) {
                 return null;
             }
 
-            // Find matching component in cache
-            const cachedComponent = cachedComponents.find(comp =>
-                comp.url === componentUrl ||
-                (comp.gitlabInstance === parsedUrl.gitlabInstance &&
-                 comp.sourcePath === parsedUrl.projectPath &&
-                 comp.name === parsedUrl.componentName &&
-                 comp.version === parsedUrl.version)
-            );
+            const cachedComponent =
+                cachedComponents.find(comp => comp.url === componentUrl) ??
+                findCachedComponentVersion(cachedComponents, identity);
 
             if (cachedComponent) {
                 // Convert cached component to Component interface
@@ -1073,8 +1069,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
      */
     private addComponentToCache(componentUrl: string, component: Component): void {
         try {
-            const parsedUrl = this.parseComponentUrl(componentUrl);
-            if (!parsedUrl || !component.context) {
+            if (!this.parseComponentIdentity(componentUrl) || !component.context) {
                 return;
             }
 
@@ -1097,35 +1092,15 @@ export class ValidationProvider implements vscode.CodeActionProvider {
     }
 
     /**
-     * Parse a component URL to extract its parts
+     * Parse a component URL into its cache identity, treating a reference with no `@ref` as `main`.
      */
-    private parseComponentUrl(url: string): { gitlabInstance: string; projectPath: string; componentName: string; version: string } | null {
-        try {
-            const urlObj = new URL(url);
-            const gitlabInstance = urlObj.hostname;
-            const pathParts = urlObj.pathname.split('/').filter(part => part.length > 0);
-
-            if (pathParts.length < 2) {
-                return null;
-            }
-
-            const lastPart = pathParts[pathParts.length - 1];
-            let componentName: string, version: string;
-
-            if (lastPart.includes('@')) {
-                [componentName, version] = lastPart.split('@');
-                const projectPath = pathParts.slice(0, pathParts.length - 1).join('/');
-                return { gitlabInstance, projectPath, componentName, version };
-            } else {
-                componentName = lastPart;
-                version = 'main';
-                const projectPath = pathParts.slice(0, pathParts.length - 1).join('/');
-                return { gitlabInstance, projectPath, componentName, version };
-            }
-        } catch (error) {
-            this.logger.debug(`[ValidationProvider] Error parsing component URL: ${error}`, 'ValidationProvider');
+    private parseComponentIdentity(url: string): Required<ComponentIdentity> | null {
+        const identity = parseComponentIdentity(url);
+        if (!identity) {
+            this.logger.debug(`[ValidationProvider] Not a component URL: ${url}`, 'ValidationProvider');
             return null;
         }
+        return { ...identity, version: identity.version ?? 'main' };
     }
 
     /**
@@ -1478,26 +1453,21 @@ export class ValidationProvider implements vscode.CodeActionProvider {
      * @returns The available refs, or `undefined` when the URL can't be parsed or the fetch fails.
      */
     private async fetchVersionsForBaseUrl(baseUrl: string): Promise<string[] | undefined> {
-        const parsed = this.parseComponentUrl(baseUrl);
-        if (!parsed) {
+        const identity = this.parseComponentIdentity(baseUrl);
+        if (!identity) {
             return undefined;
         }
 
         try {
-            const cached = (await this.cacheManager.getComponents()).find(
-                component =>
-                    component.gitlabInstance === parsed.gitlabInstance &&
-                    component.sourcePath === parsed.projectPath &&
-                    component.name === parsed.componentName,
-            );
+            const cached = findAnyCachedComponentVersion(await this.cacheManager.getComponents(), identity);
             const lookup: CachedComponent = cached ?? {
-                name: parsed.componentName,
+                name: identity.name,
                 description: '',
                 parameters: [],
-                source: `${parsed.gitlabInstance}/${parsed.projectPath}`,
-                sourcePath: parsed.projectPath,
-                gitlabInstance: parsed.gitlabInstance,
-                version: parsed.version,
+                source: `${identity.gitlabInstance}/${identity.sourcePath}`,
+                sourcePath: identity.sourcePath,
+                gitlabInstance: identity.gitlabInstance,
+                version: identity.version,
                 url: baseUrl,
             };
             return await this.cacheManager.fetchComponentVersions(lookup);
