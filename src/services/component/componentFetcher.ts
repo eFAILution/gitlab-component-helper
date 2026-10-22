@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { CONFIG_DEFAULTS } from '../../core/config/defaults';
+import { getRuntime } from '../../core/runtime';
 import { Component } from '../../providers/componentDetector';
 import type { ComponentParameter } from '../../types/git-component';
 import {
@@ -509,8 +511,7 @@ export class ComponentFetcher {
       }
 
       // Process components in batches
-      const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-      const batchSize = config.get<number>('batchSize', 5);
+      const batchSize = getRuntime().config.get<number>('batchSize', CONFIG_DEFAULTS.batchSize);
       const components = await buildCatalogComponents(
         this.httpClient,
         apiBaseUrl,

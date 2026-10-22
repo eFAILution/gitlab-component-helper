@@ -14,6 +14,8 @@ import {
   CACHE_LOCATION_MEMORY_ONLY,
   DEFAULT_COMPONENT_TYPE_PROJECT,
 } from '../../constants/cache';
+import { CONFIG_DEFAULTS } from '../../core/config/defaults';
+import { getRuntime } from '../../core/runtime';
 
 // Bump when the on-disk CachedComponent shape changes. Mismatched caches are discarded on load so the new fields can be
 // populated by re-fetching.
@@ -37,7 +39,6 @@ export class ComponentCacheManager implements vscode.Disposable {
   private refreshInProgress = false;
   private sourceErrors: Map<string, string> = new Map();
   private context: vscode.ExtensionContext | null = null;
-  private readonly disposables: vscode.Disposable[] = [];
 
   // Fires whenever the in-memory component list is populated or changes. Consumers that render from the cache (e.g. the
   // document link provider) subscribe so they can re-request once the cache is ready — VS Code caches a provider's
@@ -73,37 +74,17 @@ export class ComponentCacheManager implements vscode.Disposable {
         'ComponentCache'
       );
     });
-
-    // Listen for configuration changes to refresh cache
-    this.disposables.push(
-      vscode.workspace.onDidChangeConfiguration(e => {
-        if (e.affectsConfiguration('gitlabComponentHelper.componentSources')) {
-          this.logger.debug(
-            '[ComponentCache] Configuration changed, forcing refresh...',
-            'ComponentCache'
-          );
-          this.forceRefresh().catch(error => {
-            this.logger.debug(
-              `[ComponentCache] Error during config refresh: ${error}`,
-              'ComponentCache'
-            );
-          });
-        }
-      })
-    );
   }
 
   public dispose(): void {
     this._onDidChangeComponents.dispose();
-    this.disposables.forEach(d => d.dispose());
   }
 
   /**
    * Get cached components, refreshing if expired
    */
   public async getComponents(): Promise<CachedComponent[]> {
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-    const cacheTime = config.get<number>('cacheTime', 3600) * 1000; // Default 1 hour
+    const cacheTime = getRuntime().config.get<number>('cacheTime', CONFIG_DEFAULTS.cacheTime) * 1000;
 
     // Check if cache needs refresh
     if (Date.now() - this.lastRefreshTime > cacheTime && !this.refreshInProgress) {
@@ -134,9 +115,7 @@ export class ComponentCacheManager implements vscode.Disposable {
     try {
       // Dynamic fetches synthesize `source` as `instance/path`; adopt the configured source's display name (and tag
       // template) so the entry merges into its source group instead of spawning a phantom top-level instance node.
-      const sources = vscode.workspace
-        .getConfiguration('gitlabComponentHelper')
-        .get<ComponentSource[]>('componentSources', []);
+      const sources = getRuntime().config.get<ComponentSource[]>('componentSources', []);
       component = reconcileComponentSource(component, sources);
 
       // Check if component already exists (avoid duplicates)
@@ -243,8 +222,7 @@ export class ComponentCacheManager implements vscode.Disposable {
     this.versionCache.clearCache();
 
     try{
-      const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-      const sources = config.get<
+      const sources = getRuntime().config.get<
         Array<{
           name: string;
           path: string;
@@ -499,8 +477,7 @@ export class ComponentCacheManager implements vscode.Disposable {
     // First, try to load cache from disk
     await this.loadCacheFromDisk();
 
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-    const cacheTime = config.get<number>('cacheTime', 3600) * 1000; // Default 1 hour
+    const cacheTime = getRuntime().config.get<number>('cacheTime', CONFIG_DEFAULTS.cacheTime) * 1000;
 
     // If we have components and cache is still valid, don't refresh
     if (this.components.length > 0 && Date.now() - this.lastRefreshTime < cacheTime) {
@@ -528,9 +505,9 @@ export class ComponentCacheManager implements vscode.Disposable {
    * Check if version cache needs refreshing (less frequent than component cache)
    */
   private shouldRefreshVersions(): boolean {
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
     // Use 4x the component cache time for version refreshes
-    const versionRefreshInterval = config.get<number>('cacheTime', 3600) * 4 * 1000;
+    const cacheTimeSeconds = getRuntime().config.get<number>('cacheTime', CONFIG_DEFAULTS.cacheTime);
+    const versionRefreshInterval = cacheTimeSeconds * 4 * 1000;
     return Date.now() - this.lastRefreshTime > versionRefreshInterval;
   }
 

@@ -74,6 +74,18 @@ export function activate(context: vscode.ExtensionContext) {
       throw cacheError;
     }
 
+    // Refetch every source when the configured sources change
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration('gitlabComponentHelper.componentSources')) {
+          logger.debug('[ComponentCache] Configuration changed, forcing refresh...', 'ComponentCache');
+          cacheManager.forceRefresh().catch(error => {
+            logger.debug(`[ComponentCache] Error during config refresh: ${error}`, 'ComponentCache');
+          });
+        }
+      })
+    );
+
     // Listen for configuration changes
     context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration(e => {

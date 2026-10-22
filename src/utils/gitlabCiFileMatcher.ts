@@ -1,9 +1,10 @@
-import * as vscode from 'vscode';
+import type * as vscode from 'vscode';
 import {
   DEFAULT_GITLAB_CI_FILE_GLOBS,
   buildFileGlobs,
   matchesGitLabCIFile,
 } from './gitlabCiFileMatcherCore';
+import { getRuntime } from '../core/runtime';
 
 export { DEFAULT_GITLAB_CI_FILE_GLOBS };
 
@@ -17,9 +18,7 @@ let cachedGlobs: string[] | undefined;
  */
 export function getConfiguredFileGlobs(): string[] {
   if (cachedGlobs) return cachedGlobs;
-  const additional = vscode.workspace
-    .getConfiguration('gitlabComponentHelper')
-    .get<string[]>('additionalFileGlobs', []);
+  const additional = getRuntime().config.get<string[]>('additionalFileGlobs', []);
   cachedGlobs = buildFileGlobs(additional);
   return cachedGlobs;
 }
