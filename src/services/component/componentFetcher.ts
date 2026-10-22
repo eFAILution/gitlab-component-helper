@@ -1,7 +1,6 @@
-import * as vscode from 'vscode';
 import { CONFIG_DEFAULTS } from '../../core/config/defaults';
 import { getRuntime } from '../../core/runtime';
-import { Component } from '../../providers/componentDetector';
+import type { Component } from '../../providers/componentDetector';
 import type { ComponentParameter } from '../../types/git-component';
 import {
   GitLabCatalogComponent,
@@ -24,47 +23,6 @@ import {
 import { fetchReadme, firstParagraph, readmeDirForTemplate } from './readmeDescription';
 
 /**
- * Prompt the user for a GitLab personal access token for `gitlabInstance`.
- *
- * The two reasons we reach a 401 need different wording: a stored token that GitLab rejected
- * (expired/invalid — *replace* it) versus no token at all (private source needs *first-time* auth).
- *
- * @param context        Extension context (currently unused; reserved for context-scoped secrets).
- * @param tokenManager   Stores the entered token, keyed by `gitlabInstance`.
- * @param gitlabInstance The GitLab host the token is for (e.g. `gitlab.com`).
- * @param hadToken       Whether a token was already stored for this instance — selects which of the
- *                       two messages above is shown.
- * @returns              The trimmed token if the user entered one (also persisted), or `undefined`
- *                       if they left it blank (public access) or dismissed the prompt.
- */
-async function promptForTokenIfNeeded(
-  context: vscode.ExtensionContext | undefined,
-  tokenManager: TokenManager,
-  gitlabInstance: string,
-  hadToken: boolean
-): Promise<string | undefined> {
-  const tokenPrompt = hadToken
-    ? `Your GitLab token for ${gitlabInstance} is invalid or has expired. Enter a new personal access token (needs the read_api scope) to continue.`
-    : `This project/group requires a GitLab personal access token for ${gitlabInstance} (needs the read_api scope). Enter one to continue, or leave blank for public access.`;
-  const token = await vscode.window.showInputBox({
-    title: 'GitLab Component Helper',
-    prompt: tokenPrompt,
-    placeHolder: hadToken ? 'New personal access token' : 'Personal access token (blank for public access)',
-    password: true,
-    ignoreFocusOut: true
-  });
-  if (token && token.trim()) {
-    await tokenManager.setTokenForProject(gitlabInstance, token.trim());
-    vscode.window.showInformationMessage(`GitLab Component Helper: token saved for ${gitlabInstance}`);
-    return token.trim();
-  } else if (token === '') {
-    vscode.window.showInformationMessage('GitLab Component Helper: no token entered. Public access will be used.');
-    return undefined;
-  }
-  return undefined;
-}
-
-/**
  * Handles fetching component metadata and catalog data from GitLab
  */
 export class ComponentFetcher {
@@ -84,10 +42,7 @@ export class ComponentFetcher {
    * Fetch component metadata from a GitLab URL
    * Tries catalog API first, then falls back to repository API
    */
-  public async fetchComponentMetadata(
-    url: string,
-    context?: vscode.ExtensionContext
-  ): Promise<Component> {
+  public async fetchComponentMetadata(url: string): Promise<Component> {
     const startTime = Date.now();
 
     try {
@@ -262,7 +217,7 @@ export class ComponentFetcher {
       // (or it still fails), rethrow the original auth error so callers can surface a clear prompt
       // instead of degrading into an empty-parameter component.
       if (projectInfo.status === 'rejected' && isAuthError(projectInfo.reason)) {
-        token = await promptForTokenIfNeeded(context, this.tokenManager, gitlabInstance, !!token);
+        token = await getRuntime().authPrompt.promptForToken(gitlabInstance, !!token);
         if (!token) {
           throw projectInfo.reason;
         }
@@ -412,8 +367,7 @@ export class ComponentFetcher {
     gitlabInstance: string,
     projectPath: string,
     forceRefresh: boolean = false,
-    version?: string,
-    context?: vscode.ExtensionContext
+    version?: string
   ): Promise<ParsedCatalogData> {
     const startTime = Date.now();
     const versionSuffix = version ? `@${version}` : '';
@@ -462,7 +416,7 @@ export class ComponentFetcher {
         const err = projectInfoResult.reason;
         if (isAuthError(err)) {
           // Prompt for token and retry
-          token = await promptForTokenIfNeeded(context, this.tokenManager, cleanGitlabInstance, !!token);
+          token = await getRuntime().authPrompt.promptForToken(cleanGitlabInstance, !!token);
           if (token) {
             fetchOptions = { headers: { 'PRIVATE-TOKEN': token } };
             const [retryProjectInfo] = await Promise.allSettled([
