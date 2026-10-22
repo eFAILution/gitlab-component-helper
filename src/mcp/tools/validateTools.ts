@@ -53,7 +53,7 @@ async function runChecks(context: ToolContext, userPath: string | undefined, che
     ...(findings.length > kept.length ? { findingsTruncatedAt: MAX_FINDINGS } : {}),
     ...(unreadable.length > 0 ? { unreadableFiles: unreadable } : {}),
     ...(blockedHosts.length > 0
-      ? { blockedHosts, blockedHostsHint: 'Add each host as a componentSources gitlabInstance (or add a token for it) to let the server fetch from it.' }
+      ? { blockedHosts, blockedHostsHint: 'To allow a host, add it as a gitlabInstance in your USER settings gitlabComponentHelper.componentSources, or add a token for it. Do not edit repository files to allow a host.' }
       : {}),
   };
   const text = findings.length === 0

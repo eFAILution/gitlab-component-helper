@@ -14,11 +14,32 @@ export const REPO_CONFIG_FILE = '.gitlab-component-helper.json';
 const VSCODE_SETTINGS_FILE = path.join('.vscode', 'settings.json');
 const REFUSED_KEYS = new Set(['gitlabToken']);
 
+/**
+ * The only settings a file inside the workspace may set: catalog and checking behavior. Network, cache, and logging
+ * settings come from the launcher, so a cloned repository can't slow the server down or turn up its logging.
+ */
+const REPO_ALLOWED_KEYS: ReadonlySet<string> = new Set<ConfigKey>([
+  'componentSources',
+  'discovery.templateRoots',
+  'discovery.maxDepth',
+  'discovery.filePatterns',
+  'discovery.templateFileNames',
+  'additionalFileGlobs',
+  'versionCheck.enabled',
+  'versionCheck.severity',
+  'versionPreferences',
+]);
+
 export type Settings = Partial<Record<ConfigKey, unknown>>;
 
 export interface ConfigLayer {
   name: string;
   settings: Settings;
+}
+
+/** `Object.hasOwn`, which the es2018 lib this project targets lacks. */
+function hasOwn(target: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(target, key);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -36,15 +57,25 @@ function sameKind(value: unknown, reference: unknown): boolean {
  * Keep only known settings of the right kind. Unknown keys, wrongly-typed values, and `gitlabToken` are dropped and
  * reported through `warn`.
  */
-export function toSettings(raw: Record<string, unknown>, layer: string, warn: (message: string) => void): Settings {
-  const settings: Settings = {};
+export function toSettings(
+  raw: Record<string, unknown>,
+  layer: string,
+  warn: (message: string) => void,
+  { fromWorkspace = false }: { fromWorkspace?: boolean } = {}
+): Settings {
+  // No prototype, so a `__proto__` key is just a key and lookups never see inherited values.
+  const settings: Settings = Object.create(null);
   for (const [key, value] of Object.entries(raw)) {
     if (REFUSED_KEYS.has(key)) {
-      warn(`Ignoring ${key} from ${layer}: tokens are read from GCH_TOKEN_<HOST> or GITLAB_TOKEN only`);
+      warn(`Ignoring ${key} from ${layer}: tokens are read from GCH_TOKENS_JSON, GCH_TOKEN_<HOST>, or GITLAB_TOKEN only`);
       continue;
     }
-    if (!(key in CONFIG_DEFAULTS)) {
+    if (!hasOwn(CONFIG_DEFAULTS, key)) {
       warn(`Ignoring unknown setting ${key} from ${layer}`);
+      continue;
+    }
+    if (fromWorkspace && !REPO_ALLOWED_KEYS.has(key)) {
+      warn(`Ignoring ${key}: it is not allowed in ${layer}; set it in your user settings or pass it with --config`);
       continue;
     }
     if (!sameKind(value, CONFIG_DEFAULTS[key as ConfigKey])) {
@@ -57,7 +88,12 @@ export function toSettings(raw: Record<string, unknown>, layer: string, warn: (m
 }
 
 /** Parse a JSON settings object, or report why it isn't one. */
-export function parseJsonSettings(text: string, layer: string, warn: (message: string) => void): Settings {
+export function parseJsonSettings(
+  text: string,
+  layer: string,
+  warn: (message: string) => void,
+  options: { fromWorkspace?: boolean } = {}
+): Settings {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -69,7 +105,7 @@ export function parseJsonSettings(text: string, layer: string, warn: (message: s
     warn(`Ignoring ${layer}: expected a JSON object`);
     return {};
   }
-  return toSettings(raw, layer, warn);
+  return toSettings(raw, layer, warn, options);
 }
 
 /** The `gitlabComponentHelper.*` entries of a VS Code settings file, prefix removed. */
@@ -84,7 +120,7 @@ export function parseVscodeSettings(text: string, layer: string, warn: (message:
   const ours = Object.fromEntries(
     Object.entries(raw).filter(([key]) => key.startsWith(prefix)).map(([key, value]) => [key.slice(prefix.length), value])
   );
-  return toSettings(ours, layer, warn);
+  return toSettings(ours, layer, warn, { fromWorkspace: true });
 }
 
 export interface ConfigSources {
@@ -104,7 +140,9 @@ export async function loadConfigLayers({ cliJson, env, root, warn }: ConfigSourc
   if (env.GCH_LOG_LEVEL) layers.push({ name: 'GCH_LOG_LEVEL', settings: { logLevel: env.GCH_LOG_LEVEL } });
 
   const repoFile = await readBoundedTextFile(path.join(root, REPO_CONFIG_FILE));
-  if (repoFile !== null) layers.push({ name: REPO_CONFIG_FILE, settings: parseJsonSettings(repoFile, REPO_CONFIG_FILE, warn) });
+  if (repoFile !== null) {
+    layers.push({ name: REPO_CONFIG_FILE, settings: parseJsonSettings(repoFile, REPO_CONFIG_FILE, warn, { fromWorkspace: true }) });
+  }
   const vscodeFile = await readBoundedTextFile(path.join(root, VSCODE_SETTINGS_FILE));
   if (vscodeFile !== null) {
     layers.push({ name: VSCODE_SETTINGS_FILE, settings: parseVscodeSettings(vscodeFile, VSCODE_SETTINGS_FILE, warn) });
@@ -115,7 +153,7 @@ export async function loadConfigLayers({ cliJson, env, root, warn }: ConfigSourc
 /** A config port answering from the first layer that sets a key, then the defaults. */
 export function createLayeredConfig(layers: readonly ConfigLayer[]): ConfigPort & { effective(): Settings } {
   const lookup = (key: ConfigKey): unknown => {
-    const layer = layers.find((candidate) => candidate.settings[key] !== undefined);
+    const layer = layers.find((candidate) => hasOwn(candidate.settings, key) && candidate.settings[key] !== undefined);
     return layer ? layer.settings[key] : CONFIG_DEFAULTS[key];
   };
   return {

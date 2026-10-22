@@ -95,8 +95,15 @@ suite('MCP network policy', () => {
   test('allows HTTPS to listed hosts only', () => {
     assert.doesNotThrow(() => policy.checkRequest(new URL('https://gitlab.com/api/v4/projects')));
     assert.doesNotThrow(() => policy.checkRequest(new URL('https://gitlab.internal:8443/api/v4')));
-    assert.throws(() => policy.checkRequest(new URL('https://evil.example/api')), /add a componentSources entry with "gitlabInstance": "evil.example"/);
+    assert.throws(() => policy.checkRequest(new URL('https://evil.example/api')), /"gitlabInstance": "evil.example" to your USER settings/);
     assert.throws(() => policy.checkRequest(new URL('http://gitlab.com/api')), HostNotAllowedError);
+  });
+
+  test('matches the allowlist on host and port, with the default port normalized', () => {
+    const gitlab = createNetworkPolicy(['gitlab.com']);
+    assert.doesNotThrow(() => gitlab.checkRequest(new URL('https://GITLAB.com:443/api')));
+    assert.throws(() => gitlab.checkRequest(new URL('https://gitlab.com:8443/api')), HostNotAllowedError);
+    assert.doesNotThrow(() => createNetworkPolicy(['gitlab.internal:443']).checkRequest(new URL('https://gitlab.internal/api')));
   });
 
   test('blocks link-local, unspecified, and multicast addresses (cloud metadata lives on link-local)', () => {

@@ -47,14 +47,23 @@ export const guardedLookup: LookupFunction = (hostname, options, callback) => {
   });
 };
 
+/**
+ * A host as `URL.host` spells it: lower-case, with the default HTTPS port dropped (`GitLab.Example:443` →
+ * `gitlab.example`). The allowlist and token binding both compare these, so they match what a request URL says.
+ */
 export function normalizeHost(host: string): string {
-  return host.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  const stripped = host.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/s, '');
+  try {
+    return new URL(`https://${stripped}`).host;
+  } catch {
+    return stripped.toLowerCase();
+  }
 }
 
 export function hostNotAllowedMessage(host: string): string {
-  return `The MCP server doesn't contact ${host}: it only talks to gitlab.com and GitLab instances listed in componentSources ` +
-    `or with a token. To allow it, add a componentSources entry with "gitlabInstance": "${host}" to .gitlab-component-helper.json ` +
-    'in the workspace root or to the gitlabComponentHelper.componentSources VS Code setting.';
+  return `The MCP server doesn't contact ${host}: it only talks to gitlab.com, hosts you have a token for, and the ` +
+    `GitLab instances in your user settings. To allow it, add a source with "gitlabInstance": "${host}" to your USER ` +
+    'settings gitlabComponentHelper.componentSources (not the workspace settings), or pass it with --config.';
 }
 
 /**
@@ -69,7 +78,7 @@ export function createNetworkPolicy(allowedHosts: Iterable<string>): NetworkPoli
       if (url.protocol !== 'https:') {
         throw new HostNotAllowedError(`Refusing a non-HTTPS request to ${url.host}`);
       }
-      if (!isAllowed(url.host) && !isAllowed(url.hostname)) {
+      if (!isAllowed(url.host)) {
         throw new HostNotAllowedError(hostNotAllowedMessage(url.host));
       }
       if (isIP(url.hostname.replace(/^\[|\]$/g, '')) && isBlockedAddress(url.hostname.replace(/^\[|\]$/g, ''))) {

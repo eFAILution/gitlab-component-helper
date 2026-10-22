@@ -14,6 +14,7 @@ import {
   buildTokenEnv,
   effectiveSettings,
   tokenCandidateHosts,
+  userSourceHosts,
 } from '../../mcp/launchConfig';
 
 export const MCP_PROVIDER_ID = 'gitlabComponentHelper.mcp';
@@ -27,9 +28,14 @@ export interface TokenSource {
   readonly onDidChangeToken: Event<string>;
 }
 
+/** componentSources from the user's global settings (or the defaults), never from the workspace or a folder. */
+function userComponentSources(): unknown {
+  const inspected = vscode.workspace.getConfiguration(CONFIG_SECTION).inspect('componentSources');
+  return inspected?.globalValue ?? inspected?.defaultValue ?? CONFIG_DEFAULTS.componentSources;
+}
+
 async function collectTokens(tokens: TokenSource): Promise<Map<string, string>> {
-  const sources = getRuntime().config.get('componentSources', CONFIG_DEFAULTS.componentSources);
-  const hosts = tokenCandidateHosts(await tokens.getTokenInstances(), sources);
+  const hosts = tokenCandidateHosts(await tokens.getTokenInstances(), userComponentSources());
   const found = new Map<string, string>();
   for (const host of hosts) {
     const token = await tokens.getTokenForInstance(host);
@@ -63,7 +69,7 @@ export function registerMcpServerProvider(context: vscode.ExtensionContext, toke
           SERVER_LABEL,
           process.execPath,
           buildServerArgs(context.asAbsolutePath(SERVER_SCRIPT), folders.map((folder) => folder.uri.fsPath)),
-          buildServerEnv(settings, cacheDir),
+          buildServerEnv(settings, cacheDir, userSourceHosts(userComponentSources())),
           version
         ),
       ];
