@@ -27,7 +27,6 @@ suite('MCP server bundle', function () {
   test('answers initialize, tools/list, and ping over stdio, then exits cleanly when stdin closes', async () => {
     const server = startServer(bundle);
     let stdoutNoise = '';
-    server.child.stderr.on('data', () => undefined);
 
     const init = await server.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
     server.child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
@@ -43,6 +42,17 @@ suite('MCP server bundle', function () {
     assert.deepStrictEqual(ping.result, {});
     assert.equal(await server.stop(), 0);
     assert.equal(stdoutNoise, '');
+  });
+
+  test('get_component_spec refuses a host outside the allowlist without contacting it', async () => {
+    const server = startServer(bundle, ['--cache-dir', join(dir, 'cache')]);
+    await server.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
+    const response = await server.request('tools/call', { name: 'get_component_spec', arguments: { component: 'evil.example/group/proj/deploy@1.0.0' } });
+    const result = response.result as { isError?: boolean; content: Array<{ text: string }> };
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /doesn't contact evil\.example/);
+    assert.equal(await server.stop(), 0);
   });
 
   test('the build fails on a vscode import', async () => {

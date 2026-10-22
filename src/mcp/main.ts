@@ -8,6 +8,8 @@ import { McpServer } from './server';
 import { createStreamTransport } from './transport/stdio';
 import { createGetComponentSpecTool } from './tools/getComponentSpec';
 import { createComponentServices } from './services';
+import { bootstrap } from './bootstrap';
+import { ArgsError, USAGE } from './adapters/args';
 
 declare const GCH_VERSION: string | undefined;
 
@@ -31,9 +33,10 @@ function claimStdout(): Writable {
 
 async function main(): Promise<void> {
   const protocolOut = claimStdout();
+  const context = await bootstrap(process.argv.slice(2), process.env, process.cwd());
   const server = new McpServer({
     info: { name: SERVER_NAME, title: SERVER_TITLE, version: typeof GCH_VERSION === 'string' ? GCH_VERSION : '0.0.0-dev' },
-    tools: [createGetComponentSpecTool(createComponentServices())],
+    tools: [createGetComponentSpecTool(createComponentServices(context.isHostAllowed))],
   });
   await server.connect(createStreamTransport(process.stdin, protocolOut));
   // Let the last responses flush before exiting; pending timers would otherwise keep the process alive.
@@ -43,6 +46,10 @@ async function main(): Promise<void> {
 main().then(
   () => process.exit(0),
   (error) => {
+    if (error instanceof ArgsError) {
+      process.stderr.write(`${error.message}\n\n${USAGE}\n`);
+      process.exit(2);
+    }
     Logger.getInstance().error(`[MCP] Server stopped: ${error}`, 'MCP');
     process.exit(1);
   }

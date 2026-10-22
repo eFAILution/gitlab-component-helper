@@ -4,6 +4,7 @@
  * server). Adapters live in `src/adapters/<host>/`.
  */
 
+import type { LookupFunction } from 'node:net';
 import type { ConfigKey } from './config/defaults';
 
 export type LogLevelName = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
@@ -47,10 +48,19 @@ export interface AuthPromptPort {
   promptForToken(instance: string, hadToken: boolean): Promise<string | undefined>;
 }
 
+/** Which outbound requests a host allows. The extension sets none; the MCP server restricts hosts and addresses. */
+export interface NetworkPolicyPort {
+  /** Throw to refuse a request. Called for every hop, redirects included. */
+  checkRequest(url: URL): void;
+  /** The DNS lookup requests use, e.g. one that refuses private and loopback addresses. */
+  lookup?: LookupFunction;
+}
+
 export interface RuntimePorts {
   config: ConfigPort;
   secrets: SecretsPort;
   storage: StoragePort;
   log: LogSink;
   authPrompt: AuthPromptPort;
+  network?: NetworkPolicyPort;
 }
