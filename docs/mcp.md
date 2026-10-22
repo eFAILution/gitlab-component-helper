@@ -96,9 +96,10 @@ exposure as any CLI tool that takes a token from the environment.
 
 ### Which hosts the server contacts
 
-Only HTTPS to gitlab.com, the `gitlabInstance` of each `componentSources` entry, and hosts you gave a token for. It
-never contacts private, loopback, or link-local addresses. A component on any other host is reported with the host
-name and how to allow it: add it to `componentSources`.
+Only HTTPS to gitlab.com, the `gitlabInstance` of each `componentSources` entry, and hosts you gave a token for.
+Self-managed GitLab on an internal network works, but link-local addresses (like the 169.254.169.254 cloud metadata
+endpoint), unspecified, and multicast addresses are always refused. Plain `http://` instances aren't supported. A
+component on any other host is reported with the host name and how to allow it: add it to `componentSources`.
 
 ### Which files the server reads
 

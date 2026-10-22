@@ -536,7 +536,7 @@ decisions:
     - Tokens are bound only to hosts named by GCH_TOKEN_HOSTS or the launcher's settings, never by workspace files,
       and not at all when two hosts share a variable name
     - gitlabToken is refused as a setting; tokens are never accepted as tool arguments or logged
-    - Requests only go over HTTPS to allowed hosts, never to private or loopback addresses
+    - Requests only go over HTTPS to allowed hosts; private addresses are allowed for them (self-managed GitLab), link-local and reserved never
     consequences:
       negative:
       - The same OS user can read a process's environment while it runs
