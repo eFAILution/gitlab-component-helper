@@ -13,6 +13,7 @@ import type { GitApi, GitRepository } from '../types/vscode-git';
 import type { CachedComponent, RefType } from '../types/cache';
 import { DEFAULT_BRANCH_CACHE_TIME_SECONDS } from '../constants/timing';
 import { resolveBranchFreshness, type BranchFreshnessResult } from '../utils/branchFreshness';
+import { getRuntime } from '../core/runtime';
 
 // Re-export so existing consumers (e.g. localComponentResolver, validationProvider) keep their import path.
 export type { ComponentParameter };
@@ -781,8 +782,7 @@ async function lookupExpansionContext(forUri: vscode.Uri): Promise<ExpansionCont
     return { kind: 'non-gitlab-repo', hostname: nonGitlab.hostname, type: nonGitlab.type };
   }
 
-  const [source] = vscode.workspace
-    .getConfiguration('gitlabComponentHelper')
+  const [source] = getRuntime().config
     .get<Array<{ path: string; gitlabInstance?: string }>>('componentSources', []);
   if (!source) {
     return { kind: 'no-context' };
