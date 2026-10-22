@@ -3,7 +3,7 @@
  * returns them as JSON. Messages, codes, ranges, and metadata are exactly what the extension has always shown.
  */
 
-import type { DiagnosticMetadata, MissingRequiredInputMetadata, UnknownInputMetadata } from '../../providers/validationMetadata';
+import type { DiagnosticMetadata, MissingRequiredInputMetadata, UnknownInputMetadata } from './metadata';
 
 export type FindingSeverity = 'error' | 'warning' | 'information';
 
