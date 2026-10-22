@@ -8,7 +8,7 @@ import * as assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createLayeredConfig, loadConfigLayers, REPO_CONFIG_FILE } from '../../src/mcp/adapters/config';
+import { createLayeredConfig, loadConfigLayers, parseJsonSettings, REPO_CONFIG_FILE } from '../../src/mcp/adapters/config';
 import { parseArgs, ArgsError } from '../../src/mcp/adapters/args';
 import { bindTokens, createEnvSecrets, takeEnvTokens, tokenEnvName } from '../../src/mcp/adapters/secrets';
 
@@ -27,14 +27,14 @@ suite('MCP config layers', () => {
 
   test('precedence: --config > GCH_CONFIG_JSON > GCH_LOG_LEVEL > repo file > .vscode/settings.json > defaults', async () => {
     const root = workspaceWith({
-      [REPO_CONFIG_FILE]: JSON.stringify({ cacheTime: 30, batchSize: 7, logLevel: 'WARN' }),
-      '.vscode/settings.json': '{\n  // comments are fine\n  "gitlabComponentHelper.cacheTime": 10,\n  "gitlabComponentHelper.batchSize": 2,\n  "gitlabComponentHelper.retryAttempts": 9,\n  "editor.tabSize": 2,\n}',
+      [REPO_CONFIG_FILE]: JSON.stringify({ additionalFileGlobs: ['repo/*.yml'], 'discovery.maxDepth': 2 }),
+      '.vscode/settings.json': '{\n  // comments are fine\n  "gitlabComponentHelper.additionalFileGlobs": ["vscode/*.yml"],\n  "gitlabComponentHelper.discovery.maxDepth": 3,\n  "gitlabComponentHelper.versionCheck.severity": "information",\n  "editor.tabSize": 2,\n}',
     });
     roots.push(root);
     const warnings: string[] = [];
     const layers = await loadConfigLayers({
       cliJson: JSON.stringify({ cacheTime: 1 }),
-      env: { GCH_CONFIG_JSON: JSON.stringify({ cacheTime: 2, batchSize: 3 }), GCH_LOG_LEVEL: 'DEBUG' },
+      env: { GCH_CONFIG_JSON: JSON.stringify({ cacheTime: 2, batchSize: 3, 'discovery.maxDepth': 0 }), GCH_LOG_LEVEL: 'DEBUG' },
       root,
       warn: (message) => warnings.push(message),
     });
@@ -44,19 +44,21 @@ suite('MCP config layers', () => {
     assert.equal(config.get('cacheTime', 0), 1);
     assert.equal(config.get('batchSize', 0), 3);
     assert.equal(config.get('logLevel', ''), 'DEBUG');
-    assert.equal(config.get('retryAttempts', 0), 9);
+    assert.equal(config.get('discovery.maxDepth', 9), 0);
+    assert.deepStrictEqual(config.get('additionalFileGlobs', []), ['repo/*.yml']);
+    assert.equal(config.get('versionCheck.severity', ''), 'information');
     assert.equal(config.get('httpTimeout', 0), 10000);
     assert.deepStrictEqual(warnings, []);
   });
 
   test('refuses gitlabToken and drops unknown or wrongly-typed settings, with a warning for each', async () => {
-    const root = workspaceWith({ [REPO_CONFIG_FILE]: JSON.stringify({ gitlabToken: 'glpat-x', nope: 1, cacheTime: 'soon' }) });
+    const root = workspaceWith({ [REPO_CONFIG_FILE]: JSON.stringify({ gitlabToken: 'glpat-x', nope: 1, additionalFileGlobs: 'soon' }) });
     roots.push(root);
     const warnings: string[] = [];
     const config = createLayeredConfig(await loadConfigLayers({ env: {}, root, warn: (message) => warnings.push(message) }));
 
     assert.equal(config.get('gitlabToken', ''), '');
-    assert.equal(config.get('cacheTime', 0), 3600);
+    assert.deepStrictEqual(config.get('additionalFileGlobs', ['x']), []);
     assert.equal(warnings.length, 3);
     assert.match(warnings[0], /gitlabToken/);
   });
@@ -69,6 +71,41 @@ suite('MCP config layers', () => {
 
     assert.equal(config.get('cacheTime', 0), 3600);
     assert.match(warnings[0], /not valid JSON/);
+  });
+});
+
+suite('MCP config trust and parsing', () => {
+  const roots: string[] = [];
+  suiteTeardown(() => roots.forEach((root) => rmSync(root, { recursive: true, force: true })));
+
+  test('repository files may not set network or logging settings', async () => {
+    const root = workspaceWith({
+      [REPO_CONFIG_FILE]: JSON.stringify({ httpTimeout: 1, retryAttempts: 9, batchSize: 99, cacheTime: 1, logLevel: 'DEBUG', additionalFileGlobs: ['ci/*.yml'] }),
+      '.vscode/settings.json': JSON.stringify({ 'gitlabComponentHelper.httpTimeout': 2, 'gitlabComponentHelper.versionCheck.enabled': false }),
+    });
+    roots.push(root);
+    const warnings: string[] = [];
+    const config = createLayeredConfig(await loadConfigLayers({ env: {}, root, warn: (message) => warnings.push(message) }));
+
+    assert.equal(config.get('httpTimeout', 0), 10000);
+    assert.equal(config.get('retryAttempts', 0), 3);
+    assert.equal(config.get('batchSize', 0), 5);
+    assert.equal(config.get('cacheTime', 0), 3600);
+    assert.equal(config.get('logLevel', ''), 'ERROR');
+    assert.deepStrictEqual(config.get('additionalFileGlobs', []), ['ci/*.yml']);
+    assert.equal(config.get('versionCheck.enabled', true), false);
+    assert.equal(warnings.filter((message) => /not allowed in/.test(message)).length, 6);
+  });
+
+  test('__proto__ keys can neither pollute prototypes nor smuggle settings', () => {
+    const warnings: string[] = [];
+    const settings = parseJsonSettings('{"__proto__":{"gitlabToken":"x","httpTimeout":1}}', '--config', (message) => warnings.push(message));
+    const config = createLayeredConfig([{ name: '--config', settings }]);
+
+    assert.equal(config.get('gitlabToken', ''), '');
+    assert.equal(config.get('httpTimeout', 0), 10000);
+    assert.equal(({} as Record<string, unknown>).gitlabToken, undefined);
+    assert.match(warnings[0], /__proto__/);
   });
 });
 

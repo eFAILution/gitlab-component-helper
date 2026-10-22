@@ -2,7 +2,6 @@
  * Build the MCP server's runtime from its arguments and environment, install it once, and lock it.
  */
 
-import { CONFIG_DEFAULTS } from '../core/config/defaults';
 import { createDefaultRuntime, lockRuntime, setRuntime } from '../core/runtime';
 import type { RepoContextPort } from '../core/referenceResolver';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
@@ -17,8 +16,8 @@ import { bindTokens, createEnvSecrets, takeEnvTokens } from './adapters/secrets'
 import { createFileStorage, resolveCacheDir } from './adapters/storage';
 import { createMcpWorkspace, type McpWorkspace } from './adapters/workspace';
 
-/** Layers set by whoever launched the server, as opposed to files in the (possibly untrusted) workspace. */
-const LAUNCHER_LAYERS = new Set(['--config', 'GCH_CONFIG_JSON']);
+/** Hosts from the launcher's user-level settings (the extension passes the user's global componentSources). */
+const TRUSTED_HOSTS_ENV = 'GCH_TRUSTED_HOSTS';
 
 export interface McpContext {
   workspace: McpWorkspace;
@@ -37,12 +36,12 @@ function sourceHosts(sources: unknown): string[] {
 const noRepoContext: RepoContextPort<string> = { remoteContext: async () => ({}), nonGitLabRemote: async () => null };
 
 export async function bootstrap(argv: readonly string[], env: NodeJS.ProcessEnv, cwd: string): Promise<McpContext> {
-  // Take the tokens out of the environment before anything else can read or pass it on.
-  const tokens = takeEnvTokens(env);
-  const args = parseArgs(argv, cwd);
-  const workspace = createMcpWorkspace(args.roots);
   const warnings: string[] = [];
   const warn = (message: string) => warnings.push(message);
+  // Take the tokens out of the environment before anything else can read or pass it on.
+  const tokens = takeEnvTokens(env, warn);
+  const args = parseArgs(argv, cwd);
+  const workspace = createMcpWorkspace(args.roots);
 
   const fileLayers = await loadConfigLayers({ cliJson: args.configJson, env, root: workspace.roots()[0], warn });
   const layers: ConfigLayer[] = args.logLevel
@@ -50,16 +49,13 @@ export async function bootstrap(argv: readonly string[], env: NodeJS.ProcessEnv,
     : fileLayers;
   const config = createLayeredConfig(layers);
 
-  const trustedHosts = [
-    ...layers.filter((layer) => LAUNCHER_LAYERS.has(layer.name)).flatMap((layer) => sourceHosts(layer.settings.componentSources)),
-    ...(env.GCH_TOKEN_HOSTS ?? '').split(',').map((host) => host.trim()).filter(Boolean),
-  ];
-  const bound = bindTokens(tokens, trustedHosts, warn);
-  const network = createNetworkPolicy([
-    DEFAULT_GITLAB_HOST,
-    ...sourceHosts(config.get('componentSources', CONFIG_DEFAULTS.componentSources)),
-    ...bound.keys(),
-  ]);
+  // Only the launcher widens the allowlist: --config sources, the user's own settings (GCH_TRUSTED_HOSTS), token hosts,
+  // and gitlab.com. componentSources from GCH_CONFIG_JSON or workspace files still drive the catalog, but a host they
+  // name alone is never contacted: a cloned repository must not choose where the server sends requests.
+  const cliHosts = sourceHosts(layers.find((layer) => layer.name === '--config')?.settings.componentSources);
+  const bound = bindTokens(tokens, cliHosts, warn);
+  const userHosts = (env[TRUSTED_HOSTS_ENV] ?? '').split(',').map((host) => host.trim()).filter(Boolean);
+  const network = createNetworkPolicy([DEFAULT_GITLAB_HOST, ...cliHosts, ...userHosts, ...tokens.namedHosts, ...bound.keys()]);
 
   setRuntime({
     ...createDefaultRuntime(),

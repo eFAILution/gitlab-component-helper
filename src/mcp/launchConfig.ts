@@ -5,7 +5,7 @@
 
 import { CONFIG_DEFAULTS, type ConfigKey } from '../core/config/defaults';
 import { DEFAULT_GITLAB_HOST, normalizeHost } from './adapters/network';
-import { tokenEnvName } from './adapters/secrets';
+import { TOKENS_JSON_ENV } from './adapters/secrets';
 
 /** Settings never passed to the server: the deprecated plain-text token is not a setting the server accepts. */
 const WITHHELD_SETTINGS: ReadonlySet<ConfigKey> = new Set(['gitlabToken']);
@@ -21,30 +21,38 @@ export function effectiveSettings(get: (key: ConfigKey) => unknown): Record<stri
   );
 }
 
-export function buildServerEnv(settings: Record<string, unknown>, cacheDir: string): Record<string, string> {
+/**
+ * @param trustedHosts Hosts from the user's own (global) settings; the only configured hosts the server may contact
+ *   besides gitlab.com and hosts with a token.
+ */
+export function buildServerEnv(settings: Record<string, unknown>, cacheDir: string, trustedHosts: readonly string[]): Record<string, string> {
   return {
     // Runs the editor's Electron binary as plain Node.
     ELECTRON_RUN_AS_NODE: '1',
     GCH_CONFIG_JSON: JSON.stringify(settings),
     GCH_CACHE_DIR: cacheDir,
+    ...(trustedHosts.length > 0 ? { GCH_TRUSTED_HOSTS: trustedHosts.join(',') } : {}),
   };
 }
 
-/** Every instance with a token record or a configured source, normalized and de-duplicated. */
-export function tokenCandidateHosts(indexedHosts: readonly string[], componentSources: unknown): string[] {
-  const sourceHosts = Array.isArray(componentSources)
-    ? componentSources.map((source) => normalizeHost(typeof source?.gitlabInstance === 'string' ? source.gitlabInstance : DEFAULT_GITLAB_HOST))
-    : [];
-  return [...new Set([...indexedHosts.map(normalizeHost), ...sourceHosts])].filter(Boolean);
+/** The instances named by a componentSources value, normalized and de-duplicated. */
+export function userSourceHosts(componentSources: unknown): string[] {
+  if (!Array.isArray(componentSources)) return [];
+  const hosts = componentSources.map((source) =>
+    normalizeHost(typeof source?.gitlabInstance === 'string' ? source.gitlabInstance : DEFAULT_GITLAB_HOST));
+  return [...new Set(hosts)].filter(Boolean);
 }
 
 /**
- * The environment entries that hand tokens to the server: one `GCH_TOKEN_<HOST>` per host, and `GCH_TOKEN_HOSTS`
- * naming the hosts so the server can bind each token to exactly one.
+ * The hosts to look up stored tokens for: the token index, plus the user's global componentSources (which covers
+ * tokens saved before the index existed). Never workspace or folder settings, which a cloned repository controls.
  */
+export function tokenCandidateHosts(indexedHosts: readonly string[], userComponentSources: unknown): string[] {
+  return [...new Set([...indexedHosts.map(normalizeHost), ...userSourceHosts(userComponentSources)])].filter(Boolean);
+}
+
+/** Hand tokens over as one `GCH_TOKENS_JSON` map, so each token binds to exactly the host it was stored for. */
 export function buildTokenEnv(tokens: ReadonlyMap<string, string>): Record<string, string> {
   if (tokens.size === 0) return {};
-  const env: Record<string, string> = { GCH_TOKEN_HOSTS: [...tokens.keys()].join(',') };
-  for (const [host, token] of tokens) env[tokenEnvName(host)] = token;
-  return env;
+  return { [TOKENS_JSON_ENV]: JSON.stringify(Object.fromEntries(tokens)) };
 }
