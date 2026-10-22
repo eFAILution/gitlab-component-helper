@@ -561,6 +561,12 @@ export class ComponentCacheManager implements Disposable {
    * Load cache from extension global state
    */
   private async loadCacheFromDisk(): Promise<void> {
+    if (!this.getCacheInfo().isPersistent) {
+      this.logger.warn(
+        '[ComponentCache] Cache storage is not persistent; the cache will not survive a restart',
+        'ComponentCache'
+      );
+    }
     try {
       const cacheData = await getRuntime().storage.get<PersistentCacheData>(CACHE_KEY_COMPONENTS);
 
@@ -595,7 +601,7 @@ export class ComponentCacheManager implements Disposable {
           'ComponentCache'
         );
         this.logger.debug(
-          `[ComponentCache] Cache storage: VS Code Global State (persists across sessions)`,
+          `[ComponentCache] Cache storage: ${this.getCacheInfo().location}`,
           'ComponentCache'
         );
       } else {
@@ -604,7 +610,7 @@ export class ComponentCacheManager implements Disposable {
           'ComponentCache'
         );
         this.logger.debug(
-          '[ComponentCache] Cache storage: VS Code Global State (persists across sessions)',
+          `[ComponentCache] Cache storage: ${this.getCacheInfo().location}`,
           'ComponentCache'
         );
       }
@@ -639,7 +645,7 @@ export class ComponentCacheManager implements Disposable {
         'ComponentCache'
       );
       this.logger.debug(
-        `[ComponentCache] Cache storage: VS Code Global State (persists across sessions)`,
+        `[ComponentCache] Cache storage: ${this.getCacheInfo().location}`,
         'ComponentCache'
       );
     } catch (error) {

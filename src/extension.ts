@@ -84,7 +84,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (e.affectsConfiguration('gitlabComponentHelper.componentSources')) {
           logger.debug('[ComponentCache] Configuration changed, forcing refresh...', 'ComponentCache');
           cacheManager.forceRefresh().catch(error => {
-            logger.debug(`[ComponentCache] Error during config refresh: ${error}`, 'ComponentCache');
+            logger.warn(`[ComponentCache] Error during config refresh: ${error}`, 'ComponentCache');
           });
         }
       })
