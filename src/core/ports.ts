@@ -48,6 +48,14 @@ export interface AuthPromptPort {
   promptForToken(instance: string, hadToken: boolean): Promise<string | undefined>;
 }
 
+/** Thrown by a {@link NetworkPolicyPort} to refuse a request. Never retried. */
+export class RequestRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RequestRefusedError';
+  }
+}
+
 /** Which outbound requests a host allows. The extension sets none; the MCP server restricts hosts and addresses. */
 export interface NetworkPolicyPort {
   /** Throw to refuse a request. Called for every hop, redirects included. */
