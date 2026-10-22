@@ -104,6 +104,28 @@ export function parseYaml(text: string, silent = false): unknown {
 }
 
 /**
+ * Most YAML aliases (`*name`) a document may carry before validation skips it. This is a coarse cap on pathological
+ * input, not alias-bomb protection: a bomb needs only a few dozen aliases. The real protection is that nothing walks
+ * or serializes parsed input values. Large pipelines reuse anchors in every job (`<<: *defaults`), so the cap sits
+ * far above what real files use to avoid silently skipping them.
+ */
+export const MAX_YAML_ALIASES = 5000;
+
+// An alias token where YAML allows a node to start: line start, or after `:`, `-`, `,`, `[`, or `{`. A `*` inside a
+// scalar (`ls *.yml`) is not counted.
+const ALIAS_TOKEN = /(?:^[ \t]*|[:,[{-][ \t]*)\*[^\s,[\]{}]/gm;
+
+/**
+ * Count the alias tokens in a YAML text without parsing it.
+ *
+ * @param text - The raw YAML.
+ * @returns How many `*name` aliases the text appears to use.
+ */
+export function countYamlAliases(text: string): number {
+  return text.match(ALIAS_TOKEN)?.length ?? 0;
+}
+
+/**
  * Parse a YAML document *stream* into its constituent mapping documents.
  *
  * A GitLab CI component template is a multi-document file: the `spec:` header is one document, the `include:`/jobs

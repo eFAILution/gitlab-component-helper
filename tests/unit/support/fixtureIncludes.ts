@@ -5,6 +5,7 @@ import {
   type LocalIncludeOutcome,
   type WorkspacePort,
 } from '../../../src/core/localInclude';
+import { readBoundedTextFile } from '../../../src/adapters/node/readTextFile';
 import type { ComponentParameter, ParameterDefault } from '../../../src/types/git-component';
 
 /** `tests/fixtures`, the workspace root the extension-host suite opens; fixture `local:` paths are relative to it. */
@@ -14,13 +15,7 @@ export const FIXTURES_ROOT = resolve(__dirname, '../../fixtures');
 export const fixtureWorkspace: WorkspacePort<string> = {
   roots: () => [FIXTURES_ROOT],
   resolutionRoot: async () => FIXTURES_ROOT,
-  readText: async (absolutePath) => {
-    try {
-      return await readFile(absolutePath, 'utf8');
-    } catch {
-      return null;
-    }
-  },
+  readText: readBoundedTextFile,
 };
 
 export async function readFixture(name: string): Promise<{ file: string; text: string }> {

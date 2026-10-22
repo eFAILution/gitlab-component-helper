@@ -9,6 +9,7 @@
 export const LOCAL_COMPONENT_URL_PREFIX = 'local://';
 
 const GLOB_CHARS = /[*?[\]{}]/;
+const DRIVE_LETTER = /^[A-Za-z]:/;
 
 /**
  * Extract the path string from a single line that looks like an `include: - local:` entry.
@@ -20,7 +21,8 @@ const GLOB_CHARS = /[*?[\]{}]/;
  * @returns     The path string with surrounding quotes stripped, or `null` if the line isn't a `local:` include.
  */
 export function extractLocalIncludePath(line: string): string | null {
-  const match = line.match(/^\s*-?\s*local:\s*["']?([^"'\s]+)["']?\s*$/);
+  // `(?:-\s*)?` instead of `-?\s*`: two adjacent `\s*` backtrack quadratically on long whitespace-only lines.
+  const match = line.match(/^\s*(?:-\s*)?local:\s*["']?([^"'\s]+)["']?\s*$/);
   return match ? match[1] : null;
 }
 
@@ -52,18 +54,20 @@ export function buildLocalComponentUrl(relativePath: string): string {
 }
 
 /**
- * Detect `local:` paths the resolver refuses to handle: glob patterns (`*`, `?`, `[`, `]`, `{`, `}`) and traversal
- * segments (`..`).
+ * Detect `local:` paths the resolver refuses to handle: glob patterns (`*`, `?`, `[`, `]`, `{`, `}`), traversal
+ * segments (`..`), drive letters, UNC paths, and NUL bytes. `\` counts as a separator on every platform, so
+ * `..\x` is caught even where the extension host runs on Windows.
  *
  * @param localPath  The raw path string from a parsed `include: - local:` entry.
- * @returns          `true` if the path contains glob metacharacters or a `..` segment; `false` otherwise.
+ * @returns          `true` if the resolver must not touch the path; `false` otherwise.
  */
 export function isUnsupportedLocalPath(localPath: string): boolean {
-  if (GLOB_CHARS.test(localPath)) {
+  if (localPath.includes('\0')) {
     return true;
   }
-  if (localPath.split('/').some((segment) => segment === '..')) {
+  const normalised = localPath.replace(/\\/g, '/');
+  if (GLOB_CHARS.test(normalised) || DRIVE_LETTER.test(normalised) || normalised.startsWith('//')) {
     return true;
   }
-  return false;
+  return normalised.split('/').some((segment) => segment === '..');
 }

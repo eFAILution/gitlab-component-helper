@@ -6,7 +6,7 @@
 
 import * as vscode from 'vscode';
 import { Logger } from '../../utils/logger';
-import type { WorkspacePort } from '../../core/localInclude';
+import { MAX_LOCAL_INCLUDE_BYTES, type WorkspacePort } from '../../core/localInclude';
 
 const logger = Logger.getInstance();
 
@@ -81,6 +81,11 @@ async function readIncludeTarget(uri: vscode.Uri): Promise<string | null> {
     return openDoc.getText();
   }
   try {
+    const stat = await vscode.workspace.fs.stat(uri);
+    if ((stat.type & vscode.FileType.File) === 0 || stat.size > MAX_LOCAL_INCLUDE_BYTES) {
+      logger.debug(`[LocalComponentResolver] Not reading ${uri.fsPath}: not a file, or over ${MAX_LOCAL_INCLUDE_BYTES} bytes`, 'LocalComponentResolver');
+      return null;
+    }
     const bytes = await vscode.workspace.fs.readFile(uri);
     return Buffer.from(bytes).toString('utf8');
   } catch (err) {
