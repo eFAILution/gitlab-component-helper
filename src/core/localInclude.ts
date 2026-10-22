@@ -1,6 +1,6 @@
 /**
- * Turn the text of an `include: - local:` target into the synthetic component the providers and validator use.
- * Reading the file is the host's job; this module only parses.
+ * Resolve an `include: - local:` target and turn its text into the synthetic component the providers and validator
+ * use. The host supplies file access through a {@link WorkspacePort}.
  */
 
 import * as path from 'path';
@@ -8,10 +8,23 @@ import * as yaml from 'js-yaml';
 import { Logger } from '../utils/logger';
 import { isYamlNode, GITLAB_CI_SCHEMA } from '../utils/yamlParser';
 import { isParameterDefault } from '../parsers/parameterDefaultShape';
-import { buildLocalComponentUrl } from '../providers/localIncludeParser';
+import { buildLocalComponentUrl, isUnsupportedLocalPath } from '../providers/localIncludeParser';
 import type { ComponentParameter } from '../types/git-component';
 
 const logger = Logger.getInstance();
+
+/**
+ * File access for local includes. `F` is however the host names the including document. Paths are absolute
+ * filesystem paths.
+ */
+export interface WorkspacePort<F = string> {
+  /** The workspace roots. */
+  roots(): string[];
+  /** The directory `local:` paths in `forFile` resolve against (its repository root, as GitLab does), or `null`. */
+  resolutionRoot(forFile: F): Promise<string | null>;
+  /** The file's text, or `null` when it's missing or unreadable. */
+  readText(absPath: string): Promise<string | null>;
+}
 
 /** The component a local include with a `spec:` block resolves to. */
 export interface LocalIncludeComponent {
@@ -135,4 +148,51 @@ export function parseLocalIncludeText(
       sourcePath: localPath,
     },
   };
+}
+
+/**
+ * Resolve a `local:` path against the resolution root of the document that includes it. Leading slashes are
+ * tolerated (GitLab itself accepts both `/templates/x.yml` and `templates/x.yml`) and stripped before joining.
+ *
+ * @returns The absolute path, or `null` if no resolution root is available.
+ */
+export async function resolveLocalIncludePath<F>(
+  localPath: string,
+  forFile: F,
+  workspace: WorkspacePort<F>
+): Promise<string | null> {
+  const root = await workspace.resolutionRoot(forFile);
+  if (!root) {
+    return null;
+  }
+  const relative = localPath.replace(/^\/+/, '');
+  return path.join(root, ...relative.split('/'));
+}
+
+/**
+ * Resolve a local include path into a {@link LocalIncludeOutcome}: read the target through the workspace port, parse
+ * every YAML document in it, pick the first one declaring `spec`, and map `spec.inputs` onto `ComponentParameter[]`.
+ *
+ * @returns The resolution outcome — a `component` on success, or one of `skipped`/`unreadable`/`no-spec`.
+ */
+export async function resolveLocalIncludeOutcome<F>(
+  localPath: string,
+  forFile: F,
+  workspace: WorkspacePort<F>
+): Promise<LocalIncludeOutcome> {
+  if (isUnsupportedLocalPath(localPath)) {
+    return { kind: 'skipped' };
+  }
+
+  const absolutePath = await resolveLocalIncludePath(localPath, forFile, workspace);
+  if (!absolutePath) {
+    logger.debug(`[LocalComponentResolver] No resolution root available for: ${localPath}`, 'LocalComponentResolver');
+    return { kind: 'skipped' };
+  }
+
+  const text = await workspace.readText(absolutePath);
+  if (text === null) {
+    return { kind: 'unreadable' };
+  }
+  return parseLocalIncludeText(localPath, text, absolutePath);
 }
