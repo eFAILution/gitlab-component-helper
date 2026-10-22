@@ -38,7 +38,7 @@ suite('MCP server bundle', function () {
 
     assert.equal((init.result as Record<string, unknown>).protocolVersion, '2025-06-18');
     const names = ((list.result as { tools: Array<{ name: string }> }).tools).map((tool) => tool.name);
-    assert.ok(names.includes('get_component_spec'));
+    assert.deepStrictEqual(names, ['validate_ci_file', 'get_component_spec', 'check_component_versions', 'list_component_usages', 'list_component_versions']);
     assert.deepStrictEqual(ping.result, {});
     assert.equal(await server.stop(), 0);
     assert.equal(stdoutNoise, '');
@@ -52,6 +52,25 @@ suite('MCP server bundle', function () {
 
     assert.equal(result.isError, true);
     assert.match(result.content[0].text, /doesn't contact evil\.example/);
+    assert.equal(await server.stop(), 0);
+  });
+
+  test('validate_ci_file runs end to end over the fixtures', async () => {
+    const server = startServer(bundle, ['--root', join(REPO_ROOT, 'tests', 'fixtures'), '--cache-dir', join(dir, 'cache')]);
+    const init = await server.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
+    const response = await server.request('tools/call', {
+      name: 'validate_ci_file',
+      arguments: { path: 'local-include/.gitlab-ci.yml', checks: ['inputs', 'local-includes'] },
+    });
+    const result = response.result as { structuredContent: { findings: Array<{ code: string }>; summary: { filesChecked: number } } };
+
+    assert.match(String((init.result as Record<string, unknown>).instructions), /validate_ci_file first/);
+    assert.deepStrictEqual(result.structuredContent.findings.map((finding) => finding.code), [
+      'unknown-input',
+      'missing-required-input',
+      'local-include-not-found',
+    ]);
+    assert.equal(result.structuredContent.summary.filesChecked, 1);
     assert.equal(await server.stop(), 0);
   });
 
