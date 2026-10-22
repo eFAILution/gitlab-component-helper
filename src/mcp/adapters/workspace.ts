@@ -5,7 +5,7 @@
  */
 
 import { realpathSync } from 'node:fs';
-import { realpath } from 'node:fs/promises';
+import { lstat, readlink, realpath } from 'node:fs/promises';
 import * as path from 'node:path';
 import { isInsideRoot, type WorkspacePort } from '../../core/localInclude';
 import { readBoundedTextFile } from '../../adapters/node/readTextFile';
@@ -36,6 +36,49 @@ function containedRoot(roots: readonly string[], candidate: string): string | un
   return roots.find((root) => candidate === root || isInsideRoot(root, candidate));
 }
 
+/** Most symlinks followed while resolving one path, like the kernel's ELOOP limit. */
+const MAX_LINK_HOPS = 40;
+
+function isAbsoluteLinkTarget(target: string): boolean {
+  return path.isAbsolute(target) || path.win32.isAbsolute(target) || /^[\\/]{2}/.test(target);
+}
+
+/**
+ * Follow the symlinks in `candidate` one component at a time, before anything calls `realpath`. A link may only be
+ * relative and must land lexically inside a root; an absolute target (which could be `/net/...` autofs or a UNC
+ * share, so realpath would reach the network) or one that leaves the roots is refused.
+ *
+ * @returns The path with every link replaced by its target, or `null` when a link is refused or a component is
+ *   missing.
+ */
+async function resolveLinksInsideRoots(roots: readonly string[], candidate: string): Promise<string | null> {
+  let current = path.resolve(candidate);
+  for (let hops = 0; hops <= MAX_LINK_HOPS; hops++) {
+    const root = containedRoot(roots, current);
+    if (!root) return null;
+    const parts = path.relative(root, current).split(path.sep).filter(Boolean);
+    let prefix = root;
+    let followed = false;
+    for (let index = 0; index < parts.length; index++) {
+      prefix = path.join(prefix, parts[index]);
+      let info;
+      try {
+        info = await lstat(prefix);
+      } catch {
+        return null;
+      }
+      if (!info.isSymbolicLink()) continue;
+      const target = await readlink(prefix);
+      if (isAbsoluteLinkTarget(target)) return null;
+      current = path.resolve(path.dirname(prefix), target, ...parts.slice(index + 1));
+      followed = true;
+      break;
+    }
+    if (!followed) return current;
+  }
+  return null;
+}
+
 /**
  * @param rootPaths Roots from `--root`; each must exist. They are realpath'd once.
  * @throws When a root doesn't exist.
@@ -48,9 +91,11 @@ export function createMcpWorkspace(rootPaths: readonly string[]): McpWorkspace {
   const realInsideRoots = async (candidate: string): Promise<string | null> => {
     if (!isPlainPath(candidate) || !path.isAbsolute(candidate)) return null;
     if (!containedRoot(lexicalRoots, path.resolve(candidate))) return null;
+    const linkFree = await resolveLinksInsideRoots(lexicalRoots, candidate);
+    if (!linkFree) return null;
     let real: string;
     try {
-      real = await realpath(candidate);
+      real = await realpath(linkFree);
     } catch {
       return null;
     }

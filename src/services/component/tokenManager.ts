@@ -1,5 +1,6 @@
 import { Emitter, type Disposable } from '../../core/emitter';
 import { getRuntime } from '../../core/runtime';
+import { normalizeToken } from '../../core/tokens';
 import { Logger } from '../../utils/logger';
 
 /**
@@ -51,9 +52,10 @@ export class TokenManager implements Disposable {
     if (!secrets.store) {
       throw new Error('SecretStorage not available');
     }
+    const cleanToken = normalizeToken(token);
     const key = tokenKey(gitlabInstance);
     this.logger.debug(`Storing token with key: ${key}`);
-    await secrets.store(key, token);
+    await secrets.store(key, cleanToken);
     await this.recordTokenInstance(gitlabInstance);
     this.logger.debug(`Token stored successfully for ${gitlabInstance}`);
     this.onDidChangeTokenEmitter.fire(gitlabInstance);

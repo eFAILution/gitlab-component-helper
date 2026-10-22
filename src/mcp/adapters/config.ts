@@ -6,7 +6,7 @@
 
 import * as path from 'node:path';
 import { parse as parseJsonc, type ParseError } from 'jsonc-parser';
-import { CONFIG_DEFAULTS, CONFIG_SECTION, type ConfigKey } from '../../core/config/defaults';
+import { CONFIG_DEFAULTS, CONFIG_SECTION, WORKSPACE_SETTABLE_KEYS, type ConfigKey } from '../../core/config/defaults';
 import type { ConfigPort } from '../../core/ports';
 import { readBoundedTextFile } from '../../adapters/node/readTextFile';
 import type { WorkspacePort } from '../../core/localInclude';
@@ -16,20 +16,11 @@ const VSCODE_SETTINGS_FILE = path.join('.vscode', 'settings.json');
 const REFUSED_KEYS = new Set(['gitlabToken']);
 
 /**
- * The only settings a file inside the workspace may set: catalog and checking behavior. Network, cache, and logging
- * settings come from the launcher, so a cloned repository can't slow the server down or turn up its logging.
+ * The workspace files read here may only set {@link WORKSPACE_SETTABLE_KEYS}. Network, cache, and logging settings come
+ * from the launcher: `--config`, or `GCH_CONFIG_JSON`, which the extension builds from user-scope values for exactly
+ * those keys. Either way a cloned repository can't slow the server down or turn up its logging.
  */
-const REPO_ALLOWED_KEYS: ReadonlySet<string> = new Set<ConfigKey>([
-  'componentSources',
-  'discovery.templateRoots',
-  'discovery.maxDepth',
-  'discovery.filePatterns',
-  'discovery.templateFileNames',
-  'additionalFileGlobs',
-  'versionCheck.enabled',
-  'versionCheck.severity',
-  'versionPreferences',
-]);
+const REPO_ALLOWED_KEYS: ReadonlySet<string> = WORKSPACE_SETTABLE_KEYS;
 
 export type Settings = Partial<Record<ConfigKey, unknown>>;
 
