@@ -6,7 +6,7 @@ import { Writable } from 'node:stream';
 import { Logger } from '../utils/logger';
 import { McpServer } from './server';
 import { createStreamTransport } from './transport/stdio';
-import { createGetComponentSpecTool } from './tools/getComponentSpec';
+import { createTools, SERVER_INSTRUCTIONS } from './tools';
 import { createComponentServices } from './services';
 import { bootstrap } from './bootstrap';
 import { ArgsError, USAGE } from './adapters/args';
@@ -36,7 +36,8 @@ async function main(): Promise<void> {
   const context = await bootstrap(process.argv.slice(2), process.env, process.cwd());
   const server = new McpServer({
     info: { name: SERVER_NAME, title: SERVER_TITLE, version: typeof GCH_VERSION === 'string' ? GCH_VERSION : '0.0.0-dev' },
-    tools: [createGetComponentSpecTool(createComponentServices(context.isHostAllowed))],
+    instructions: SERVER_INSTRUCTIONS,
+    tools: createTools({ ...context, services: createComponentServices(context.isHostAllowed) }),
   });
   await server.connect(createStreamTransport(process.stdin, protocolOut));
   // Let the last responses flush before exiting; pending timers would otherwise keep the process alive.
