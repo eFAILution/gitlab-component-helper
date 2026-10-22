@@ -1,3 +1,6 @@
+# Closed to new keys since #366. Existing entries here can still be edited.
+# Record a new decision as .ai/decisions/ADR-<issue>.yaml instead (see AGENTS.md,
+# "Issues, branches, and records"). `npm run decisions:list` shows both stores.
 decisions:
   USE_ESBUILD:
     date: '2024'
