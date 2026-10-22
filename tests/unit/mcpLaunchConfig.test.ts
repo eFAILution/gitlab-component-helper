@@ -42,7 +42,7 @@ suite('MCP launch config', () => {
   });
 
   test('tokens go over as one exact map in a hand-off file that the server binds host by host', async () => {
-    const handoffDir = join(mkdtempSync(join(tmpdir(), 'gch-launch-')), 'handoff');
+    const handoffDir = join(mkdtempSync(join(tmpdir(), 'gch-launch-')), 'mcp-handoff');
     const env = await buildTokenEnv(new Map([['gitlab.example.com', 'one'], ['gitlab.com', 'two']]), handoffDir);
     assert.deepStrictEqual(Object.keys(env), ['GCH_TOKENS_HANDOFF']);
 

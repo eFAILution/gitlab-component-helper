@@ -39,7 +39,9 @@ When an in-editor AI client starts the server, it gets:
 When VS Code starts the server, the extension writes the tokens to a one-time file in its private storage folder
 (readable only by you) and passes the server just the file's path. The server reads the file and deletes it as it
 starts, and the extension deletes it after 30 seconds if the server never did. Tokens never sit in the server's
-environment, settings, or logs, so a terminal command can't read them from the running process. The server is off by default:
+environment, settings, or logs, so a terminal command can't read them from the running process. (If you start VS
+Code from a shell that exports `GITLAB_TOKEN` or `GCH_TOKEN_*`, those pass through to the server like any child
+process, so don't.) The server is off by default:
 turn on `gitlabComponentHelper.mcp.enabled` in your user settings to offer it. It is an application setting, so a
 workspace can't turn it on or off. After you add or change a token, VS Code restarts the server so it picks the change
 up.
