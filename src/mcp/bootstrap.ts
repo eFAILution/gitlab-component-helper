@@ -53,7 +53,8 @@ export async function bootstrap(argv: readonly string[], env: NodeJS.ProcessEnv,
   // and gitlab.com. componentSources from GCH_CONFIG_JSON or workspace files still drive the catalog, but a host they
   // name alone is never contacted: a cloned repository must not choose where the server sends requests.
   const cliHosts = sourceHosts(layers.find((layer) => layer.name === '--config')?.settings.componentSources);
-  const bound = bindTokens(tokens, cliHosts, warn);
+  // gitlab.com is ours, not the workspace's, so GCH_TOKEN_GITLAB_COM works without naming it.
+  const bound = bindTokens(tokens, [DEFAULT_GITLAB_HOST, ...cliHosts], warn);
   const userHosts = (env[TRUSTED_HOSTS_ENV] ?? '').split(',').map((host) => host.trim()).filter(Boolean);
   const network = createNetworkPolicy([DEFAULT_GITLAB_HOST, ...cliHosts, ...userHosts, ...tokens.namedHosts, ...bound.keys()]);
 
