@@ -2,8 +2,9 @@
  * Tokens for the MCP server, read once from the environment and deleted from it, so child processes never inherit
  * them:
  *
- * - `GCH_TOKENS_JSON`: `{"<host[:port]>": "<token>"}`, how the extension hands tokens over. Each token is bound to
- *   exactly its key.
+ * - `GCH_TOKENS_HANDOFF`: path to a one-time file holding the same map as `GCH_TOKENS_JSON`. This is how the extension
+ *   hands tokens over, so no token sits in the process's starting environment. The file is read once and deleted.
+ * - `GCH_TOKENS_JSON`: `{"<host[:port]>": "<token>"}`. Each token is bound to exactly its key.
  * - `GCH_TOKEN_<HOST>`: for terminal use. The host is upper-cased with `.`, `-`, and `:` turned into `_`, so the name
  *   is lossy (`gitlab.example.com` and `gitlab-example.com` share one). Such a token is only bound to a host named in
  *   `GCH_TOKEN_HOSTS` or in `--config` componentSources, never to one from a workspace file, and to neither of two
@@ -13,6 +14,7 @@
 
 import type { SecretsPort } from '../../core/ports';
 import { InvalidTokenError, normalizeToken } from '../../core/tokens';
+import { HANDOFF_ENV, readTokenHandoff } from '../tokenHandoff';
 import { DEFAULT_GITLAB_HOST, normalizeHost } from './network';
 
 export const TOKEN_ENV_PREFIX = 'GCH_TOKEN_';
@@ -37,23 +39,23 @@ export interface EnvTokens {
   fallbackToken?: string;
 }
 
-function parseTokensJson(text: string | undefined, warn: (message: string) => void): Map<string, string> {
+function parseTokensJson(text: string | undefined, source: string, warn: (message: string) => void): Map<string, string> {
   const exact = new Map<string, string>();
   if (!text) return exact;
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch {
-    warn(`Ignoring ${TOKENS_JSON_ENV}: not valid JSON`);
+    warn(`Ignoring ${source}: not valid JSON`);
     return exact;
   }
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    warn(`Ignoring ${TOKENS_JSON_ENV}: expected an object of host to token`);
+    warn(`Ignoring ${source}: expected an object of host to token`);
     return exact;
   }
   for (const [host, token] of Object.entries(raw)) {
     if (typeof token !== 'string' || host.trim() === '') continue;
-    const clean = cleanToken(token, `${TOKENS_JSON_ENV} entry for ${normalizeHost(host)}`, warn);
+    const clean = cleanToken(token, `${source} entry for ${normalizeHost(host)}`, warn);
     if (clean) exact.set(normalizeHost(host), clean);
   }
   return exact;
@@ -75,8 +77,11 @@ function cleanToken(raw: string, source: string, warn: (message: string) => void
  * Read every token variable from `env`, then delete them all (and `GCH_TOKEN_HOSTS`) from it.
  */
 export function takeEnvTokens(env: NodeJS.ProcessEnv, warn: (message: string) => void = () => undefined): EnvTokens {
-  const exact = parseTokensJson(env[TOKENS_JSON_ENV], warn);
+  const handoffPath = env[HANDOFF_ENV];
+  const handoff = handoffPath ? parseTokensJson(readTokenHandoff(handoffPath, warn), 'the token hand-off file', warn) : new Map<string, string>();
+  const exact = new Map([...parseTokensJson(env[TOKENS_JSON_ENV], TOKENS_JSON_ENV, warn), ...handoff]);
   const namedHosts = (env[TOKEN_HOSTS_ENV] ?? '').split(',').map((host) => host.trim()).filter(Boolean).map(normalizeHost);
+  delete env[HANDOFF_ENV];
   delete env[TOKENS_JSON_ENV];
   delete env[TOKEN_HOSTS_ENV];
 

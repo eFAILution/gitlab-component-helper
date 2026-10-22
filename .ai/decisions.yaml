@@ -520,20 +520,25 @@ decisions:
     - esbuild.mcp.js
     - docs/mcp.md
     title: MCP Distributed As A Release Asset
-  MCP_TOKENS_VIA_ENV_FROM_EXTENSION:
+  MCP_TOKENS_VIA_HANDOFF_FILE:
     date: '2026-10'
     status: accepted
     context: The server runs as a child process that VS Code starts from an McpStdioServerDefinition, which only takes
-      command, args, and env
-    decision: The extension passes tokens as one GCH_TOKENS_JSON map of exact host to token, in
-      resolveMcpServerDefinition, when VS Code starts the server
+      command, args, and env. A process's starting environment stays readable to the same OS user (ps eww,
+      /proc/<pid>/environ) even after the process deletes a variable, so an AI agent running terminal commands could
+      read tokens passed in env
+    decision: In resolveMcpServerDefinition, the extension writes one exact host-to-token map to a one-time file in
+      its globalStorage (0600 in a 0700 dir, random name) and passes only its path as GCH_TOKENS_HANDOFF. The server
+      reads it once at startup and deletes it
     rationale:
-    - The definition API has no stdin or pipe for secrets
-    - resolveMcpServerDefinition runs only when the server starts, so tokens never sit in a provided definition
+    - Nothing secret sits in the server's environment or command line
+    - The definition API has no stdin or pipe for secrets (stdin is the MCP channel)
     - An exact host key avoids the lossy GCH_TOKEN_<HOST> naming, where gitlab-example.com and gitlab.example.com
       share a variable (a review found a repo could claim a token that way)
     mitigations:
-    - The server reads the token variables once and deletes them from process.env
+    - The server refuses a hand-off that is a symlink, over 64 KB, readable by group/other, or owned by another user
+    - The extension deletes its own unread hand-off files after 30s and on dispose, and purges stale ones (older
+      than 30s, since windows share the directory) at activation
     - Child processes (git) get an env stripped of GCH_* and GITLAB_TOKEN
     - The extension picks token hosts from the token index and the user's global componentSources only, never
       workspace or folder settings
@@ -542,15 +547,16 @@ decisions:
     - Only launcher-trusted hosts (--config, GCH_TRUSTED_HOSTS from user settings, token hosts, gitlab.com) are
       contacted; repo files can't widen the allowlist or set network settings
     - gitlabToken is refused as a setting; tokens are never accepted as tool arguments or logged
-    - gitlabComponentHelper.mcp.enabled (application scope) turns the server off
+    - gitlabComponentHelper.mcp.enabled (application scope, default off) gates the server
     consequences:
       negative:
-      - The same OS user can read a process's environment while it runs
+      - The token file exists on disk for the milliseconds between writing and the server reading it
+      - Terminal users passing GCH_TOKEN_* or GCH_TOKENS_JSON still have the usual env exposure
     references:
+    - src/mcp/tokenHandoff.ts
     - src/adapters/vscode/mcpDefinitionProvider.ts
     - src/mcp/adapters/secrets.ts
-    - src/mcp/bootstrap.ts
-    title: MCP Tokens Via Env From The Extension
+    title: MCP Tokens Via A One-Time Hand-Off File
 future_decisions:
 - question: Should we support other CI/CD platforms (GitHub Actions, CircleCI)?
   status: under_consideration
