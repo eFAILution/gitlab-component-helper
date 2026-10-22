@@ -32,9 +32,23 @@ export interface LogSink {
   show?(preserveFocus?: boolean): void;
 }
 
+/**
+ * Asks the user for a GitLab token after a request was refused. Hosts without a UI return `undefined`, which the core
+ * treats as "no token, use public access".
+ */
+export interface AuthPromptPort {
+  /**
+   * @param instance The GitLab host the token is for (e.g. `gitlab.com`).
+   * @param hadToken Whether a stored token was just rejected (replace it) or there was none (first-time auth).
+   * @returns The token the user entered, already stored, or `undefined` if they gave none.
+   */
+  promptForToken(instance: string, hadToken: boolean): Promise<string | undefined>;
+}
+
 export interface RuntimePorts {
   config: ConfigPort;
   secrets: SecretsPort;
   storage: StoragePort;
   log: LogSink;
+  authPrompt: AuthPromptPort;
 }
