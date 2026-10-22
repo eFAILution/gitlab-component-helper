@@ -224,6 +224,12 @@
         }
       }
     },
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "gitlabComponentHelper.mcp",
+        "label": "GitLab Component Helper"
+      }
+    ],
     "commands": [
       {
         "command": "gitlab-component-helper.browseComponents",
