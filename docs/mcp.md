@@ -30,7 +30,8 @@ The extension registers the server with VS Code, so there is nothing to install 
 When an in-editor AI client starts the server, it gets:
 
 - your workspace folders as its roots (with no folder open, no server is offered)
-- your `gitlabComponentHelper.*` settings
+- your `gitlabComponentHelper.*` settings. Network, cache, and logging settings come from your user settings only;
+  a workspace's `.vscode/settings.json` can only change catalog and checking settings
 - the tokens you saved with **GitLab CI: Add Component Project/Group**, for the instances in your token list and in your
   **user** `componentSources` setting (never instances named only by workspace or folder settings)
 
@@ -105,8 +106,11 @@ The two files inside the repository (4 and 5) may only set catalog and checking 
   gets one, and if two named hosts share a variable name, neither does.
 - `GITLAB_TOKEN`: used for the host in `GITLAB_HOST`, which defaults to gitlab.com.
 
-The server reads all token variables once and removes them from its environment, so the `git` processes it starts
-never see them.
+For terminal setups, prefer `GCH_TOKENS_JSON`: it binds each token to exactly one host, with nothing left to guess.
+
+Tokens are trimmed, so a trailing newline from pasting is fine. A token with control characters in it is ignored with
+a warning that names the variable, not the token. The server reads all token variables once and removes them from its
+environment, so the `git` processes it starts never see them.
 
 Anyone who can read your process environment as the same OS user can read tokens passed this way. That is the same
 exposure as any CLI tool that takes a token from the environment.
@@ -141,7 +145,9 @@ as IPv6 that carries an IPv4 address. Plain `http://` instances aren't supported
 ### Which files the server reads
 
 Only regular files of up to 1 MB under the roots. A path must be inside a root as written and after resolving
-symlinks. Paths with `..`, UNC and `\\?\` paths, symlinks that lead outside a root, and missing files all get the same
+symlinks. Symlinks are checked one at a time before anything resolves them: a link must be relative and stay inside
+the roots, so a link to an absolute path (for example a network mount) is refused. Paths with `..`, UNC and `\\?\`
+paths, symlinks that lead outside a root, and missing files all get the same
 "not found under the workspace roots" answer. FIFOs and devices are never opened. The repository's config files are
 read through the same checks.
 
