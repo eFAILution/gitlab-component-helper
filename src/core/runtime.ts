@@ -52,9 +52,18 @@ export function createDefaultRuntime(): RuntimePorts {
 }
 
 let current: RuntimePorts = createDefaultRuntime();
+let locked = false;
 
 export function setRuntime(ports: RuntimePorts): void {
+  if (locked) {
+    throw new Error('The runtime is locked; ports can only be set once at startup');
+  }
   current = ports;
+}
+
+/** Refuse any later {@link setRuntime}, so nothing loaded after startup can swap the ports (the MCP server). */
+export function lockRuntime(): void {
+  locked = true;
 }
 
 export function getRuntime(): RuntimePorts {

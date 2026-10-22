@@ -28,6 +28,8 @@ function mcpConfig({ production = false, outfile = 'out/mcp/server.js' } = {}) {
     format: 'cjs',
     platform: 'node',
     target: 'node22',
+    // Prefer ESM builds: jsonc-parser's UMD build requires its own files at runtime, which a bundle can't satisfy.
+    mainFields: ['module', 'main'],
     outfile,
     minify: production,
     sourcemap: !production,

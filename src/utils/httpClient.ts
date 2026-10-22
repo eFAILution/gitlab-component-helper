@@ -249,6 +249,8 @@ export class HttpClient {
         const urlObj = new URL(url);
         const isHttps = urlObj.protocol === 'https:';
         const client = isHttps ? https : http;
+        const { network } = getRuntime();
+        network?.checkRequest(urlObj);
 
         const requestOptions = {
           hostname: urlObj.hostname,
@@ -256,7 +258,8 @@ export class HttpClient {
           path: urlObj.pathname + urlObj.search,
           method: 'GET',
           headers: options.headers,
-          timeout: options.timeout
+          timeout: options.timeout,
+          ...(network?.lookup ? { lookup: network.lookup } : {})
         };
 
         const req = client.request(requestOptions, (res) => {
