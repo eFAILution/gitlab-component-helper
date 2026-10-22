@@ -25,6 +25,7 @@ export interface ConfigValues {
   'versionCheck.enabled': boolean;
   'versionCheck.severity': 'warning' | 'information';
   versionPreferences: Record<string, string>;
+  'mcp.enabled': boolean;
 }
 
 /** A setting name without the `gitlabComponentHelper.` prefix. */
@@ -51,4 +52,5 @@ export const CONFIG_DEFAULTS: Readonly<ConfigValues> = Object.freeze({
   'versionCheck.enabled': true,
   'versionCheck.severity': 'warning',
   versionPreferences: {},
+  'mcp.enabled': true,
 });

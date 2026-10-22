@@ -1,4 +1,5 @@
 import { getComponentService } from '../component';
+import type { VersionFetchOptions } from '../component/versionManager';
 import { Logger } from '../../utils/logger';
 import { getPerformanceMonitor } from '../../utils/performanceMonitor';
 import { CachedComponent, PersistentCacheData, VersionLookupComponent } from '../../types/cache';
@@ -414,9 +415,9 @@ export class ComponentCacheManager implements Disposable {
    * Takes the narrow {@link VersionLookupComponent} rather than a full cache entry: the lookup is driven entirely by
    * the project coordinates, so callers holding a partial component (the details panel) can use it too.
    */
-  public async fetchComponentVersions(component: VersionLookupComponent): Promise<string[]> {
+  public async fetchComponentVersions(component: VersionLookupComponent, options: VersionFetchOptions = {}): Promise<string[]> {
     try {
-      const sortedVersions = await this.versionCache.fetchComponentVersions(component);
+      const sortedVersions = await this.versionCache.fetchComponentVersions(component, options);
 
       // Update the component in cache with available versions
       const cachedComponent = this.components.find(
@@ -438,6 +439,7 @@ export class ComponentCacheManager implements Disposable {
         `[ComponentCache] Error fetching versions for ${component.name}: ${error}`,
         'ComponentCache'
       );
+      if (options.throwOnError) throw error;
       return [component.version]; // Return current version as fallback
     }
   }

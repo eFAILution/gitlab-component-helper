@@ -28,10 +28,30 @@ function claimStdout(): Writable {
     },
   });
   process.stdout.write = process.stderr.write.bind(process.stderr) as typeof process.stdout.write;
+  // The client closing its end (EPIPE) means it's gone: there is nobody left to answer, so stop cleanly.
+  const onStdoutError = (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EPIPE' || error.code === 'ERR_STREAM_DESTROYED') process.exit(0);
+    Logger.getInstance().error(`[MCP] stdout failed: ${error}`, 'MCP');
+    process.exit(1);
+  };
+  process.stdout.on('error', onStdoutError);
+  protocolOut.on('error', onStdoutError);
   return protocolOut;
 }
 
+/** Log what would otherwise crash the server. A single failed request shouldn't take down the session. */
+function installCrashHandlers(): void {
+  process.on('unhandledRejection', (reason) => {
+    Logger.getInstance().error(`[MCP] Unhandled rejection: ${reason}`, 'MCP');
+  });
+  process.on('uncaughtException', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EPIPE') process.exit(0);
+    Logger.getInstance().error(`[MCP] Uncaught exception: ${error.stack ?? error}`, 'MCP');
+  });
+}
+
 async function main(): Promise<void> {
+  installCrashHandlers();
   const protocolOut = claimStdout();
   const context = await bootstrap(process.argv.slice(2), process.env, process.cwd());
   const server = new McpServer({

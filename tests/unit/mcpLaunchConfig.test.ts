@@ -59,4 +59,10 @@ suite('MCP launch config', () => {
     const manifest = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf8'));
     assert.deepStrictEqual(manifest.contributes.mcpServerDefinitionProviders, [{ id: 'gitlabComponentHelper.mcp', label: 'GitLab Component Helper' }]);
   });
+
+  test('gitlabComponentHelper.mcp.enabled is an application-scoped boolean defaulting to true', () => {
+    const manifest = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf8'));
+    const setting = manifest.contributes.configuration.properties['gitlabComponentHelper.mcp.enabled'];
+    assert.deepStrictEqual([setting.type, setting.default, setting.scope], ['boolean', true, 'application']);
+  });
 });

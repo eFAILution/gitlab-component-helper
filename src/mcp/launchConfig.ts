@@ -10,6 +10,26 @@ import { TOKENS_JSON_ENV } from './adapters/secrets';
 /** Settings never passed to the server: the deprecated plain-text token is not a setting the server accepts. */
 const WITHHELD_SETTINGS: ReadonlySet<ConfigKey> = new Set(['gitlabToken']);
 
+export interface ServerLaunchPlan {
+  cwd: string;
+  roots: string[];
+}
+
+/**
+ * Whether to offer the server, and where to run it.
+ *
+ * @returns `null` when the server is disabled or there is no workspace folder to give it as a root.
+ */
+export function serverLaunchPlan(workspaceFolders: readonly string[], enabled: boolean): ServerLaunchPlan | null {
+  if (!enabled || workspaceFolders.length === 0) return null;
+  return { cwd: workspaceFolders[0], roots: [...workspaceFolders] };
+}
+
+/** The definition version. VS Code restarts the server when it changes, so token changes bump `revision`. */
+export function definitionVersion(packageVersion: string, revision: number): string {
+  return `${packageVersion}+${revision}`;
+}
+
 export function buildServerArgs(serverScript: string, workspaceFolders: readonly string[]): string[] {
   return [serverScript, ...workspaceFolders.flatMap((folder) => ['--root', folder])];
 }
