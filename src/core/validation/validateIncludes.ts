@@ -41,7 +41,7 @@ export interface ValidateIncludesInput {
   resolveReference: ReferenceResolver;
   components: ComponentLookupPort;
   /** Resolves a `local:` path against the document's repository. */
-  resolveLocalInclude(localPath: string): Promise<LocalIncludeOutcome>;
+  resolveLocalInclude(localPath: string): Promise<LocalIncludeOutcome<{ name: string; parameters: ComponentParameter[] }>>;
 }
 
 /** Shared state for one validation pass. */
