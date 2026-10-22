@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import { Logger } from './logger';
 import { getRequestDeduplicator, RequestDeduplicator } from './requestDeduplicator';
 import { getPerformanceMonitor } from './performanceMonitor';
-import { NetworkError, getErrorHandler, extractStatusCode } from '../errors';
+import { NetworkError, extractStatusCode } from '../errors';
 import { API_PER_PAGE_LIMIT, MAX_PAGINATION_PAGES, MAX_REDIRECTS } from '../constants/timing';
 import { planRedirect, stripCredentialHeaders } from './redirectPolicy';
 
@@ -312,8 +312,7 @@ export class HttpClient {
 
         req.on('timeout', () => {
           req.destroy();
-          const handler = getErrorHandler();
-          reject(handler.createHttpError(408, `Request timeout after ${options.timeout}ms for ${url}`));
+          reject(new NetworkError(`Request timeout after ${options.timeout}ms for ${url}`, { statusCode: 408 }));
         });
 
         req.on('error', (error) => {

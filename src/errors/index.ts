@@ -1,5 +1,8 @@
 /**
- * Centralized error handling for GitLab Component Helper
+ * Centralized error types for GitLab Component Helper.
+ *
+ * This barrel must stay importable from plain Node (unit tests, the MCP server). Do not re-export
+ * `./handler` here: it imports `vscode` at module load. Extension code imports it directly.
  */
 
 export {
@@ -16,10 +19,3 @@ export {
   extractStatusCode,
   isAuthError
 } from './guards';
-
-export {
-  ErrorHandler,
-  ErrorHandlerOptions,
-  getErrorHandler,
-  handleErrors
-} from './handler';
