@@ -43,7 +43,7 @@ export async function bootstrap(argv: readonly string[], env: NodeJS.ProcessEnv,
   const args = parseArgs(argv, cwd);
   const workspace = createMcpWorkspace(args.roots);
 
-  const fileLayers = await loadConfigLayers({ cliJson: args.configJson, env, root: workspace.roots()[0], warn });
+  const fileLayers = await loadConfigLayers({ cliJson: args.configJson, env, root: workspace.roots()[0], workspace, warn });
   const layers: ConfigLayer[] = args.logLevel
     ? [{ name: '--log-level', settings: toSettings({ logLevel: args.logLevel }, '--log-level', warn) }, ...fileLayers]
     : fileLayers;

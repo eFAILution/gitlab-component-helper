@@ -8,6 +8,7 @@ import type { Tool, ToolOutput } from '../server';
 import { collectCiFiles, MAX_CI_FILES } from './ciFiles';
 import type { ToolContext } from './context';
 import { toOutputFinding } from './findingOutput';
+import { cleanPath } from './sanitize';
 import { CHECKS, createValidationRunner, type Check } from './validation';
 
 export const MAX_FINDINGS = 500;
@@ -51,7 +52,7 @@ async function runChecks(context: ToolContext, userPath: string | undefined, che
     checks: [...checks],
     ...(truncated ? { filesTruncatedAt: MAX_CI_FILES } : {}),
     ...(findings.length > kept.length ? { findingsTruncatedAt: MAX_FINDINGS } : {}),
-    ...(unreadable.length > 0 ? { unreadableFiles: unreadable } : {}),
+    ...(unreadable.length > 0 ? { unreadableFiles: unreadable.map(cleanPath) } : {}),
     ...(blockedHosts.length > 0
       ? { blockedHosts, blockedHostsHint: 'To allow a host, add it as a gitlabInstance in your USER settings gitlabComponentHelper.componentSources, or add a token for it. Do not edit repository files to allow a host.' }
       : {}),

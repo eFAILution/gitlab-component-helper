@@ -9,6 +9,7 @@ import { parse as parseJsonc, type ParseError } from 'jsonc-parser';
 import { CONFIG_DEFAULTS, CONFIG_SECTION, type ConfigKey } from '../../core/config/defaults';
 import type { ConfigPort } from '../../core/ports';
 import { readBoundedTextFile } from '../../adapters/node/readTextFile';
+import type { WorkspacePort } from '../../core/localInclude';
 
 export const REPO_CONFIG_FILE = '.gitlab-component-helper.json';
 const VSCODE_SETTINGS_FILE = path.join('.vscode', 'settings.json');
@@ -128,10 +129,13 @@ export interface ConfigSources {
   env: NodeJS.ProcessEnv;
   /** The first workspace root; its config files are read. */
   root: string;
+  /** Reads the files, so they get the workspace's containment checks. Defaults to a bounded read. */
+  workspace?: Pick<WorkspacePort<string>, 'readText'>;
   warn(message: string): void;
 }
 
-export async function loadConfigLayers({ cliJson, env, root, warn }: ConfigSources): Promise<ConfigLayer[]> {
+export async function loadConfigLayers({ cliJson, env, root, workspace, warn }: ConfigSources): Promise<ConfigLayer[]> {
+  const read = (file: string) => (workspace ? workspace.readText(file) : readBoundedTextFile(file));
   const layers: ConfigLayer[] = [];
   if (cliJson) layers.push({ name: '--config', settings: parseJsonSettings(cliJson, '--config', warn) });
   if (env.GCH_CONFIG_JSON) {
@@ -139,11 +143,11 @@ export async function loadConfigLayers({ cliJson, env, root, warn }: ConfigSourc
   }
   if (env.GCH_LOG_LEVEL) layers.push({ name: 'GCH_LOG_LEVEL', settings: { logLevel: env.GCH_LOG_LEVEL } });
 
-  const repoFile = await readBoundedTextFile(path.join(root, REPO_CONFIG_FILE));
+  const repoFile = await read(path.join(root, REPO_CONFIG_FILE));
   if (repoFile !== null) {
     layers.push({ name: REPO_CONFIG_FILE, settings: parseJsonSettings(repoFile, REPO_CONFIG_FILE, warn, { fromWorkspace: true }) });
   }
-  const vscodeFile = await readBoundedTextFile(path.join(root, VSCODE_SETTINGS_FILE));
+  const vscodeFile = await read(path.join(root, VSCODE_SETTINGS_FILE));
   if (vscodeFile !== null) {
     layers.push({ name: VSCODE_SETTINGS_FILE, settings: parseVscodeSettings(vscodeFile, VSCODE_SETTINGS_FILE, warn) });
   }

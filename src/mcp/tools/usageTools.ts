@@ -11,7 +11,7 @@ import { ToolError, type Tool } from '../server';
 import { collectCiFiles, MAX_CI_FILES } from './ciFiles';
 import { parseComponentArgument } from './componentRef';
 import type { ToolContext } from './context';
-import { cleanName, cleanNames } from './sanitize';
+import { cleanName, cleanNames, cleanPath } from './sanitize';
 
 const MAX_USAGES = 2000;
 
@@ -74,7 +74,7 @@ export function createListComponentUsagesTool(context: ToolContext): Tool {
         if (!usages || usages.length === 0) continue;
         const kept = usages.slice(0, Math.max(0, MAX_USAGES - total));
         total += kept.length;
-        if (kept.length > 0) results.push({ file, usages: kept });
+        if (kept.length > 0) results.push({ file: cleanPath(file), usages: kept });
       }
       return {
         summary: `${total} include(s) in ${results.length} file(s).`,

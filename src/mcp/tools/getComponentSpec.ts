@@ -67,6 +67,16 @@ const OUTPUT_SCHEMA: JsonSchema = {
   required: ['component', 'name', 'version', 'inputs'],
 };
 
+/** A documentation link for output, only when it is an https URL. */
+export function describeComponentLink(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    return new URL(url).protocol === 'https:' ? cleanText(url) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function describeInput(parameter: ComponentParameter): Record<string, unknown> {
   const options = cleanList(parameter.options);
   return {
@@ -107,7 +117,7 @@ export function createGetComponentSpecTool(services: ComponentServices): Tool {
           description: cleanText(component.description),
           version: ref.version,
           source: cleanName(component.source ?? `${ref.gitlabInstance}/${ref.sourcePath}`),
-          ...(component.documentationUrl ? { documentationUrl: cleanText(component.documentationUrl) } : {}),
+          ...(describeComponentLink(component.documentationUrl) ? { documentationUrl: describeComponentLink(component.documentationUrl) } : {}),
           inputs: component.parameters.map(describeInput),
           ...(versions.length > 0 ? { availableVersions: cleanNames(versions) } : {}),
           ...(latestStable ? { latestStable } : {}),
