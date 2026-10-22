@@ -311,7 +311,8 @@ npm run compile
 
 Press `F5` to launch an Extension Development Host with the extension loaded. You'll need VS Code 1.120.0+ and Node.js 22+.
 
-- Branch from `beta` and use [conventional commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`, …).
+- Start from an issue, one PR per issue. Branch from `beta` as `<type>/<issue>-<short-description>` (for example `fix/412-hover-crash`), open the PR against `beta`, and put `Closes #<issue>` on its first line. The full rules are in [AGENTS.md](https://github.com/eFAILution/gitlab-component-helper/blob/main/AGENTS.md#issues-branches-and-records).
+- Use [conventional commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`, …).
 - `npm test` runs the unit suite. `npm run test:extension-host` runs the tests inside real VS Code.
 - Releases are cut by [release-it](https://github.com/release-it/release-it) when changes land on `beta` or `main`. Publishing to the Marketplace is a manual workflow. See [docs/RELEASING.md](https://github.com/eFAILution/gitlab-component-helper/blob/main/docs/RELEASING.md).
 
