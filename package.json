@@ -216,9 +216,9 @@
         },
         "gitlabComponentHelper.mcp.enabled": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "scope": "application",
-          "markdownDescription": "Offer the bundled MCP server to Copilot Chat and other in-editor AI clients. When an AI client starts it, the server gets your workspace folders and the tokens for the GitLab instances in your user settings and token list. Turn off to stop offering it."
+          "markdownDescription": "Offer the bundled MCP server to Copilot Chat and other in-editor AI clients. Off by default. When an AI client starts it, the server gets your workspace folders and the tokens for the GitLab instances in your user settings and token list."
         },
         "gitlabComponentHelper.versionPreferences": {
           "type": "object",
