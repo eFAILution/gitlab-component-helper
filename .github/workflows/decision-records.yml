@@ -1,0 +1,54 @@
+name: Decision Records
+
+# Checks branch names and decision records against the issue-keyed rules (ADR-366). See AGENTS.md, "Issues,
+# branches, and records".
+#
+# There is no paths filter on purpose, so this always reports a status and can be a required check. Release commits
+# are skipped with a job-level `if` instead (a skipped job counts as passing).
+#
+# Fork PRs run with a read-only token and no secrets, which is all this needs. The head branch name comes from the PR
+# author, so it reaches the script only through an environment variable, never interpolated into `run`.
+
+on:
+  pull_request:
+    branches: [main, beta]
+  push:
+    branches: [main, beta]
+
+permissions:
+  contents: read
+
+jobs:
+  decision-records:
+    name: Decision Records
+    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore(release):')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # On pull_request HEAD is the merge commit, so HEAD^1 is the base the PR merges into.
+          fetch-depth: 2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        # No lifecycle scripts: the check only needs tsx and js-yaml, and a fork PR controls the lockfile.
+        run: npm ci --ignore-scripts
+
+      - name: Check decision records
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            npx tsx scripts/ci/decisionRecords.ts check --branch "$HEAD_REF" --base HEAD^1
+          else
+            npx tsx scripts/ci/decisionRecords.ts check
+          fi
