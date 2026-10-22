@@ -6,6 +6,9 @@ import { Logger } from '../utils/logger';
 
 const logger = Logger.getInstance();
 
+// A plain hostname with an optional port. Anything else (`gitlab.com@evil.example`) is not trusted as a GitLab host.
+const PLAIN_HOST = /^[a-z0-9.-]+(:\d+)?$/i;
+
 /** A repository remote hosted outside GitLab. */
 export interface NonGitLabRemote {
   hostname: string;
@@ -39,6 +42,11 @@ export function parseGitLabRemoteUrl(remoteUrl: string): { gitlabInstance: strin
         return null;
       }
     } else {
+      return null;
+    }
+
+    if (!PLAIN_HOST.test(gitlabInstance)) {
+      logger.debug(`[ComponentDetector] Ignoring Git remote with an unexpected host: ${gitlabInstance}`, 'ComponentDetector');
       return null;
     }
 

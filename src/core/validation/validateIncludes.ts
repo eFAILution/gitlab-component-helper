@@ -6,7 +6,7 @@
 
 import { Logger } from '../../utils/logger';
 import { isAuthError } from '../../errors';
-import { parseYamlDocuments, findDocumentWith } from '../../utils/yamlParser';
+import { countYamlAliases, findDocumentWith, MAX_YAML_ALIASES, parseYamlDocuments } from '../../utils/yamlParser';
 import { isIncludeEntry, isLocalInclude, type IncludeEntry } from '../../utils/includeMatcher';
 import type { ComponentParameter } from '../../types/git-component';
 import type { ReferenceResolver } from '../references';
@@ -71,6 +71,12 @@ export async function validateIncludes(input: ValidateIncludesInput): Promise<Fi
     return [];
   }
 
+  const aliasCount = countYamlAliases(text);
+  if (aliasCount > MAX_YAML_ALIASES) {
+    logger.debug(`[ValidationProvider] Skipping validation - ${aliasCount} YAML aliases exceeds the limit of ${MAX_YAML_ALIASES}`, 'ValidationProvider');
+    return [];
+  }
+
   // Silent: validation runs on every edit against the live, often mid-edit document; a parse failure is
   // expected and handled below (no findings), so it should not log to the debug console.
   // A component template is a multi-document stream (`spec:` header + `include:` body), so select the
@@ -113,8 +119,8 @@ async function validateComponentInclude(
 ): Promise<void> {
   const { input, includes, documentLines, findings } = pass;
   logger.debug(`[ValidationProvider] Processing component ${includeIndex + 1}/${includes.length}: ${componentUrl}`, 'ValidationProvider');
-  logger.debug(`[ValidationProvider] Include object:`, 'ValidationProvider');
-  logger.debug(JSON.stringify(include, null, 2), 'ValidationProvider');
+  // Only the input names: values can be YAML aliases that expand to huge trees if serialized.
+  logger.debug(`[ValidationProvider] Include inputs: ${Object.keys(include.inputs ?? {}).join(', ')}`, 'ValidationProvider');
 
   const resolved = await input.resolveReference(componentUrl);
   if (!resolved.resolved) {
