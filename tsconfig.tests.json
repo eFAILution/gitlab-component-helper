@@ -10,7 +10,8 @@
   },
   "include": [
     "src/**/*",
-    "tests/unit/**/*.ts"
+    "tests/unit/**/*.ts",
+    "scripts/ci/**/*.ts"
   ],
   "exclude": [
     "node_modules",

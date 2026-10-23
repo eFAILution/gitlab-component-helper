@@ -1,0 +1,88 @@
+# Decision record for issue #366. One record per file, keyed to its issue.
+# How to add one: AGENTS.md, "Issues, branches, and records".
+version: '2.0'
+decisions:
+  ADR-366:
+    title: Key branches, PRs and decision records to the issue number
+    date: '2026-10-22'
+    status: accepted
+    context: |-
+      Issue #366. Several agent sessions and people now work on this repo at
+      the same time, each in its own worktree and branch. Three things kept
+      colliding.
+
+      Branch names had no shared allocator. AGENTS.md asked for
+      feature/description or fix/description, so two sessions picking up
+      related work could choose the same name, and nothing on a branch said
+      which issue it was for.
+
+      Every decision went into .ai/decisions.yaml, one mapping with one
+      append point at the end. Two PRs that each recorded a decision edited
+      the same lines and conflicted, even though their keys differed. A
+      sloppy merge could also leave a key twice, and a YAML reader that
+      keeps the last copy would drop the first decision without a word.
+
+      .ai/index.yaml lists every decision key. The AICaC action regenerates
+      and commits it, so each new key also meant a change to that shared
+      file.
+    decision: |-
+      Use the GitHub issue number as the key for a change and everything it
+      produces.
+
+      - Every change starts from an issue, one PR per issue. Big work is
+        split into sub-issues, each with its own PR.
+      - Branches are named <type>/<issue>-<short-description>, with a
+        commitlint type and the number right after it, for example
+        chore/366-issue-keyed-workflow. A sub-issue's PR uses the
+        sub-issue's number.
+      - The PR body opens with Closes #<issue>, or Refs #<issue> for partial
+        work. A draft PR goes up with the first commit so others can see the
+        issue is taken.
+      - A new decision is its own file, .ai/decisions/ADR-<issue>.yaml. Each
+        file is a full AICaC v2 document (version: '2.0' and a decisions
+        mapping) with exactly one key, ADR-<issue>, and the same entry
+        fields the legacy file uses.
+      - .ai/decisions.yaml keeps its twenty SCREAMING_SNAKE entries. It is
+        closed to new keys; existing entries can still be edited.
+      - No index is kept by hand. The list command builds one from both
+        stores at read time.
+      - scripts/ci/decisionRecords.ts checks all of this, and the Decision
+        Records workflow runs it on every PR and push to main and beta. It
+        fails on duplicate keys, new legacy keys, badly named or badly shaped
+        record files, dangling supersedes, and a record whose number is not
+        the branch's issue. A branch with no issue number that adds no record
+        only gets a warning, so Dependabot, forks and the beta to main release
+        PR still pass.
+    rationale:
+      - GitHub hands out each issue number once, so it is a unique allocator nobody has to coordinate.
+      - The number exists before any code does, so a branch and a record can carry it from the first commit.
+      - One file per record means two PRs that each add a decision touch different files and never conflict.
+      - Leaving the legacy entries in place keeps every existing reference to .ai/decisions.yaml working.
+      - Each record being a full AICaC document keeps the format the rest of .ai/ uses, so no converter is needed.
+    alternatives_considered:
+      - name: Keep the single file and add only a duplicate-key check
+        rejected_because: It catches a clash after both PRs are written, and new entries still append at the same spot, so the merge conflicts stay.
+      - name: Keep the single file and prefix new keys with ISSUE_<n>_
+        rejected_because: The keys stop clashing, but every new entry still lands at the end of one mapping, so two PRs still edit the same lines.
+      - name: Move all legacy entries into per-file records now
+        rejected_because: A large mechanical diff that rewrites the target of every existing reference, for no reader that needs one layout today. It can still be its own issue later.
+    consequences:
+      positive:
+        - Parallel PRs can each add a decision without conflicts or renumbering.
+        - A branch name, a PR and a record all say which issue they belong to.
+        - A duplicate key in either store fails CI instead of being silently dropped.
+      negative:
+        - Decisions live in two places. Readers use the list command or look in both.
+        - The AICaC validator only reads .ai/*.yaml, so the checker repeats part of its decisions schema for the record files.
+        - Branch names are checked only for PRs that add a record. Other branches get a warning, and a ruleset is needed to enforce prefixes.
+        - The draft-PR-first and check-before-you-start steps are conventions that rely on people and agents following AGENTS.md.
+    implementation: |-
+      scripts/ci/decisionRecords.ts (CLI: check, list, new),
+      scripts/ci/decisionRecordsStore.ts (loading and shape checks),
+      scripts/ci/decisionRecordsBranch.ts (branch rule),
+      tests/unit/decisionRecords.test.ts, .github/workflows/decision-records.yml,
+      npm scripts decisions:check, decisions:list and decisions:new, AGENTS.md
+      "Issues, branches, and records", .github/pull_request_template.md, and
+      .ai/workflows.yaml start_change_from_issue.
+    references:
+      - https://github.com/eFAILution/gitlab-component-helper/issues/366
