@@ -12,7 +12,7 @@ import type { GitLabProjectInfo, GitLabTreeItem } from '../../types/api';
 import { HttpClient } from '../../utils/httpClient';
 import { Logger } from '../../utils/logger';
 import { GitLabSpecParser, ComponentVariable } from '../../parsers/specParser';
-import { isAuthError } from '../../errors';
+import { classifyFetchFailure, isAuthError } from '../../errors';
 import { TokenManager } from './tokenManager';
 import { UrlParser } from './urlParser';
 import {
@@ -287,7 +287,8 @@ export class ComponentFetcher {
       return {
         name: componentName,
         description: `Component from ${url}\n\nCould not fetch detailed information: ${error}`,
-        parameters: []
+        parameters: [],
+        fetchFailure: classifyFetchFailure(error)
       };
     }
   }

@@ -7,7 +7,7 @@ import { getComponentCacheManager } from '../services/cache/componentCacheManage
 import { reconcileComponentSource } from '../services/cache/sourceReconciliation';
 import { CONFIG_DEFAULTS } from '../core/config/defaults';
 import { getRuntime } from '../core/runtime';
-import { extractStatusCode, isAuthError } from '../errors';
+import { classifyFetchFailure, extractStatusCode, fetchFailureHint, isAuthError, type FetchFailure } from '../errors';
 import { ToolError } from './server';
 import { hostNotAllowedMessage } from './adapters/network';
 import type { ComponentRef } from './tools/componentRef';
@@ -29,6 +29,17 @@ export class GitLabAuthToolError extends ToolError {
   readonly statusCode = UNAUTHORIZED;
 }
 
+/** A non-auth fetch failure, with why it failed so callers can report the cause. */
+export class FetchFailureToolError extends ToolError {
+  constructor(message: string, readonly failure: FetchFailure) {
+    super(message);
+  }
+}
+
+function fetchFailureError(failure: FetchFailure, ref: Pick<ComponentRef, 'gitlabInstance' | 'url'>): FetchFailureToolError {
+  return new FetchFailureToolError(`Fetching ${ref.url} failed. ${fetchFailureHint(failure, ref.gitlabInstance)}`, failure);
+}
+
 /**
  * A tool error for a failed GitLab request. Response bodies are never included: they are untrusted text.
  */
@@ -40,8 +51,10 @@ export function gitlabFailure(error: unknown, ref: Pick<ComponentRef, 'gitlabIns
         'Add a token for this instance with the "GitLab CI: Add Component Project/Group" command in VS Code, or set GCH_TOKEN_<HOST>.'
     );
   }
+  const failure = classifyFetchFailure(error);
+  if (failure.kind !== 'unknown') return fetchFailureError(failure, ref);
   const status = extractStatusCode(error);
-  return new ToolError(`Fetching ${ref.url} failed${status ? ` (HTTP ${status})` : ''}.`);
+  return new FetchFailureToolError(`Fetching ${ref.url} failed${status ? ` (HTTP ${status})` : ''}.`, failure);
 }
 
 /** Refuse, with a message saying how to allow it, a component on a host the server may not contact. */
@@ -62,7 +75,12 @@ export function createComponentServices(isHostAllowed: (host: string) => boolean
         throw gitlabFailure(error, ref);
       }
       if (component && isFetchFailurePlaceholder(component)) {
-        throw new ToolError(`Fetching ${ref.url} failed. Check the project path, component name, and version.`);
+        const failure = component.fetchFailure;
+        if (failure && failure.kind !== 'unknown') throw fetchFailureError(failure, ref);
+        throw new FetchFailureToolError(
+          `Fetching ${ref.url} failed${failure?.code ? ` (${failure.code})` : ''}. Check the project path, component name, and version.`,
+          failure ?? { kind: 'unknown' }
+        );
       }
       return component;
     },

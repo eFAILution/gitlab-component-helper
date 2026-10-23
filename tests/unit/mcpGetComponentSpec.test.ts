@@ -7,7 +7,8 @@ import * as assert from 'node:assert/strict';
 import { ToolError } from '../../src/mcp/server';
 import { createGetComponentSpecTool, type ComponentServices } from '../../src/mcp/tools/getComponentSpec';
 import { parseComponentArgument } from '../../src/mcp/tools/componentRef';
-import { gitlabFailure, isFetchFailurePlaceholder } from '../../src/mcp/services';
+import { createComponentServices, FetchFailureToolError, gitlabFailure, isFetchFailurePlaceholder } from '../../src/mcp/services';
+import { getComponentService } from '../../src/services/component/componentService';
 import { NetworkError } from '../../src/errors';
 
 const UNAUTHORIZED = 401;
@@ -81,7 +82,36 @@ suite('get_component_spec', () => {
 
     assert.match(auth.message, /refused the request/);
     assert.doesNotMatch(auth.message, /body from server/);
-    assert.equal(missing.message, 'Fetching https://gitlab.com/g/p/c@1.0.0 failed (HTTP 404).');
+    assert.match(missing.message, /^Fetching https:\/\/gitlab\.com\/g\/p\/c@1\.0\.0 failed\. gitlab\.com returned 404/);
+    assert.doesNotMatch(missing.message, /ignore previous/);
+  });
+
+  test('a TLS failure names the cause and how to fix it', () => {
+    const ref = { gitlabInstance: 'gitlab.example', url: 'https://gitlab.example/g/p/c@1.0.0' };
+    const cause = Object.assign(new Error('unable to get issuer certificate'), { code: 'UNABLE_TO_GET_ISSUER_CERT' });
+    const error = gitlabFailure(new NetworkError(cause.message, { cause }), ref);
+
+    assert.ok(error instanceof FetchFailureToolError);
+    assert.deepStrictEqual(error.failure, { kind: 'tls', code: 'UNABLE_TO_GET_ISSUER_CERT' });
+    assert.match(error.message, /TLS certificate for gitlab\.example \(UNABLE_TO_GET_ISSUER_CERT\).*NODE_EXTRA_CA_CERTS/);
+  });
+
+  test('the fetcher placeholder failure is reported with its cause', async () => {
+    const services = createComponentServices(() => true);
+    const placeholder = {
+      name: 'c',
+      description: 'Component from x\n\nCould not fetch detailed information: boom',
+      parameters: [],
+      fetchFailure: { kind: 'dns' as const, code: 'ENOTFOUND' },
+    };
+    const original = getComponentService().getComponentFromUrl;
+    getComponentService().getComponentFromUrl = async () => placeholder;
+    try {
+      const ref = parseComponentArgument('gitlab.example/g/p/c@1.0.0');
+      await assert.rejects(services.fetchComponent(ref), /gitlab\.example could not be resolved \(ENOTFOUND\)/);
+    } finally {
+      getComponentService().getComponentFromUrl = original;
+    }
   });
 
   test('recognizes the fetcher placeholder for a failed fetch', () => {

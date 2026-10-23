@@ -6,6 +6,7 @@ import { getLatestStableSemver } from '../../utils/semver';
 import { ToolError, type Tool } from '../server';
 import type { JsonSchema } from '../protocol/types';
 import type { ComponentParameter } from '../../types/git-component';
+import type { FetchFailure } from '../../errors';
 import { parseComponentArgument, type ComponentRef } from './componentRef';
 import { cleanDefault, cleanList, cleanName, cleanNames, cleanText } from './sanitize';
 
@@ -16,6 +17,7 @@ export interface SpecComponent {
   version?: string;
   source?: string;
   documentationUrl?: string;
+  fetchFailure?: FetchFailure;
 }
 
 export interface ComponentServices {

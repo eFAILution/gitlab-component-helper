@@ -5,11 +5,13 @@
 
 import type { JsonSchema } from '../protocol/types';
 import type { Tool, ToolOutput } from '../server';
+import type { Finding } from '../../core/validation/findings';
+import { fetchFailureHint } from '../../errors';
 import { collectCiFiles, MAX_CI_FILES } from './ciFiles';
 import type { ToolContext } from './context';
 import { toOutputFinding } from './findingOutput';
 import { cleanName, cleanPath } from './sanitize';
-import { CHECKS, createValidationRunner, type Check, type RunnerOptions } from './validation';
+import { CHECKS, createValidationRunner, type Check, type RunnerOptions, type ValidationRunner } from './validation';
 
 export const MAX_FINDINGS = 500;
 
@@ -58,6 +60,44 @@ const FINDINGS_OUTPUT: JsonSchema = {
   required: ['findings', 'summary'],
 };
 
+function withFetchFailure(output: Record<string, unknown>, finding: Finding, runner: ValidationRunner): Record<string, unknown> {
+  const metadata = finding.metadata;
+  if (finding.code !== 'component-fetch-failed' || !metadata || !('expandedUrl' in metadata) || !metadata.expandedUrl) return output;
+  const entry = runner.fetchFailures().get(metadata.expandedUrl);
+  if (!entry) return output;
+  const { failure, host } = entry;
+  return {
+    ...output,
+    reason: failure.kind,
+    ...(failure.code ? { errorCode: failure.code } : {}),
+    ...(failure.statusCode ? { statusCode: failure.statusCode } : {}),
+    hint: fetchFailureHint(failure, cleanName(host)),
+  };
+}
+
+/** One entry per host and cause, so a single TLS or VPN problem reads as one blocker, not one per component. */
+function groupFetchFailures(runner: ValidationRunner): Array<Record<string, unknown> & { host: string; requests: number; hint: string }> {
+  const groups = new Map<string, { host: string; reason: string; errorCode?: string; statusCode?: number; requests: number; hint: string }>();
+  for (const { host, failure } of runner.fetchFailures().values()) {
+    const key = `${host}\0${failure.kind}\0${failure.code ?? ''}\0${failure.statusCode ?? ''}`;
+    const group = groups.get(key);
+    if (group) {
+      group.requests++;
+      continue;
+    }
+    const cleanHost = cleanName(host);
+    groups.set(key, {
+      host: cleanHost,
+      reason: failure.kind,
+      ...(failure.code ? { errorCode: failure.code } : {}),
+      ...(failure.statusCode ? { statusCode: failure.statusCode } : {}),
+      requests: 1,
+      hint: fetchFailureHint(failure, cleanHost),
+    });
+  }
+  return [...groups.values()];
+}
+
 async function runChecks(
   context: ToolContext,
   userPath: string | undefined,
@@ -74,7 +114,7 @@ async function runChecks(
       unreadable.push(file);
       continue;
     }
-    findings.push(...result.findings.map((finding) => toOutputFinding(finding, result.text)));
+    findings.push(...result.findings.map((finding) => withFetchFailure(toOutputFinding(finding, result.text), finding, runner)));
   }
 
   const kept = findings.slice(0, MAX_FINDINGS);
@@ -82,6 +122,7 @@ async function runChecks(
   findings.forEach((finding) => bySeverity[finding.severity as keyof typeof bySeverity]++);
   const blockedHosts = runner.blockedHosts();
   const versionLookupFailed = runner.versionLookupFailed().map(cleanName);
+  const fetchFailures = groupFetchFailures(runner);
   const summary = {
     filesChecked: files.length - unreadable.length,
     findings: findings.length,
@@ -91,6 +132,7 @@ async function runChecks(
     ...(findings.length > kept.length ? { findingsTruncatedAt: MAX_FINDINGS } : {}),
     ...(unreadable.length > 0 ? { unreadableFiles: unreadable.map(cleanPath) } : {}),
     ...(versionLookupFailed.length > 0 ? { versionLookupFailed } : {}),
+    ...(fetchFailures.length > 0 ? { fetchFailures } : {}),
     ...(runner.versionCheckDisabled()
       ? { versionCheckDisabled: true, versionCheckHint: 'The version check is off (versionCheck.enabled). Call check_component_versions to run it anyway.' }
       : {}),
@@ -102,6 +144,7 @@ async function runChecks(
     ? `No problems found in ${summary.filesChecked} file(s).`
     : `${findings.length} finding(s) in ${summary.filesChecked} file(s): ${bySeverity.error} error(s), ${bySeverity.warning} warning(s), ${bySeverity.information} info.`;
   const notes = [
+    ...fetchFailures.map((group) => `${group.requests} request(s) to ${group.host} failed: ${group.hint}`),
     versionLookupFailed.length > 0 ? `Versions for ${versionLookupFailed.length} component(s) could not be checked: the lookup failed (see summary.versionLookupFailed).` : '',
     runner.versionCheckDisabled() ? 'The version check is off in settings.' : '',
   ].filter(Boolean);

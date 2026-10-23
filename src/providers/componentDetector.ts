@@ -16,6 +16,7 @@ import { createReferenceResolver as createCoreReferenceResolver, type RepoContex
 import { classifyRemote, parseGitLabRemoteUrl, type NonGitLabRemote } from '../core/gitRemote';
 import { detectNonGitLabRemoteViaGit } from '../adapters/node/repoContext';
 import type { ReferenceResolver, ResolvedReference, UnresolvedReason } from '../core/references';
+import type { FetchFailure } from '../errors';
 
 // Re-export so existing consumers (e.g. localComponentResolver, validationProvider) keep their import path.
 export type { ComponentParameter };
@@ -110,6 +111,7 @@ export interface Component {
   cachedAt?: number; // Epoch ms of last branch fetch/revalidation; used for the branch TTL
   refType?: RefType; // Authoritative ref classification (branch|tag), resolved once and persisted
   originalUrl?: string; // Original URL with variables (if any)
+  fetchFailure?: FetchFailure; // Set only on the placeholder returned when a fetch failed
   // Add this context property that's needed by the hover provider
   context?: {
     gitlabInstance: string;

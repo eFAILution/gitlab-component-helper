@@ -9,8 +9,9 @@ import { parseComponentRef } from '../../core/validation/componentLookup';
 import { createReferenceResolver } from '../../core/referenceResolver';
 import { resolveLocalIncludeOutcome } from '../../core/localInclude';
 import type { Finding } from '../../core/validation/findings';
-import { isAuthError } from '../../errors';
+import { isAuthError, type FetchFailure } from '../../errors';
 import { HostNotAllowedError, hostNotAllowedMessage } from '../adapters/network';
+import { FetchFailureToolError } from '../services';
 import type { ToolContext } from './context';
 import type { SpecComponent } from './getComponentSpec';
 
@@ -39,6 +40,8 @@ export interface ValidationRunner {
   versionLookupFailed(): string[];
   /** Whether a version check was skipped because `versionCheck.enabled` is off. */
   versionCheckDisabled(): boolean;
+  /** Why a component or version lookup failed, keyed by the URL that was fetched. */
+  fetchFailures(): ReadonlyMap<string, { host: string; failure: FetchFailure }>;
 }
 
 export interface RunnerOptions {
@@ -51,6 +54,10 @@ export function createValidationRunner(context: ToolContext, options: RunnerOpti
   const blocked = new Set<string>();
   const versionsByBase = new Map<string, Promise<readonly string[] | undefined>>();
   const failedBases = new Set<string>();
+  const failures = new Map<string, { host: string; failure: FetchFailure }>();
+  const recordFailure = (url: string, host: string, error: unknown) => {
+    if (error instanceof FetchFailureToolError) failures.set(url, { host, failure: error.failure });
+  };
   let versionCheckSkipped = false;
 
   const refFor = (url: string) => {
@@ -74,6 +81,7 @@ export function createValidationRunner(context: ToolContext, options: RunnerOpti
       // reporting every input as unknown.
       const component = await context.services.fetchComponent(ref).catch((error: unknown) => {
         if (isAuthError(error)) throw error;
+        recordFailure(url, ref.gitlabInstance, error);
         return null;
       });
       components.set(url, component);
@@ -88,8 +96,9 @@ export function createValidationRunner(context: ToolContext, options: RunnerOpti
       blocked.add(ref.gitlabInstance);
       return undefined;
     }
-    return context.services.fetchVersions(ref).catch(() => {
+    return context.services.fetchVersions(ref).catch((error: unknown) => {
       failedBases.add(baseUrl);
+      recordFailure(baseUrl, ref.gitlabInstance, error);
       return undefined;
     });
   };
@@ -104,6 +113,7 @@ export function createValidationRunner(context: ToolContext, options: RunnerOpti
     blockedHosts: () => [...blocked],
     versionLookupFailed: () => [...failedBases],
     versionCheckDisabled: () => versionCheckSkipped,
+    fetchFailures: () => failures,
     validateFile: async (file, checks) => {
       const text = await context.workspace.readText(file);
       if (text === null) return null;
