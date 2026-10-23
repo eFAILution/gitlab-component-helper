@@ -43,6 +43,7 @@ keys:
   - release
   - run_tests
   - setup_dev_environment
+  - start_change_from_issue
   - update_dependencies
   decisions:
   - BATCH_API_REQUESTS
