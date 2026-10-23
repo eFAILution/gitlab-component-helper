@@ -57,7 +57,7 @@ async function main(): Promise<void> {
   const server = new McpServer({
     info: { name: SERVER_NAME, title: SERVER_TITLE, version: typeof GCH_VERSION === 'string' ? GCH_VERSION : '0.0.0-dev' },
     instructions: SERVER_INSTRUCTIONS,
-    tools: createTools({ ...context, services: createComponentServices(context.isHostAllowed) }),
+    tools: createTools({ ...context, services: createComponentServices(context.isHostAllowed, context.specCache) }),
   });
   await server.connect(createStreamTransport(process.stdin, protocolOut));
   // Let the last responses flush before exiting; pending timers would otherwise keep the process alive.

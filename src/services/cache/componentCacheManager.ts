@@ -119,6 +119,11 @@ export class ComponentCacheManager implements Disposable {
     return this.components;
   }
 
+  /** The cached components as they are now, without the refresh {@link getComponents} may start. */
+  public peekComponents(): readonly CachedComponent[] {
+    return this.components;
+  }
+
   /**
    * Add a dynamically fetched component to the cache
    */

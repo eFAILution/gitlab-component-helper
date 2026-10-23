@@ -5,6 +5,7 @@
 import { createDefaultRuntime, lockRuntime, setRuntime } from '../core/runtime';
 import type { RepoContextPort } from '../core/referenceResolver';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
+import { CONFIG_DEFAULTS } from '../core/config/defaults';
 import { Logger } from '../utils/logger';
 import { createGitCliRepoContext } from '../adapters/node/repoContext';
 import type { ComponentSource } from '../types/api';
@@ -15,6 +16,8 @@ import { createNetworkPolicy, DEFAULT_GITLAB_HOST, normalizeHost } from './adapt
 import { bindTokens, createEnvSecrets, takeEnvTokens } from './adapters/secrets';
 import { createFileStorage, resolveCacheDir } from './adapters/storage';
 import { createMcpWorkspace, type McpWorkspace } from './adapters/workspace';
+import { CACHE_SEED_ENV, readCacheSeed } from './cacheSeed';
+import { createSpecCache, type SpecCache } from './specCache';
 
 /** Hosts from the launcher's user-level settings (the extension passes the user's global componentSources). */
 const TRUSTED_HOSTS_ENV = 'GCH_TRUSTED_HOSTS';
@@ -24,7 +27,10 @@ export interface McpContext {
   repoContext: RepoContextPort<string>;
   /** Whether the server may contact a GitLab host. */
   isHostAllowed(host: string): boolean;
+  specCache: SpecCache;
 }
+
+const MS_PER_SECOND = 1000;
 
 function sourceHosts(sources: unknown): string[] {
   if (!Array.isArray(sources)) return [];
@@ -58,11 +64,12 @@ export async function bootstrap(argv: readonly string[], env: NodeJS.ProcessEnv,
   const userHosts = (env[TRUSTED_HOSTS_ENV] ?? '').split(',').map((host) => host.trim()).filter(Boolean);
   const network = createNetworkPolicy([DEFAULT_GITLAB_HOST, ...cliHosts, ...userHosts, ...tokens.namedHosts, ...bound.keys()]);
 
+  const storage = createFileStorage(resolveCacheDir(args.cacheDir, env));
   setRuntime({
     ...createDefaultRuntime(),
     config,
     secrets: createEnvSecrets(bound),
-    storage: createFileStorage(resolveCacheDir(args.cacheDir, env)),
+    storage,
     network,
   });
   lockRuntime();
@@ -71,6 +78,12 @@ export async function bootstrap(argv: readonly string[], env: NodeJS.ProcessEnv,
   logger.reloadLogLevel();
   warnings.forEach((message) => logger.warn(`[MCP] ${message}`, 'MCP'));
   getComponentCacheManager({ eagerRefresh: false });
+  const seedFile = env[CACHE_SEED_ENV];
+  const specCache = createSpecCache({
+    storage,
+    cacheTimeMs: () => config.get('cacheTime', CONFIG_DEFAULTS.cacheTime) * MS_PER_SECOND,
+    seed: seedFile ? () => readCacheSeed(seedFile, (message) => logger.warn(`[MCP] ${message}`, 'MCP')) : undefined,
+  });
 
   const gitPath = resolveGitPath(env);
   if (!gitPath) logger.warn('[MCP] git not found on PATH; CI variables like $CI_SERVER_FQDN will not be expanded', 'MCP');
@@ -78,5 +91,6 @@ export async function bootstrap(argv: readonly string[], env: NodeJS.ProcessEnv,
     workspace,
     repoContext: gitPath ? createGitCliRepoContext({ gitPath, allowedRoots: workspace.roots() }) : noRepoContext,
     isHostAllowed: network.isAllowed,
+    specCache,
   };
 }

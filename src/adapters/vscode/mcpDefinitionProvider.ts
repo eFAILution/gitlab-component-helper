@@ -20,6 +20,8 @@ import {
   userSourceHosts,
 } from '../../mcp/launchConfig';
 import { HANDOFF_DIR_NAME, HANDOFF_ENV, HANDOFF_TTL_MS, purgeTokenHandoffs, removeTokenHandoff } from '../../mcp/tokenHandoff';
+import { buildCacheSeed, CACHE_SEED_DIR_NAME, CACHE_SEED_ENV, writeCacheSeed } from '../../mcp/cacheSeed';
+import { getComponentCacheManager } from '../../services/cache/componentCacheManager';
 
 export const MCP_PROVIDER_ID = 'gitlabComponentHelper.mcp';
 const SERVER_LABEL = 'GitLab Component Helper';
@@ -48,6 +50,17 @@ async function collectTokens(tokens: TokenSource): Promise<Map<string, string>> 
   return found;
 }
 
+/** Write the extension's component cache for the server to start from. A failure only means a cold start. */
+async function cacheSeedEnv(dir: string): Promise<Record<string, string>> {
+  try {
+    const file = await writeCacheSeed(dir, buildCacheSeed(getComponentCacheManager().peekComponents()));
+    return { [CACHE_SEED_ENV]: file };
+  } catch (error) {
+    Logger.getInstance().debug(`[MCP] Could not write the cache seed: ${error}`, 'MCP');
+    return {};
+  }
+}
+
 /**
  * @returns The registration, or `undefined` when this VS Code has no MCP provider API.
  */
@@ -62,6 +75,7 @@ export function registerMcpServerProvider(context: vscode.ExtensionContext, toke
   const handoffDir = vscode.Uri.joinPath(context.globalStorageUri, HANDOFF_DIR_NAME).fsPath;
   void purgeTokenHandoffs(handoffDir);
   const pendingHandoffs = new Map<string, ReturnType<typeof setTimeout>>();
+  const seedDir = vscode.Uri.joinPath(context.globalStorageUri, CACHE_SEED_DIR_NAME).fsPath;
 
   const changed = new vscode.EventEmitter<void>();
   const fire = () => changed.fire();
@@ -111,7 +125,7 @@ export function registerMcpServerProvider(context: vscode.ExtensionContext, toke
           void removeTokenHandoff(handoffFile);
         }, HANDOFF_TTL_MS));
       }
-      server.env = { ...server.env, ...tokenEnv };
+      server.env = { ...server.env, ...tokenEnv, ...(await cacheSeedEnv(seedDir)) };
       return server;
     },
   };
