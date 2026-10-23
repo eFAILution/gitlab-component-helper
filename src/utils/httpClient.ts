@@ -1,12 +1,38 @@
 import * as https from 'https';
 import * as http from 'http';
-import * as vscode from 'vscode';
+import { createHash } from 'crypto';
 import { Logger } from './logger';
 import { getRequestDeduplicator, RequestDeduplicator } from './requestDeduplicator';
 import { getPerformanceMonitor } from './performanceMonitor';
-import { NetworkError, getErrorHandler, extractStatusCode } from '../errors';
+import { GitLabComponentError, NetworkError, extractStatusCode } from '../errors';
 import { API_PER_PAGE_LIMIT, MAX_PAGINATION_PAGES, MAX_REDIRECTS } from '../constants/timing';
 import { planRedirect, stripCredentialHeaders } from './redirectPolicy';
+import { CONFIG_DEFAULTS } from '../core/config/defaults';
+import { getRuntime, isRuntimeLocked } from '../core/runtime';
+import { RequestRefusedError } from '../core/ports';
+
+/** Largest response body read; a bigger one is aborted. */
+export const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
+const MIN_TIMEOUT_MS = 1000;
+const MAX_TIMEOUT_MS = 60000;
+const MAX_RETRY_ATTEMPTS = 5;
+/**
+ * The whole request (headers and body) must finish within this many socket timeouts (60s at the default 10s), so a
+ * slow but steady download on a VPN still finishes...
+ */
+const DEADLINE_TIMEOUTS = 6;
+/** ...and never take longer than this. */
+const MAX_DEADLINE_MS = 180000;
+
+function clamp(value: unknown, min: number, max: number, fallback: number): number {
+  const number = typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : fallback;
+  return Math.min(Math.max(number, min), max);
+}
+
+/** Whether a request was refused by the network policy (directly, or wrapped in a NetworkError). */
+function isRefused(error: unknown): boolean {
+  return error instanceof RequestRefusedError || (error instanceof GitLabComponentError && error.cause instanceof RequestRefusedError);
+}
 
 interface RequestOptions {
   timeout?: number;
@@ -53,10 +79,21 @@ export class HttpClient {
   }
 
   private getConfig() {
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+    const { config } = getRuntime();
     return {
-      timeout: config.get<number>('httpTimeout', 10000),
-      retryAttempts: config.get<number>('retryAttempts', 3)
+      timeout: config.get<number>('httpTimeout', CONFIG_DEFAULTS.httpTimeout),
+      retryAttempts: config.get<number>('retryAttempts', CONFIG_DEFAULTS.retryAttempts)
+    };
+  }
+
+  /** The timeout and retry count for one call: the caller's, else the settings, clamped to sane bounds. */
+  private limitsFor(options: RequestOptions): { timeout: number; retryAttempts: number } {
+    const config = this.getConfig();
+    // `httpTimeout: 0` meant "no timeout" to Node; the closest we allow is the longest timeout.
+    const requested = options.timeout ?? config.timeout;
+    return {
+      timeout: requested === 0 ? MAX_TIMEOUT_MS : clamp(requested, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, CONFIG_DEFAULTS.httpTimeout),
+      retryAttempts: clamp(options.retryAttempts ?? config.retryAttempts, 0, MAX_RETRY_ATTEMPTS, CONFIG_DEFAULTS.retryAttempts),
     };
   }
 
@@ -70,9 +107,11 @@ export class HttpClient {
   }
 
   private buildCacheKey(url: string, headers: Record<string, string>): string {
-    // Include auth tokens in cache key to avoid mixing authenticated/unauthenticated responses
+    // Key on the auth token so authenticated and unauthenticated responses never mix. Hash it so the raw token
+    // never sits in the key, which getDeduplicationStats() hands out.
     const authToken = headers['Authorization'] || headers['PRIVATE-TOKEN'] || '';
-    return `${url}|${authToken}`;
+    const authDigest = authToken ? createHash('sha256').update(authToken).digest('hex') : '';
+    return `${url}|${authDigest}`;
   }
 
   async fetchJson<T = unknown>(url: string, options: RequestOptions = {}): Promise<T> {
@@ -86,9 +125,7 @@ export class HttpClient {
   }
 
   private async fetchJsonInternal<T = unknown>(url: string, options: RequestOptions = {}): Promise<T> {
-    const config = this.getConfig();
-    const timeout = options.timeout || config.timeout;
-    const retryAttempts = options.retryAttempts || config.retryAttempts;
+    const { timeout, retryAttempts } = this.limitsFor(options);
     const headers = {
       'User-Agent': 'VSCode-GitLabComponentHelper',
       ...options.headers
@@ -119,6 +156,10 @@ export class HttpClient {
 
           const statusCode = extractStatusCode(error);
           const message = extractMessage(error);
+
+          if (isRefused(error)) {
+            throw error;
+          }
 
           if (statusCode && !this.shouldRetry(statusCode)) {
             this.logger.warn(`HTTP Request failed with client error ${statusCode}: ${url}`);
@@ -154,9 +195,7 @@ export class HttpClient {
   }
 
   private async fetchTextInternal(url: string, options: RequestOptions = {}): Promise<string> {
-    const config = this.getConfig();
-    const timeout = options.timeout || config.timeout;
-    const retryAttempts = options.retryAttempts || config.retryAttempts;
+    const { timeout, retryAttempts } = this.limitsFor(options);
     const headers = {
       'User-Agent': 'VSCode-GitLabComponentHelper',
       ...options.headers
@@ -178,6 +217,10 @@ export class HttpClient {
 
           const statusCode = extractStatusCode(error);
           const message = extractMessage(error);
+
+          if (isRefused(error)) {
+            throw error;
+          }
 
           if (statusCode && !this.shouldRetry(statusCode)) {
             this.logger.warn(`HTTP Text Request failed with client error ${statusCode}: ${url}`);
@@ -241,10 +284,18 @@ export class HttpClient {
     redirectsRemaining: number = MAX_REDIRECTS
   ): Promise<{ body: string; headers: Record<string, string> }> {
     return new Promise((resolve, reject) => {
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      let req: http.ClientRequest | undefined;
       try {
         const urlObj = new URL(url);
         const isHttps = urlObj.protocol === 'https:';
         const client = isHttps ? https : http;
+        const { network } = getRuntime();
+        // A locked runtime is the MCP server's; without its policy, fail closed instead of contacting anything.
+        if (!network && isRuntimeLocked()) {
+          throw new RequestRefusedError('Refusing the request: no network policy is installed');
+        }
+        network?.checkRequest(urlObj);
 
         const requestOptions = {
           hostname: urlObj.hostname,
@@ -252,10 +303,22 @@ export class HttpClient {
           path: urlObj.pathname + urlObj.search,
           method: 'GET',
           headers: options.headers,
-          timeout: options.timeout
+          timeout: options.timeout,
+          ...(network?.lookup ? { lookup: network.lookup } : {})
         };
 
-        const req = client.request(requestOptions, (res) => {
+        // Socket idle timeouts don't bound a server that trickles bytes, so the whole request also has a deadline.
+        const deadlineMs = Math.min(options.timeout * DEADLINE_TIMEOUTS, MAX_DEADLINE_MS);
+        const settle = (finish: () => void) => {
+          clearTimeout(deadline);
+          finish();
+        };
+        deadline = setTimeout(() => {
+          req?.destroy();
+          reject(new NetworkError(`Request to ${url} passed its ${deadlineMs}ms deadline`, { statusCode: 408 }));
+        }, deadlineMs);
+
+        req = client.request(requestOptions, (res) => {
           const statusCode = res.statusCode ?? 0;
 
           // Resolve redirects before reading the body. `planRedirect` enforces the credential-safe,
@@ -265,19 +328,20 @@ export class HttpClient {
             redirect = planRedirect(url, statusCode, res.headers.location);
           } catch (policyError) {
             res.resume(); // drain so the socket can be released
-            reject(policyError);
+            settle(() => reject(policyError));
             return;
           }
 
           if (redirect) {
             res.resume(); // discard the redirect response body
             if (redirectsRemaining <= 0) {
-              reject(new NetworkError(`Too many redirects while fetching ${url}`, { statusCode }));
+              settle(() => reject(new NetworkError(`Too many redirects while fetching ${url}`, { statusCode })));
               return;
             }
             const nextHeaders = redirect.stripCredentials
               ? stripCredentialHeaders(options.headers)
               : options.headers;
+            clearTimeout(deadline);
             this.makeRequestWithHeaders(
               redirect.nextUrl,
               { timeout: options.timeout, headers: nextHeaders },
@@ -287,12 +351,24 @@ export class HttpClient {
           }
 
           let data = '';
+          let receivedBytes = 0;
+          let tooLarge = false;
 
-          res.on('data', (chunk) => {
+          res.on('data', (chunk: Buffer | string) => {
+            if (tooLarge) return;
+            receivedBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
+            if (receivedBytes > MAX_RESPONSE_BYTES) {
+              tooLarge = true;
+              req?.destroy();
+              settle(() => reject(new NetworkError(`Response from ${urlObj.host} is too large (over ${MAX_RESPONSE_BYTES} bytes)`)));
+              return;
+            }
             data += chunk;
           });
 
           res.on('end', () => {
+            if (tooLarge) return;
+            clearTimeout(deadline);
             if (statusCode >= 200 && statusCode < 300) {
               const headers: Record<string, string> = {};
               for (const [key, value] of Object.entries(res.headers)) {
@@ -311,17 +387,17 @@ export class HttpClient {
         });
 
         req.on('timeout', () => {
-          req.destroy();
-          const handler = getErrorHandler();
-          reject(handler.createHttpError(408, `Request timeout after ${options.timeout}ms for ${url}`));
+          req?.destroy();
+          settle(() => reject(new NetworkError(`Request timeout after ${options.timeout}ms for ${url}`, { statusCode: 408 })));
         });
 
         req.on('error', (error) => {
-          reject(new NetworkError(error.message, { cause: error }));
+          settle(() => reject(new NetworkError(error.message, { cause: error })));
         });
 
         req.end();
       } catch (error) {
+        clearTimeout(deadline);
         reject(new NetworkError(extractMessage(error), { cause: toError(error) }));
       }
     });
@@ -352,7 +428,7 @@ export class HttpClient {
       'User-Agent': 'VSCode-GitLabComponentHelper',
       ...options.headers
     };
-    const timeout = options.timeout || this.getConfig().timeout;
+    const { timeout } = this.limitsFor(options);
 
     const all: T[] = [];
     let page = 1;
@@ -401,7 +477,7 @@ export class HttpClient {
     const promises = requests.map(async ({ url, options = {} }) => {
       try {
         const data = await this.makeRequest(url, {
-          timeout: options.timeout || this.getConfig().timeout,
+          timeout: this.limitsFor(options).timeout,
           headers: {
             'User-Agent': 'VSCode-GitLabComponentHelper',
             ...options.headers

@@ -2,16 +2,21 @@ import * as vscode from 'vscode';
 import { getComponentService } from '../services/component';
 import { getComponentCacheManager } from '../services/cache/componentCacheManager';
 import { GitLabCatalogComponent, GitLabCatalogVariable } from '../types/gitlab-catalog';
-import { containsGitLabVariables, detectGitLabVariables, expandComponentUrl } from '../utils/gitlabVariables';
-import { matchComponentValue, referenceToUrl } from '../utils/componentReference';
+import { detectGitLabVariables } from '../utils/gitlabVariables';
+import { matchComponentValue } from '../utils/componentReference';
+import { parseComponentIdentity, findCachedComponentVersion, findAnyCachedComponentVersion } from '../utils/cachedComponentLookup';
 import { Logger } from '../utils/logger';
-import { spawn } from 'child_process';
 import { detectLocalIncludeComponent } from './localComponentResolver';
 import type { ComponentParameter } from '../types/git-component';
 import type { GitApi, GitRepository } from '../types/vscode-git';
 import type { CachedComponent, RefType } from '../types/cache';
 import { DEFAULT_BRANCH_CACHE_TIME_SECONDS } from '../constants/timing';
 import { resolveBranchFreshness, type BranchFreshnessResult } from '../utils/branchFreshness';
+import { createReferenceResolver as createCoreReferenceResolver, type RepoContextPort } from '../core/referenceResolver';
+import { classifyRemote, parseGitLabRemoteUrl, type NonGitLabRemote } from '../core/gitRemote';
+import { detectNonGitLabRemoteViaGit } from '../adapters/node/repoContext';
+import type { ReferenceResolver, ResolvedReference, UnresolvedReason } from '../core/references';
+import type { FetchFailure } from '../errors';
 
 // Re-export so existing consumers (e.g. localComponentResolver, validationProvider) keep their import path.
 export type { ComponentParameter };
@@ -106,6 +111,7 @@ export interface Component {
   cachedAt?: number; // Epoch ms of last branch fetch/revalidation; used for the branch TTL
   refType?: RefType; // Authoritative ref classification (branch|tag), resolved once and persisted
   originalUrl?: string; // Original URL with variables (if any)
+  fetchFailure?: FetchFailure; // Set only on the placeholder returned when a fetch failed
   // Add this context property that's needed by the hover provider
   context?: {
     gitlabInstance: string;
@@ -181,49 +187,24 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
 
   // Parse the requested component URL to extract name and details
   try {
-    // GitLab component URLs are: https://gitlab.instance/project/path@version
-    let requestedProjectPath: string;
-    let requestedVersion: string | undefined;
-    let requestedName: string;
-
-    if (componentUrl.includes('@')) {
-      // Split on @ to separate project path and version
-      const urlParts = componentUrl.split('@');
-      const baseUrl = urlParts[0];
-      requestedVersion = urlParts[1];
-
-      // Extract project path and component name from base URL
-      const baseUrlObj = new URL(baseUrl);
-      const fullPath = baseUrlObj.pathname.substring(1); // Remove leading slash
-      const pathParts = fullPath.split('/');
-      requestedName = pathParts.pop() || ''; // Component name is the last segment
-      requestedProjectPath = pathParts.join('/'); // Project path is everything before the component name
-    } else {
-      // No version specified
-      const requestedUrl = new URL(componentUrl);
-      const fullPath = requestedUrl.pathname.substring(1); // Remove leading slash
-      const pathParts = fullPath.split('/');
-      requestedName = pathParts.pop() || ''; // Component name is the last segment
-      requestedProjectPath = pathParts.join('/'); // Project path is everything before the component name
-      requestedVersion = undefined;
+    const identity = parseComponentIdentity(componentUrl);
+    if (!identity) {
+      throw new Error(`Not a component URL: ${componentUrl}`);
     }
-
-    const requestedGitlabInstance = new URL(componentUrl.split('@')[0]).hostname;
+    const {
+      gitlabInstance: requestedGitlabInstance,
+      sourcePath: requestedProjectPath,
+      name: requestedName,
+      version: requestedVersion,
+    } = identity;
 
     logger.debug(`[ComponentDetector] Looking for component: ${requestedName} from ${requestedGitlabInstance}/${requestedProjectPath}${requestedVersion ? `@${requestedVersion}` : ''}`, 'ComponentDetector');
 
     // Prefer a cache entry whose version matches the request exactly; otherwise fall back to any cached entry for the
     // same component. Both go through the same freshness-checked serve/refetch path below — a branch entry is only
     // served after checkBranchFreshness confirms the branch HEAD hasn't moved.
-    const matchesComponent = (comp: CachedComponent): boolean =>
-      comp.gitlabInstance === requestedGitlabInstance &&
-      comp.sourcePath === requestedProjectPath &&
-      comp.name === requestedName;
-
     const cachedComponent =
-      (requestedVersion &&
-        cachedComponents.find(comp => matchesComponent(comp) && comp.version === requestedVersion)) ||
-      cachedComponents.find(matchesComponent);
+      findCachedComponentVersion(cachedComponents, identity) ?? findAnyCachedComponentVersion(cachedComponents, identity);
 
     if (cachedComponent) {
       logger.debug(`[ComponentDetector] Found matching component in cache: ${cachedComponent.name}`, 'ComponentDetector');
@@ -763,126 +744,26 @@ async function describeUnresolvedReference(originalUrl: string, reason: Unresolv
   return { ...placeholder, name: 'Component with variables', description, source: 'GitLab Variables' };
 }
 
-/** Context GitLab variables in a `component:` value are expanded from. */
-interface ExpansionContext {
-  gitlabInstance: string;
-  projectPath: string;
-  serverUrl: string;
-  commitSha?: string;
-}
-
-/** Why a reference's GitLab variables couldn't be expanded. */
-export type UnresolvedReason =
-  /** The workspace's repository is hosted somewhere other than GitLab, so the variables have no meaning. */
-  | { kind: 'non-gitlab-repo'; hostname: string; type: string }
-  /** No GitLab remote and no configured component source to expand from. */
-  | { kind: 'no-context' }
-  /** Expansion ran but left variables the extension doesn't know how to expand. */
-  | { kind: 'incomplete'; expandedUrl: string };
-
-export type ResolvedReference =
-  | { resolved: true; url: string }
-  | { resolved: false; reason: UnresolvedReason };
+export type { UnresolvedReason, ResolvedReference };
 
 /**
- * Find what GitLab variables expand from for a document: its repository's GitLab remote; failing that — unless the
- * workspace is a non-GitLab repository — the first configured component source.
+ * The extension's repository lookup: the VS Code Git extension for the file's GitLab remote, and the first workspace
+ * folder's repository (Git extension, then the `git` CLI) to spot a non-GitLab host.
  */
-async function lookupExpansionContext(forUri: vscode.Uri): Promise<ExpansionContext | UnresolvedReason> {
-  const gitContext = await getGitRepositoryContext(forUri);
-  if (gitContext.gitlabInstance && gitContext.projectPath) {
-    return {
-      gitlabInstance: gitContext.gitlabInstance,
-      projectPath: gitContext.projectPath,
-      serverUrl: `https://${gitContext.gitlabInstance}`,
-      commitSha: gitContext.commitSha || 'main',
-    };
-  }
-
-  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-  const nonGitlab = workspaceFolder ? await detectNonGitLabRepository(workspaceFolder) : null;
-  if (nonGitlab) {
-    return { kind: 'non-gitlab-repo', hostname: nonGitlab.hostname, type: nonGitlab.type };
-  }
-
-  const [source] = vscode.workspace
-    .getConfiguration('gitlabComponentHelper')
-    .get<Array<{ path: string; gitlabInstance?: string }>>('componentSources', []);
-  if (!source) {
-    return { kind: 'no-context' };
-  }
-  const gitlabInstance = source.gitlabInstance || 'gitlab.com';
-  return { gitlabInstance, projectPath: source.path, serverUrl: `https://${gitlabInstance}` };
-}
+const vscodeRepoContext: RepoContextPort<vscode.Uri> = {
+  remoteContext: forUri => getGitRepositoryContext(forUri),
+  nonGitLabRemote: async () => {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    return workspaceFolder ? detectNonGitLabRepository(workspaceFolder) : null;
+  },
+};
 
 /**
  * Create the resolver every reader uses to turn `component:` values written in one document into URLs `new URL()` can
- * parse. References without variables get `https://` prefixed; variables expand from {@link lookupExpansionContext},
- * which runs at most once per resolver — create one per document pass, not per line.
+ * parse. Expansion context is looked up at most once per resolver — create one per document pass, not per line.
  */
-export function createReferenceResolver(forUri: vscode.Uri): (reference: string) => Promise<ResolvedReference> {
-  let context: Promise<ExpansionContext | UnresolvedReason> | undefined;
-
-  return async reference => {
-    if (!containsGitLabVariables(reference)) {
-      return { resolved: true, url: referenceToUrl(reference) };
-    }
-
-    context ??= lookupExpansionContext(forUri);
-    const resolvedContext = await context;
-    if ('kind' in resolvedContext) {
-      return { resolved: false, reason: resolvedContext };
-    }
-
-    const expandedUrl = expandComponentUrl(reference, resolvedContext);
-    if (containsGitLabVariables(expandedUrl) || expandedUrl.includes('undefined')) {
-      return { resolved: false, reason: { kind: 'incomplete', expandedUrl } };
-    }
-    return { resolved: true, url: expandedUrl };
-  };
-}
-
-/**
- * Parse GitLab remote URL to extract instance and project path
- */
-function parseGitLabRemoteUrl(remoteUrl: string): { gitlabInstance: string; projectPath: string } | null {
-  try {
-    // Handle both HTTPS and SSH URLs
-    // HTTPS: https://gitlab.com/owner/repo.git
-    // SSH: git@gitlab.com:owner/repo.git
-
-    let gitlabInstance: string;
-    let projectPath: string;
-
-    if (remoteUrl.startsWith('https://')) {
-      const url = new URL(remoteUrl);
-      gitlabInstance = url.hostname;
-      projectPath = url.pathname.substring(1).replace(/\.git$/, '');
-    } else if (remoteUrl.startsWith('git@')) {
-      // git@gitlab.com:owner/repo.git
-      const match = remoteUrl.match(/git@([^:]+):(.+?)(?:\.git)?$/);
-      if (match) {
-        gitlabInstance = match[1];
-        projectPath = match[2];
-      } else {
-        return null;
-      }
-    } else {
-      return null;
-    }
-
-    // Only return for GitLab instances - this extension is specifically for GitLab
-    if (gitlabInstance.includes('gitlab')) {
-      return { gitlabInstance, projectPath };
-    }
-
-    // For non-GitLab repositories, log but don't use for GitLab variable expansion
-    logger.debug(`[ComponentDetector] Detected non-GitLab repository: ${gitlabInstance}. GitLab Component Helper requires a GitLab repository.`, 'ComponentDetector');
-    return null;
-  } catch (error) {
-    logger.debug(`[ComponentDetector] Error parsing Git remote URL: ${error}`, 'ComponentDetector');
-    return null;
-  }
+export function createReferenceResolver(forUri: vscode.Uri): ReferenceResolver {
+  return createCoreReferenceResolver(forUri, vscodeRepoContext);
 }
 
 /**
@@ -973,7 +854,7 @@ function parseAnyRemoteUrl(remoteUrl: string): { gitlabInstance: string; project
 /**
  * Detect if we're in a non-GitLab repository (GitHub, Bitbucket, etc.)
  */
-async function detectNonGitLabRepository(workspaceFolder: vscode.WorkspaceFolder): Promise<{ hostname: string; projectPath: string; type: string } | null> {
+async function detectNonGitLabRepository(workspaceFolder: vscode.WorkspaceFolder): Promise<NonGitLabRemote | null> {
     try {
         logger.debug(`[ComponentDetector] Detecting non-GitLab repository for workspace: ${workspaceFolder.uri.fsPath}`, 'ComponentDetector');
 
@@ -1003,163 +884,17 @@ async function detectNonGitLabRepository(workspaceFolder: vscode.WorkspaceFolder
 
                 if (origin && origin.fetchUrl) {
                     logger.debug(`[ComponentDetector] Found origin remote via VS Code Git API: ${origin.fetchUrl}`, 'ComponentDetector');
-                    return await parseAndClassifyRepository(origin.fetchUrl);
+                    return classifyRemote(origin.fetchUrl);
                 }
             }
         }
 
         // Fallback to direct Git commands if VS Code Git API doesn't work
         logger.debug(`[ComponentDetector] VS Code Git API not available or no repositories found, trying direct Git commands`, 'ComponentDetector');
-        return await detectRepositoryViaGitCommands(workspaceFolder.uri.fsPath);
+        return await detectNonGitLabRemoteViaGit(workspaceFolder.uri.fsPath);
 
     } catch (error) {
         logger.debug(`[ComponentDetector] Error detecting non-GitLab repository: ${error}`, 'ComponentDetector');
-        return null;
-    }
-}
-
-/**
- * Use direct Git commands to detect repository information
- */
-async function detectRepositoryViaGitCommands(workspacePath: string): Promise<{ hostname: string; projectPath: string; type: string } | null> {
-    try {
-        // First, check if we're in a Git repository
-        const isGitRepo = await new Promise<boolean>((resolve) => {
-            const gitCheck = spawn('git', ['rev-parse', '--is-inside-work-tree'], {
-                cwd: workspacePath,
-                stdio: 'pipe'
-            });
-
-            gitCheck.on('exit', (code: number | null) => {
-                resolve(code === 0);
-            });
-
-            gitCheck.on('error', () => {
-                resolve(false);
-            });
-        });
-
-        if (!isGitRepo) {
-            logger.debug(`[ComponentDetector] Not inside a Git repository`, 'ComponentDetector');
-            return null;
-        }
-
-        logger.debug(`[ComponentDetector] Confirmed we're in a Git repository`, 'ComponentDetector');
-
-        // Get the remote origin URL
-        const remoteUrl = await new Promise<string | null>((resolve) => {
-            const gitRemote = spawn('git', ['remote', 'get-url', 'origin'], {
-                cwd: workspacePath,
-                stdio: 'pipe'
-            });
-
-            let output = '';
-            gitRemote.stdout.on('data', (data: Buffer) => {
-                output += data.toString();
-            });
-
-            gitRemote.on('exit', (code: number | null) => {
-                if (code === 0 && output.trim()) {
-                    resolve(output.trim());
-                } else {
-                    resolve(null);
-                }
-            });
-
-            gitRemote.on('error', () => {
-                resolve(null);
-            });
-        });
-
-        if (!remoteUrl) {
-            logger.debug(`[ComponentDetector] No origin remote found`, 'ComponentDetector');
-            return null;
-        }
-
-        logger.debug(`[ComponentDetector] Found origin remote via Git command: ${remoteUrl}`, 'ComponentDetector');
-        return await parseAndClassifyRepository(remoteUrl);
-
-    } catch (error) {
-        logger.debug(`[ComponentDetector] Error using Git commands: ${error}`, 'ComponentDetector');
-        return null;
-    }
-}
-
-/**
- * Parse and classify a Git remote URL
- */
-async function parseAndClassifyRepository(remoteUrl: string): Promise<{ hostname: string; projectPath: string; type: string } | null> {
-    try {
-        const repoInfo = parseNonGitLabRemoteUrl(remoteUrl);
-        if (!repoInfo) {
-            logger.debug(`[ComponentDetector] Failed to parse remote URL: ${remoteUrl}`, 'ComponentDetector');
-            return null;
-        }
-
-        logger.debug(`[ComponentDetector] Parsed repository info: hostname=${repoInfo.hostname}, projectPath=${repoInfo.projectPath}`, 'ComponentDetector');
-
-        // Check if this is NOT a GitLab repository
-        const isGitLab = repoInfo.hostname.toLowerCase().includes('gitlab');
-        logger.debug(`[ComponentDetector] Is GitLab repository: ${isGitLab}`, 'ComponentDetector');
-
-        if (!isGitLab) {
-            let type = 'Git Repository';
-            if (repoInfo.hostname.includes('github')) {
-                type = 'GitHub';
-            } else if (repoInfo.hostname.includes('bitbucket')) {
-                type = 'Bitbucket';
-            }
-
-            logger.debug(`[ComponentDetector] Detected non-GitLab repository: ${repoInfo.hostname} (${type})`, 'ComponentDetector');
-            return {
-                hostname: repoInfo.hostname,
-                projectPath: repoInfo.projectPath,
-                type: type
-            };
-        }
-
-        logger.debug(`[ComponentDetector] This is a GitLab repository, not returning non-GitLab info`, 'ComponentDetector');
-        return null;
-    } catch (error) {
-        logger.debug(`[ComponentDetector] Error parsing and classifying repository: ${error}`, 'ComponentDetector');
-        return null;
-    }
-}
-
-/**
- * Parse any Git remote URL to extract hostname and project path (for detection purposes)
- */
-function parseNonGitLabRemoteUrl(remoteUrl: string): { hostname: string; projectPath: string } | null {
-    try {
-        // Handle both HTTPS and SSH URLs
-        let hostname: string;
-        let projectPath: string;
-
-        if (remoteUrl.startsWith('https://')) {
-            const url = new URL(remoteUrl);
-            hostname = url.hostname;
-            projectPath = url.pathname.substring(1).replace(/\.git$/, '');
-        } else if (remoteUrl.startsWith('git@')) {
-            // git@github.com:owner/repo.git
-            const match = remoteUrl.match(/git@([^:]+):(.+?)(?:\.git)?$/);
-            if (match) {
-                hostname = match[1];
-                projectPath = match[2];
-            } else {
-                return null;
-            }
-        } else {
-            return null;
-        }
-
-        // Return any valid-looking Git repository info
-        if (hostname && projectPath.includes('/')) {
-            return { hostname, projectPath };
-        }
-
-        return null;
-    } catch (error) {
-        logger.debug(`[ComponentDetector] Error parsing remote URL for detection: ${error}`, 'ComponentDetector');
         return null;
     }
 }

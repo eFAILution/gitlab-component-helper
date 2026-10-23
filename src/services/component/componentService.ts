@@ -1,11 +1,11 @@
-import * as vscode from 'vscode';
-import { Component } from '../../providers/componentDetector';
+import type { Event } from '../../core/emitter';
+import type { Component } from '../../providers/componentDetector';
 import { HttpClient } from '../../utils/httpClient';
 import { Logger } from '../../utils/logger';
 import { getPerformanceMonitor } from '../../utils/performanceMonitor';
 import { TokenManager } from './tokenManager';
 import { UrlParser } from './urlParser';
-import { VersionManager } from './versionManager';
+import { VersionManager, type VersionFetchOptions } from './versionManager';
 import { ComponentFetcher } from './componentFetcher';
 
 // Service interface for component sources
@@ -52,12 +52,8 @@ export class ComponentService implements ComponentSource {
   // Token management delegation
 
   /** Fires (with the instance hostname) after a token is stored, so consumers can revalidate. */
-  public get onDidChangeToken(): vscode.Event<string> {
+  public get onDidChangeToken(): Event<string> {
     return this.tokenManager.onDidChangeToken;
-  }
-
-  public setSecretStorage(secretStorage: vscode.SecretStorage): void {
-    this.tokenManager.setSecretStorage(secretStorage);
   }
 
   /** Release the token manager's resources (its change-event emitter). */
@@ -77,6 +73,10 @@ export class ComponentService implements ComponentSource {
     return this.tokenManager.getTokenForInstance(gitlabInstance);
   }
 
+  public async getTokenInstances(): Promise<string[]> {
+    return this.tokenManager.getTokenInstances();
+  }
+
   // Component retrieval
   async getComponents(): Promise<Component[]> {
     return this.getLocalComponents();
@@ -88,12 +88,9 @@ export class ComponentService implements ComponentSource {
   }
 
   // Component fetching delegation
-  public async getComponentFromUrl(
-    url: string,
-    context?: vscode.ExtensionContext
-  ): Promise<Component | null> {
+  public async getComponentFromUrl(url: string): Promise<Component | null> {
     try {
-      const component = await this.componentFetcher.fetchComponentMetadata(url, context);
+      const component = await this.componentFetcher.fetchComponentMetadata(url);
       if (component) {
         // Parse the URL for context info
         const parsed = this.urlParser.parseCustomComponentUrl(url);
@@ -131,8 +128,8 @@ export class ComponentService implements ComponentSource {
     return this.versionManager.fetchProjectVersions(gitlabInstance, projectPath);
   }
 
-  public async fetchProjectTags(gitlabInstance: string, projectPath: string) {
-    return this.versionManager.fetchProjectTags(gitlabInstance, projectPath);
+  public async fetchProjectTags(gitlabInstance: string, projectPath: string, options?: VersionFetchOptions) {
+    return this.versionManager.fetchProjectTags(gitlabInstance, projectPath, options);
   }
 
   /**
@@ -183,15 +180,13 @@ export class ComponentService implements ComponentSource {
     gitlabInstance: string,
     projectPath: string,
     forceRefresh: boolean = false,
-    version?: string,
-    context?: vscode.ExtensionContext
+    version?: string
   ): Promise<Awaited<ReturnType<ComponentFetcher['fetchCatalogData']>>> {
     return this.componentFetcher.fetchCatalogData(
       gitlabInstance,
       projectPath,
       forceRefresh,
-      version,
-      context
+      version
     );
   }
 

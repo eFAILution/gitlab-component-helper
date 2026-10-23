@@ -2,7 +2,7 @@
   "name": "gitlab-component-helper",
   "displayName": "GitLab Component Helper",
   "description": "Provides intellisense for GitLab CI components",
-  "version": "0.20.0",
+  "version": "0.21.10",
   "icon": "images/icon.png",
   "engines": {
     "node": ">=22.0.0",
@@ -214,6 +214,12 @@
           "default": "warning",
           "description": "Severity of the 'newer component version available' diagnostic."
         },
+        "gitlabComponentHelper.mcp.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "markdownDescription": "Offer the bundled MCP server to Copilot Chat and other in-editor AI clients. Off by default. When an AI client starts it, the server gets your workspace folders and the tokens for the GitLab instances in your user settings and token list."
+        },
         "gitlabComponentHelper.versionPreferences": {
           "type": "object",
           "additionalProperties": {
@@ -224,6 +230,12 @@
         }
       }
     },
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "gitlabComponentHelper.mcp",
+        "label": "GitLab Component Helper"
+      }
+    ],
     "commands": [
       {
         "command": "gitlab-component-helper.browseComponents",
@@ -301,6 +313,9 @@
     "test:all": "npm test && npm run test:extension-host",
     "pretest:extension-host": "rm -rf out-test && npm run compile && tsc --project tsconfig.test.json",
     "test:extension-host": "node out-test/runTest.js",
+    "decisions:check": "node --import tsx scripts/ci/decisionRecords.ts check",
+    "decisions:list": "node --import tsx scripts/ci/decisionRecords.ts list",
+    "decisions:new": "node --import tsx scripts/ci/decisionRecords.ts new",
     "release": "release-it",
     "release:beta": "release-it --config .release-it.beta.json",
     "release:main": "release-it --config .release-it.json",
@@ -344,6 +359,7 @@
     "husky": "^9.1.6",
     "is-ci": "^4.0.0",
     "js-yaml": "^5.5.0",
+    "jsonc-parser": "3.3.1",
     "minimatch": "^10.2.6",
     "mocha": "^12.0.3",
     "npm-run-all": "^4.1.5",

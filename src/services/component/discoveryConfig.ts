@@ -1,12 +1,4 @@
-import { createRequire } from 'node:module';
-import type * as VsCodeNS from 'vscode';
-
-/**
- * A CommonJS `require` bound to this file. Lets `readGlobalDiscoveryConfig` resolve `vscode` lazily so the rest of
- * this module (which is otherwise vscode-free) can be loaded from plain Node — unit tests need only the pure
- * helpers below.
- */
-const requireFn = createRequire(__filename);
+import { getRuntime } from '../../core/runtime';
 
 export interface DiscoveryConfig {
   templateRoots: string[];
@@ -112,13 +104,12 @@ export function matchesFilePattern(filename: string, patterns: string[]): boolea
 }
 
 export function readGlobalDiscoveryConfig(): DiscoveryOverride {
-  const vscode = requireFn('vscode') as typeof VsCodeNS;
-  const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
+  const { config } = getRuntime();
   const override: DiscoveryOverride = {};
-  const roots = config.get<string[]>('discovery.templateRoots');
-  const depth = config.get<number>('discovery.maxDepth');
-  const patterns = config.get<string[]>('discovery.filePatterns');
-  const templateFileNames = config.get<string[]>('discovery.templateFileNames');
+  const roots = config.get<string[] | undefined>('discovery.templateRoots', undefined);
+  const depth = config.get<number | undefined>('discovery.maxDepth', undefined);
+  const patterns = config.get<string[] | undefined>('discovery.filePatterns', undefined);
+  const templateFileNames = config.get<string[] | undefined>('discovery.templateFileNames', undefined);
   if (Array.isArray(roots)) override.templateRoots = roots;
   if (typeof depth === 'number') override.maxDepth = depth;
   if (Array.isArray(patterns)) override.filePatterns = patterns;

@@ -1,4 +1,5 @@
-import { registerAddProjectTokenCommand, getComponentService } from './services/component';
+import { getComponentService } from './services/component';
+import { registerAddProjectTokenCommand } from './services/component/commands';
 import * as vscode from 'vscode';
 import { HoverProvider } from './providers/hoverProvider';
 import { CompletionProvider } from './providers/completionProvider';
@@ -11,13 +12,20 @@ import { Logger } from './utils/logger';
 import { ValidationProvider } from './providers/validationProvider';
 import type { CachedComponent } from './types/cache';
 import type { GitLabYamlFragment } from './types/gitlab-catalog';
-import type { HoverContext } from './providers/hoverContentBuilder';
+import { DETACH_HOVER_COMMAND, type HoverContext } from './providers/hoverContentBuilder';
 
 /** Component payload passed to the `detachHover` command. Adds the hover-builder's location context. */
 type DetachableComponent = Component & { _hoverContext?: HoverContext };
 
 import { getPerformanceMonitor } from './utils/performanceMonitor';
 import { isGitLabCIFile, invalidateFileGlobsCache } from './utils/gitlabCiFileMatcher';
+import { setRuntime } from './core/runtime';
+import { createVscodeConfig } from './adapters/vscode/config';
+import { createVscodeSecrets } from './adapters/vscode/secrets';
+import { createVscodeStorage } from './adapters/vscode/storage';
+import { attachLoggerToSettings, createOutputChannelSink } from './adapters/vscode/logger';
+import { createVscodeAuthPrompt } from './adapters/vscode/authPrompt';
+import { registerMcpServerProvider } from './adapters/vscode/mcpDefinitionProvider';
 
 const CI_FILE_CONTEXT_KEY = 'gitlabComponentHelper.isCiFile';
 
@@ -25,7 +33,17 @@ const CI_FILE_CONTEXT_KEY = 'gitlabComponentHelper.isCiFile';
 const PANEL_FOCUS_DELAY_MS = 100;
 
 export function activate(context: vscode.ExtensionContext) {
+  // Install the VS Code ports before anything reads settings, secrets, storage, or logs.
+  setRuntime({
+    config: createVscodeConfig(),
+    secrets: createVscodeSecrets(context.secrets),
+    storage: createVscodeStorage(context.globalState),
+    log: createOutputChannelSink(),
+    authPrompt: createVscodeAuthPrompt((instance, token) =>
+      getComponentService().setTokenForProject(instance, token)),
+  });
   const logger = Logger.getInstance();
+  context.subscriptions.push(attachLoggerToSettings(logger));
   logger.info('GitLab Component Helper is now active!', 'Extension');
   logger.info(`[Extension] VS Code version: ${vscode.version}`, 'Extension');
   logger.debug(`[Extension] Extension context: ${JSON.stringify({
@@ -53,13 +71,25 @@ export function activate(context: vscode.ExtensionContext) {
     logger.debug(`[Extension] About to import/initialize component cache manager...`, 'Extension');
     let cacheManager: ComponentCacheManager;
     try {
-      cacheManager = getComponentCacheManager(context);
+      cacheManager = getComponentCacheManager();
       context.subscriptions.push(cacheManager);
       logger.info(`[Extension] Component cache manager initialized successfully`, 'Extension');
     } catch (cacheError) {
       logger.error(`[Extension] ERROR initializing cache manager: ${cacheError}`, 'Extension');
       throw cacheError;
     }
+
+    // Refetch every source when the configured sources change
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration('gitlabComponentHelper.componentSources')) {
+          logger.debug('[ComponentCache] Configuration changed, forcing refresh...', 'ComponentCache');
+          cacheManager.forceRefresh().catch(error => {
+            logger.warn(`[ComponentCache] Error during config refresh: ${error}`, 'ComponentCache');
+          });
+        }
+      })
+    );
 
     // Listen for configuration changes
     context.subscriptions.push(
@@ -117,9 +147,16 @@ export function activate(context: vscode.ExtensionContext) {
     // Register command to add project/group token
     logger.debug('[Extension] Registering addProjectToken command...', 'Extension');
     const service = getComponentService();
-    service.setSecretStorage(context.secrets);
     context.subscriptions.push(service);
     registerAddProjectTokenCommand(context, service);
+
+    // Offer the bundled MCP server to Copilot Chat and other in-editor MCP clients. Never let it fail activation.
+    try {
+      const mcpRegistration = registerMcpServerProvider(context, service);
+      if (mcpRegistration) context.subscriptions.push(mcpRegistration);
+    } catch (mcpError) {
+      logger.error(`[Extension] Could not register the MCP server: ${mcpError}`, 'Extension');
+    }
 
     // Register component browser command
     logger.debug('[Extension] Registering browseComponents command...', 'Extension');
@@ -234,7 +271,7 @@ export function activate(context: vscode.ExtensionContext) {
         statusMessage += `📍 Location: ${cacheInfo.location}\n`;
         statusMessage += `📦 Components: ${cacheInfo.size}\n`;
         statusMessage += `🕒 Last Updated: ${cacheInfo.lastUpdate}\n`;
-        statusMessage += `💾 Persistence: ${cacheInfo.hasContext ? 'Enabled' : 'Disabled (memory only)'}\n`;
+        statusMessage += `💾 Persistence: ${cacheInfo.isPersistent ? 'Enabled' : 'Disabled (memory only)'}\n`;
 
         if (sourceErrors.size > 0) {
           statusMessage += `\n⚠️ Source Errors:\n`;
@@ -295,7 +332,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Register command to detach hover window as a dedicated panel
     logger.debug('[Extension] Registering detachHover command...', 'Extension');
     context.subscriptions.push(
-      vscode.commands.registerCommand('gitlab-component-helper.detachHover', async (component: DetachableComponent) => {
+      vscode.commands.registerCommand(DETACH_HOVER_COMMAND, async (component: DetachableComponent) => {
         logger.info(`[Extension] Detaching hover for component: ${component?.name}`, 'Extension');
 
         if (!component) {

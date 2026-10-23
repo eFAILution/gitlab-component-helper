@@ -6,7 +6,11 @@
 
 import * as assert from 'node:assert/strict';
 import type { Component } from '../../src/providers/componentDetector';
-import { buildComponentHoverMarkdown } from '../../src/providers/hoverContentBuilder';
+import {
+  buildComponentHoverMarkdown,
+  DETACH_HOVER_COMMAND,
+  HOVER_TRUSTED_COMMANDS,
+} from '../../src/providers/hoverContentBuilder';
 
 const HOVER_CONTEXT = {
   documentUri: 'file:///workspace/.gitlab-ci.yml',
@@ -173,5 +177,22 @@ suite('buildComponentHoverMarkdown — parameters table', () => {
     );
     assert.ok(md.includes('| required_no_default |  | Yes | - |\n'), md);
     assert.ok(md.includes('| with_default |  | No | `prod` |\n'), md);
+  });
+});
+
+suite('hover markdown trust', () => {
+  test('only the detach command is enabled, so links in remote descriptions cannot run other commands', () => {
+    assert.deepStrictEqual(HOVER_TRUSTED_COMMANDS, { enabledCommands: [DETACH_HOVER_COMMAND] });
+  });
+
+  test('the hover links to the enabled detach command, and a description link stays a different command', () => {
+    const md = buildComponentHoverMarkdown(
+      baseComponent({ description: '[click me](command:workbench.action.terminal.new)' }),
+      HOVER_CONTEXT,
+    );
+    const commandLinks: string[] = md.match(/\(command:[^?)]+/g) ?? [];
+    assert.ok(commandLinks.includes(`(command:${DETACH_HOVER_COMMAND}`));
+    assert.ok(commandLinks.includes('(command:workbench.action.terminal.new'));
+    assert.ok(!HOVER_TRUSTED_COMMANDS.enabledCommands.includes('workbench.action.terminal.new'));
   });
 });
