@@ -45,7 +45,7 @@ export function branchFindings(added: readonly string[], branch: string): Findin
     return {
       errors: [],
       warnings: [`branch '${branch}' has no issue number; name branches ${BRANCH_FORMAT} (${DOCS_POINTER}). `
-        + 'Fine for Dependabot, forks and the beta -> main release PR'],
+        + 'Fine for Dependabot and forks'],
     };
   }
   if (issue === undefined) {
