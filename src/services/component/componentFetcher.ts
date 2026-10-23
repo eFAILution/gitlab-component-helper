@@ -44,40 +44,17 @@ export class ComponentFetcher {
    */
   public async fetchComponentMetadata(url: string): Promise<Component> {
     const startTime = Date.now();
+    const parsed = this.urlParser.parseCustomComponentUrl(url);
 
     try {
-      // Parse the GitLab component URL
-      const urlObj = new URL(url);
-      const gitlabInstance = urlObj.hostname;
-
-      // Extract project path, component name, and version.
-      // Supports:
-      // 1) /group/project/component@version
-      // 2) /group/project/component
-      // 3) /group/project (project-only shorthand -> default component selection)
-      const pathParts = urlObj.pathname.split('/').filter(Boolean);
-      let componentName: string;
-      let version: string;
-      let projectPath: string;
-      let projectOnlyUrl = false;
-
-      const lastPart = pathParts[pathParts.length - 1];
-
-      if (lastPart.includes('@')) {
-        [componentName, version] = lastPart.split('@');
-        projectPath = pathParts.slice(0, pathParts.length - 1).join('/');
-      } else if (pathParts.length >= 3) {
-        componentName = lastPart;
-        version = 'main';
-        projectPath = pathParts.slice(0, pathParts.length - 1).join('/');
-      } else {
-        // Project-only URL (e.g. /components/dependency-scanning).
-        // Default to "main" and let catalog selection refine it if available.
-        componentName = 'main';
-        version = 'main';
-        projectPath = pathParts.join('/');
-        projectOnlyUrl = true;
+      if (!parsed) {
+        throw new Error(`Not a component URL: ${url}`);
       }
+
+      const { gitlabInstance, path: projectPath, projectOnly: projectOnlyUrl } = parsed;
+      // An unpinned reference fetches from `main`; a project-only URL lets catalog selection refine the name below.
+      const version = parsed.version ?? 'main';
+      let componentName = parsed.name;
 
       this.logger.debug(
         `Parsed URL: Project=${projectPath}, Component=${componentName}, Version=${version}`
@@ -280,12 +257,8 @@ export class ComponentFetcher {
       }
 
       // For other failures, still provide a minimal component rather than failing outright.
-      const urlParts = url.split('/');
-      const lastPart = urlParts[urlParts.length - 1];
-      const componentName = lastPart.includes('@') ? lastPart.split('@')[0] : lastPart;
-
       return {
-        name: componentName,
+        name: parsed?.name ?? url,
         description: `Component from ${url}\n\nCould not fetch detailed information: ${error}`,
         parameters: [],
         fetchFailure: classifyFetchFailure(error)

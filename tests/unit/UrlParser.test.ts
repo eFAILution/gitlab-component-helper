@@ -19,9 +19,24 @@ suite('UrlParser.parseCustomComponentUrl', () => {
       path: 'components/opentofu',
       name: 'full-pipeline',
       version: '2.9.0',
+      projectOnly: false,
     };
     assert.deepStrictEqual(
       parser.parseCustomComponentUrl('https://gitlab.com/components/opentofu/full-pipeline@2.9.0'),
+      expected
+    );
+  });
+
+  test('keeps a branch version that contains slashes', () => {
+    const expected: ParsedComponentUrl = {
+      gitlabInstance: 'gitlab.com',
+      path: 'my-group/my-subgroup/my-project',
+      name: 'my-component',
+      version: 'feature/my-branch',
+      projectOnly: false,
+    };
+    assert.deepStrictEqual(
+      parser.parseCustomComponentUrl('https://gitlab.com/my-group/my-subgroup/my-project/my-component@feature/my-branch'),
       expected
     );
   });
@@ -32,6 +47,7 @@ suite('UrlParser.parseCustomComponentUrl', () => {
       path: 'group/project',
       name: 'my-component',
       version: undefined,
+      projectOnly: false,
     };
     assert.deepStrictEqual(
       parser.parseCustomComponentUrl('https://gitlab.example.com/group/project/my-component'),
@@ -45,6 +61,7 @@ suite('UrlParser.parseCustomComponentUrl', () => {
       path: 'user',
       name: 'simple-component',
       version: 'latest',
+      projectOnly: false,
     };
     assert.deepStrictEqual(
       parser.parseCustomComponentUrl('https://gitlab.com/user/simple-component@latest'),
@@ -62,6 +79,7 @@ suite('UrlParser.parseCustomComponentUrl', () => {
       path: 'group/project',
       name: 'main',
       version: 'main',
+      projectOnly: true,
     };
     assert.deepStrictEqual(
       parser.parseCustomComponentUrl('https://gitlab.com/group/project'),
