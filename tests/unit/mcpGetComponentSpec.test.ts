@@ -96,6 +96,19 @@ suite('get_component_spec', () => {
     assert.match(error.message, /TLS certificate for gitlab\.example \(UNABLE_TO_GET_ISSUER_CERT\).*NODE_EXTRA_CA_CERTS/);
   });
 
+  test('an expired or mismatched certificate gets its own hint, not the trust-store one', () => {
+    const ref = { gitlabInstance: 'gitlab.example', url: 'https://gitlab.example/g/p/c@1.0.0' };
+    const tlsMessage = (code: string) => {
+      const cause = Object.assign(new Error(code), { code });
+      return gitlabFailure(new NetworkError(cause.message, { cause }), ref).message;
+    };
+
+    assert.match(tlsMessage('CERT_HAS_EXPIRED'), /expired or not yet valid \(CERT_HAS_EXPIRED\)/);
+    assert.match(tlsMessage('ERR_TLS_CERT_ALTNAME_INVALID'), /does not match that hostname/);
+    assert.doesNotMatch(tlsMessage('CERT_HAS_EXPIRED'), /NODE_EXTRA_CA_CERTS/);
+    assert.match(tlsMessage('SELF_SIGNED_CERT_IN_CHAIN'), /NODE_EXTRA_CA_CERTS/);
+  });
+
   test('a wrapped connection failure reports the socket code, not the wrapper code', () => {
     const ref = { gitlabInstance: 'gitlab.example', url: 'https://gitlab.example/g/p/c@1.0.0' };
     const cause = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });

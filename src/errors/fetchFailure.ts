@@ -58,15 +58,31 @@ export function classifyFetchFailure(error: unknown): FetchFailure {
   return { kind: 'unknown', ...(code ? { code } : {}), ...(statusCode ? { statusCode } : {}) };
 }
 
+const EXPIRED_CODES = new Set(['CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID']);
+const HOSTNAME_CODES = new Set(['HOSTNAME_MISMATCH', 'ERR_TLS_CERT_ALTNAME_INVALID']);
+
+/** A trust-store fix only helps an unknown issuer; an expired or mismatched certificate needs a different fix. */
+function tlsHint(code: string | undefined, host: string, suffix: string): string {
+  if (code && EXPIRED_CODES.has(code)) {
+    return `The TLS certificate for ${host} is expired or not yet valid${suffix}. Check this machine's clock; otherwise the ` +
+      'GitLab admin needs to renew the certificate. Do not disable TLS verification.';
+  }
+  if (code && HOSTNAME_CODES.has(code)) {
+    return `The TLS certificate for ${host} does not match that hostname${suffix}. Check the instance address in the component ` +
+      'reference and componentSources. Do not disable TLS verification.';
+  }
+  return `Node could not verify the TLS certificate for ${host}${suffix}. curl or a browser may still work because they use the ` +
+    'OS trust store. Put the issuing root CA (PEM) in a file, set NODE_EXTRA_CA_CERTS to that file in the environment VS Code ' +
+    'starts from (for Remote/WSL: ~/.vscode-server/server-env-setup), and restart VS Code. Do not disable TLS verification.';
+}
+
 /** Fixed-text guidance for a failure on `host`. */
 export function fetchFailureHint(failure: FetchFailure, host: string): string {
   const detail = failure.code ?? (failure.statusCode ? `HTTP ${failure.statusCode}` : undefined);
   const suffix = detail ? ` (${detail})` : '';
   switch (failure.kind) {
     case 'tls':
-      return `Node could not verify the TLS certificate for ${host}${suffix}. curl or a browser may still work because they use the ` +
-        'OS trust store. Put the issuing root CA (PEM) in a file, set NODE_EXTRA_CA_CERTS to that file in the environment VS Code ' +
-        'starts from (for Remote/WSL: ~/.vscode-server/server-env-setup), and restart VS Code. Do not disable TLS verification.';
+      return tlsHint(failure.code, host, suffix);
     case 'dns':
       return `${host} could not be resolved${suffix}. Check VPN and DNS.`;
     case 'connection':
