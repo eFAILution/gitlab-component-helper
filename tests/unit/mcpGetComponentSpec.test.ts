@@ -96,6 +96,17 @@ suite('get_component_spec', () => {
     assert.match(error.message, /TLS certificate for gitlab\.example \(UNABLE_TO_GET_ISSUER_CERT\).*NODE_EXTRA_CA_CERTS/);
   });
 
+  test('a wrapped connection failure reports the socket code, not the wrapper code', () => {
+    const ref = { gitlabInstance: 'gitlab.example', url: 'https://gitlab.example/g/p/c@1.0.0' };
+    const cause = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    const refused = gitlabFailure(new NetworkError(cause.message, { cause }), ref);
+    const bare = gitlabFailure(new NetworkError('socket hang up'), ref);
+
+    assert.ok(refused instanceof FetchFailureToolError && bare instanceof FetchFailureToolError);
+    assert.deepStrictEqual(refused.failure, { kind: 'connection', code: 'ECONNREFUSED' });
+    assert.deepStrictEqual(bare.failure, { kind: 'unknown' });
+  });
+
   test('the fetcher placeholder failure is reported with its cause', async () => {
     const services = createComponentServices(() => true);
     const placeholder = {

@@ -167,7 +167,8 @@ suite('MCP validation tools', () => {
       isHostAllowed: () => true,
       services: { fetchComponent: fail, fetchVersions: fail },
     };
-    const validate = createTools(context).find((tool) => tool.definition.name === 'validate_ci_file')!;
+    const validate = createTools(context).find((tool) => tool.definition.name === 'validate_ci_file');
+    assert.ok(validate);
 
     const { summary, data } = await validate.run({ checks: ['inputs'] });
     const findings = data.findings as Array<Record<string, unknown>>;

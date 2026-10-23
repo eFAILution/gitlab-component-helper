@@ -4,6 +4,7 @@
  */
 
 import { extractStatusCode } from './guards';
+import { ErrorCode } from './types';
 
 export type FetchFailureKind = 'tls' | 'dns' | 'connection' | 'timeout' | 'not-found' | 'rate-limit' | 'server' | 'unknown';
 
@@ -15,6 +16,8 @@ export interface FetchFailure {
 }
 
 const ERROR_CODE = /^[A-Z][A-Z0-9_]{1,63}$/;
+/** Our own wrapper codes (`NETWORK_ERROR`, ...) say nothing about the cause, so the search looks past them. */
+const WRAPPER_CODES: ReadonlySet<string> = new Set(Object.values(ErrorCode));
 const DNS_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'EAI_FAIL', 'EAI_NONAME']);
 const CONNECTION_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH', 'ETIMEDOUT', 'EPIPE']);
 const TLS_CODES = new Set([
@@ -30,12 +33,12 @@ const TLS_CODES = new Set([
   'HOSTNAME_MISMATCH',
 ]);
 
-/** The first well-formed `code` along the error's `cause` chain. */
+/** The first well-formed Node or OpenSSL `code` along the error's `cause` chain. */
 function errorCode(error: unknown): string | undefined {
   let current: unknown = error;
   for (let depth = 0; depth < 5 && typeof current === 'object' && current !== null; depth++) {
     const code = (current as { code?: unknown }).code;
-    if (typeof code === 'string' && ERROR_CODE.test(code)) return code;
+    if (typeof code === 'string' && ERROR_CODE.test(code) && !WRAPPER_CODES.has(code)) return code;
     current = (current as { cause?: unknown }).cause;
   }
   return undefined;
