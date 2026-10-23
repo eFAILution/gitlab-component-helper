@@ -35,6 +35,7 @@ When an in-editor AI client starts the server, it gets:
   a workspace's `.vscode/settings.json` can only change catalog and checking settings
 - the tokens you saved with **GitLab CI: Add Component Project/Group**, for the instances in your token list and in your
   **user** `componentSources` setting (never instances named only by workspace or folder settings)
+- a copy of the extension's component cache, so it can answer specs the editor already has without fetching them
 
 When VS Code starts the server, the extension writes the tokens to a one-time file in its private storage folder
 (readable only by you) and passes the server just the file's path. The server reads the file and deletes it as it
@@ -141,6 +142,20 @@ cloned repository must not choose where the server sends requests. A component o
 Self-managed GitLab on an internal network works. Link-local addresses (like the 169.254.169.254 cloud metadata
 endpoint), other known metadata endpoints, unspecified, and multicast addresses are always refused, also when written
 as IPv6 that carries an IPv4 address. Plain `http://` instances aren't supported.
+
+### Caching
+
+The server caches the specs it fetches in its cache directory, so asking about the same component again doesn't go
+back to GitLab. A spec pinned to a version tag (`1.2.0`) is reused for as long as it's cached. A spec pinned to
+anything else (a branch, `~latest`, a partial version like `1.2`) can change, so it's fetched again after
+`cacheTime` (an hour by default). Failed lookups are never cached.
+
+When VS Code starts the server, the extension also writes the specs from its own cache to
+`mcp-seed/components.json` in its storage folder (readable only by you) and passes the path in `GCH_CACHE_SEED`. The
+server uses those specs when its own cache has nothing fresh. The file holds component specs only, no tokens. While
+the server is on, the extension rewrites the file a couple of seconds after its cache changes, and a running server
+picks up the new copy within a second. Resetting the extension's cache also clears what the server fetched. Other
+clients can point `GCH_CACHE_SEED` at a file in the same format, or leave it unset.
 
 ### Limits
 

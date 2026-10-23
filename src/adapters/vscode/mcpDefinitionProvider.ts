@@ -20,6 +20,8 @@ import {
   userSourceHosts,
 } from '../../mcp/launchConfig';
 import { HANDOFF_DIR_NAME, HANDOFF_ENV, HANDOFF_TTL_MS, purgeTokenHandoffs, removeTokenHandoff } from '../../mcp/tokenHandoff';
+import { buildCacheSeed, CACHE_SEED_DIR_NAME, CACHE_SEED_ENV, writeCacheSeed } from '../../mcp/cacheSeed';
+import { getComponentCacheManager } from '../../services/cache/componentCacheManager';
 
 export const MCP_PROVIDER_ID = 'gitlabComponentHelper.mcp';
 const SERVER_LABEL = 'GitLab Component Helper';
@@ -48,6 +50,34 @@ async function collectTokens(tokens: TokenSource): Promise<Map<string, string>> 
   return found;
 }
 
+/** After a burst of cache changes, rewrite the seed once. */
+const SEED_REWRITE_DELAY_MS = 2000;
+
+/** Write the extension's component cache for the server to read. A failure only costs the server some fetches. */
+async function writeSeed(dir: string): Promise<string | undefined> {
+  try {
+    const { components, clearedAt } = getComponentCacheManager().peekCache();
+    return await writeCacheSeed(dir, buildCacheSeed(components, clearedAt));
+  } catch (error) {
+    Logger.getInstance().debug(`[MCP] Could not write the cache seed: ${error}`, 'MCP');
+    return undefined;
+  }
+}
+
+/** Keep the seed in step with the cache while the server is on, so a running server sees later changes. */
+function watchCacheForSeed(dir: string): vscode.Disposable {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const subscription = getComponentCacheManager().onDidChangeComponents(() => {
+    if (!vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>('mcp.enabled', CONFIG_DEFAULTS['mcp.enabled'])) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => void writeSeed(dir), SEED_REWRITE_DELAY_MS);
+  });
+  return new vscode.Disposable(() => {
+    clearTimeout(timer);
+    subscription.dispose();
+  });
+}
+
 /**
  * @returns The registration, or `undefined` when this VS Code has no MCP provider API.
  */
@@ -62,6 +92,7 @@ export function registerMcpServerProvider(context: vscode.ExtensionContext, toke
   const handoffDir = vscode.Uri.joinPath(context.globalStorageUri, HANDOFF_DIR_NAME).fsPath;
   void purgeTokenHandoffs(handoffDir);
   const pendingHandoffs = new Map<string, ReturnType<typeof setTimeout>>();
+  const seedDir = vscode.Uri.joinPath(context.globalStorageUri, CACHE_SEED_DIR_NAME).fsPath;
 
   const changed = new vscode.EventEmitter<void>();
   const fire = () => changed.fire();
@@ -111,7 +142,8 @@ export function registerMcpServerProvider(context: vscode.ExtensionContext, toke
           void removeTokenHandoff(handoffFile);
         }, HANDOFF_TTL_MS));
       }
-      server.env = { ...server.env, ...tokenEnv };
+      const seedFile = await writeSeed(seedDir);
+      server.env = { ...server.env, ...tokenEnv, ...(seedFile ? { [CACHE_SEED_ENV]: seedFile } : {}) };
       return server;
     },
   };
@@ -129,6 +161,7 @@ export function registerMcpServerProvider(context: vscode.ExtensionContext, toke
       },
     },
     vscode.lm.registerMcpServerDefinitionProvider(MCP_PROVIDER_ID, provider),
+    watchCacheForSeed(seedDir),
     tokens.onDidChangeToken(onTokenChange),
     vscode.workspace.onDidChangeWorkspaceFolders(fire),
     vscode.workspace.onDidChangeConfiguration((event) => {

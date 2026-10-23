@@ -13,6 +13,7 @@ import { hostNotAllowedMessage } from './adapters/network';
 import type { ComponentRef } from './tools/componentRef';
 import type { ComponentServices, SpecComponent } from './tools/getComponentSpec';
 import type { ComponentSource } from '../types/api';
+import type { SpecCache } from './specCache';
 
 // The fetcher answers a failed non-auth fetch with a placeholder component whose description embeds the raw error.
 const FETCH_FAILURE_MARKER = 'Could not fetch detailed information';
@@ -64,10 +65,12 @@ export function assertHostAllowed(isHostAllowed: (host: string) => boolean, ref:
   }
 }
 
-export function createComponentServices(isHostAllowed: (host: string) => boolean): ComponentServices {
+export function createComponentServices(isHostAllowed: (host: string) => boolean, specs?: SpecCache): ComponentServices {
   return {
     fetchComponent: async (ref) => {
       assertHostAllowed(isHostAllowed, ref);
+      const cached = await specs?.get(ref);
+      if (cached) return cached;
       let component: SpecComponent | null;
       try {
         component = await getComponentService().getComponentFromUrl(ref.url);
@@ -82,6 +85,7 @@ export function createComponentServices(isHostAllowed: (host: string) => boolean
           failure ?? { kind: 'unknown' }
         );
       }
+      if (component) specs?.set(ref, component);
       return component;
     },
     fetchVersions: async (ref) => {
