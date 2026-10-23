@@ -46,8 +46,13 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           HEAD_REF: ${{ github.head_ref }}
+          # The beta -> main release PR carries every record that landed on beta, and each one already passed the
+          # branch rule on its own PR. A fork's branch named beta is not this PR, so the repo is checked too.
+          RELEASE_PR: >-
+            ${{ github.event_name == 'pull_request' && github.head_ref == 'beta' && github.base_ref == 'main'
+            && github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
-          if [ "$EVENT_NAME" = "pull_request" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$RELEASE_PR" != "true" ]; then
             npx tsx scripts/ci/decisionRecords.ts check --branch "$HEAD_REF" --base HEAD^1
           else
             npx tsx scripts/ci/decisionRecords.ts check
