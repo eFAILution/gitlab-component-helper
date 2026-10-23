@@ -12,7 +12,7 @@ import { createMcpWorkspace } from '../../src/mcp/adapters/workspace';
 import { createTools } from '../../src/mcp/tools';
 import type { ToolContext } from '../../src/mcp/tools/context';
 import type { ComponentServices } from '../../src/mcp/tools/getComponentSpec';
-import { GitLabAuthToolError } from '../../src/mcp/services';
+import { FetchFailureToolError, GitLabAuthToolError } from '../../src/mcp/services';
 import { ToolError, type Tool } from '../../src/mcp/server';
 import { FIXTURES_ROOT } from './support/fixtureIncludes';
 
@@ -146,6 +146,48 @@ suite('MCP validation tools', () => {
     const { data } = await tools.list_component_versions.run({ component: 'gitlab.com/group/proj/deploy' });
 
     assert.deepStrictEqual(data, { component: 'https://gitlab.com/group/proj/deploy', versions: ['main', '1.0.0', '1.4.0'], latestStable: '1.4.0' });
+  });
+
+  test('fetch failures carry their cause, and the summary groups them per host', async () => {
+    const tlsRoot = join(base, 'tls');
+    mkdirSync(tlsRoot);
+    writeFileSync(join(tlsRoot, '.gitlab-ci.yml'), [
+      'include:',
+      '  - component: gitlab.example/group/a/deploy@1.0.0',
+      '  - component: gitlab.example/group/b/deploy@1.0.0',
+      '',
+    ].join('\n'));
+    const failure = { kind: 'tls' as const, code: 'UNABLE_TO_GET_ISSUER_CERT' };
+    const fail = async () => {
+      throw new FetchFailureToolError('Fetching failed.', failure);
+    };
+    const context: ToolContext = {
+      workspace: createMcpWorkspace([tlsRoot]),
+      repoContext: noRepo,
+      isHostAllowed: () => true,
+      services: { fetchComponent: fail, fetchVersions: fail },
+    };
+    const validate = createTools(context).find((tool) => tool.definition.name === 'validate_ci_file');
+    assert.ok(validate);
+
+    const { summary, data } = await validate.run({ checks: ['inputs'] });
+    const findings = data.findings as Array<Record<string, unknown>>;
+
+    assert.deepStrictEqual(findings.map(({ reason, errorCode }) => ({ reason, errorCode })), [
+      { reason: 'tls', errorCode: 'UNABLE_TO_GET_ISSUER_CERT' },
+      { reason: 'tls', errorCode: 'UNABLE_TO_GET_ISSUER_CERT' },
+    ]);
+    assert.match(findings[0].hint as string, /NODE_EXTRA_CA_CERTS/);
+    const groups = (data.summary as { fetchFailures: Array<Record<string, unknown>> }).fetchFailures;
+    assert.deepStrictEqual(groups.map(({ host, reason, requests }) => ({ host, reason, requests })), [{ host: 'gitlab.example', reason: 'tls', requests: 2 }]);
+    assert.match(summary ?? '', /2 request\(s\) to gitlab\.example failed: Node could not verify the TLS certificate/);
+  });
+
+  test('a path outside the roots names the roots', async () => {
+    const error = await tools.validate_ci_file.run({ path: '/elsewhere/.gitlab-ci.yml' }).catch((caught) => caught);
+
+    assert.ok(error instanceof ToolError);
+    assert.ok(error.message.includes(root), error.message);
   });
 });
 

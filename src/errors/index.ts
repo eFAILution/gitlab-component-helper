@@ -19,3 +19,10 @@ export {
   extractStatusCode,
   isAuthError
 } from './guards';
+
+export {
+  classifyFetchFailure,
+  fetchFailureHint,
+  type FetchFailure,
+  type FetchFailureKind
+} from './fetchFailure';

@@ -11,6 +11,7 @@ import { CONFIG_DEFAULTS } from '../../core/config/defaults';
 import { getRuntime } from '../../core/runtime';
 import { ToolError } from '../server';
 import type { McpWorkspace } from '../adapters/workspace';
+import { cleanPath } from './sanitize';
 
 export const MAX_CI_FILES = 500;
 /** Directories visited per call; a huge tree stops here even if it holds few CI files. */
@@ -85,7 +86,12 @@ export async function collectCiFiles(workspace: McpWorkspace, userPath?: string,
   const starts = userPath === undefined ? workspace.roots() : [await workspace.resolve(userPath)];
   let truncated = false;
   for (const start of starts) {
-    if (start === null) throw new ToolError(`${userPath} is ${PATH_NOT_FOUND}.`);
+    if (start === null) {
+      throw new ToolError(
+        `${userPath} is ${PATH_NOT_FOUND}. The server only reads files inside the VS Code workspace folders ` +
+          `(${workspace.roots().map(cleanPath).join(', ') || 'none'}); add the file's folder to the workspace to check it.`
+      );
+    }
     if ((await stat(start)).isFile()) {
       state.found.push(start);
     } else if (await walk(start, state, 0)) {
