@@ -58,7 +58,7 @@ decisions:
       positive:
         - A repeat spec lookup costs no network, within a session and across restarts.
         - A server started from VS Code answers specs the editor already knows without fetching them, including ones the editor learns later.
-      - Resetting the extension's cache also clears what a running server fetched.
+        - Resetting the extension's cache also clears what a running server fetched.
         - Fewer requests against GitLab's rate limit.
       negative:
         - A tag that is force-moved keeps its old spec until the entry is evicted or the cache is cleared, as in the extension.
