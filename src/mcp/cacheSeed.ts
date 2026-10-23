@@ -1,17 +1,17 @@
 /**
  * A copy of the extension's component cache for the MCP server it launches, so the server starts warm (ADR-372).
  * The extension can't share its cache directly: it lives in VS Code's global state, which only the extension can
- * read. So at each launch the extension rewrites one file in its private storage folder and passes the path in
- * `GCH_CACHE_SEED`. Specs aren't secret, so the file stays put. The server only reads it, bounded and shape-checked,
+ * read. So the extension rewrites one file in its private storage folder at each launch and whenever its cache changes,
+ * and passes the path in `GCH_CACHE_SEED`. A running server re-reads the file when it changes. Specs aren't secret, so the file stays put. The server only reads it, bounded and shape-checked,
  * and sanitizes what it returns the same as any fetched spec.
  */
 
 import { randomBytes } from 'node:crypto';
-import { chmod, mkdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readBoundedTextFile } from '../adapters/node/readTextFile';
 import type { CachedComponent } from '../types/cache';
-import { isPinnedRef, specKey, toSpecComponent, type SpecCacheEntry } from './specCache';
+import { isPinnedRef, specKey, toSpecComponent, type SeedSnapshot, type SeedSource, type SpecCacheEntry } from './specCache';
 
 /** The variable holding the seed file's path. */
 export const CACHE_SEED_ENV = 'GCH_CACHE_SEED';
@@ -42,13 +42,16 @@ interface SeedComponent {
 
 export interface CacheSeed {
   schema: number;
+  /** Epoch ms the extension last reset its cache. The server drops what it fetched before then. */
+  clearedAt?: number;
   components: SeedComponent[];
 }
 
 /** Only the spec fields of each entry: no raw template YAML, and nothing that isn't needed to answer a tool call. */
-export function buildCacheSeed(components: readonly CachedComponent[]): CacheSeed {
+export function buildCacheSeed(components: readonly CachedComponent[], clearedAt = 0): CacheSeed {
   return {
     schema: SEED_SCHEMA,
+    ...(clearedAt > 0 ? { clearedAt } : {}),
     components: components.slice(0, MAX_SEED_ENTRIES).map((component) => ({
       gitlabInstance: component.gitlabInstance,
       sourcePath: component.sourcePath,
@@ -103,25 +106,41 @@ function toSeedEntry(value: unknown): [string, SpecCacheEntry] | undefined {
  *
  * @param warn Told why a seed that exists was not used. Never given file contents.
  */
-export async function readCacheSeed(file: string, warn: (message: string) => void): Promise<Map<string, SpecCacheEntry>> {
+export async function readCacheSeed(file: string, warn: (message: string) => void): Promise<SeedSnapshot> {
+  const none: SeedSnapshot = { entries: new Map(), clearedAt: 0 };
   const text = await readBoundedTextFile(file, MAX_SEED_BYTES);
-  if (text === null) return new Map();
+  if (text === null) return none;
   let seed: unknown;
   try {
     seed = JSON.parse(text);
   } catch {
-    warn(`${CACHE_SEED_ENV} is not valid JSON; starting with an empty cache`);
-    return new Map();
+    warn(`${CACHE_SEED_ENV} is not valid JSON; not using it`);
+    return none;
   }
-  const { schema, components } = (seed ?? {}) as Partial<CacheSeed>;
+  const { schema, components, clearedAt } = (seed ?? {}) as Partial<CacheSeed>;
   if (schema !== SEED_SCHEMA || !Array.isArray(components)) {
-    warn(`${CACHE_SEED_ENV} is not a cache seed this server reads; starting with an empty cache`);
-    return new Map();
+    warn(`${CACHE_SEED_ENV} is not a cache seed this server reads; not using it`);
+    return none;
   }
-  return new Map(
+  const entries = new Map(
     components.slice(0, MAX_SEED_ENTRIES).flatMap((value) => {
       const entry = toSeedEntry(value);
       return entry ? [entry] : [];
     })
   );
+  return { entries, clearedAt: typeof clearedAt === 'number' && Number.isFinite(clearedAt) ? clearedAt : 0 };
+}
+
+/** The seed file as the spec cache reads it: its mtime says when to read it again. */
+export function fileSeedSource(file: string, warn: (message: string) => void): SeedSource {
+  return {
+    read: () => readCacheSeed(file, warn),
+    stamp: async () => {
+      try {
+        return (await stat(file)).mtimeMs;
+      } catch {
+        return undefined;
+      }
+    },
+  };
 }

@@ -48,6 +48,7 @@ export class ComponentCacheManager implements Disposable {
   private performanceMonitor = getPerformanceMonitor();
   private components: CachedComponent[] = [];
   private lastRefreshTime = 0;
+  private clearedAt = 0;
   private refreshInProgress = false;
   private sourceErrors: Map<string, string> = new Map();
   private readonly eagerRefresh: boolean;
@@ -119,9 +120,9 @@ export class ComponentCacheManager implements Disposable {
     return this.components;
   }
 
-  /** The cached components as they are now, without the refresh {@link getComponents} may start. */
-  public peekComponents(): readonly CachedComponent[] {
-    return this.components;
+  /** The cache as it is now, without the refresh {@link getComponents} may start, and when it was last reset. */
+  public peekCache(): { components: readonly CachedComponent[]; clearedAt: number } {
+    return { components: this.components, clearedAt: this.clearedAt };
   }
 
   /**
@@ -712,6 +713,8 @@ export class ComponentCacheManager implements Disposable {
     this.versionCache.clearCache();
     this.sourceErrors.clear();
     this.lastRefreshTime = 0;
+    this.clearedAt = Date.now();
+    this.notifyComponentsChanged();
 
     // Clear persistent storage
     try {

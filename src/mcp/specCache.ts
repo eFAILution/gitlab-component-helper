@@ -41,7 +41,19 @@ export interface SpecCacheOptions {
   cacheTimeMs(): number;
   now?: () => number;
   /** Entries to fall back on when the server's own cache has none for a spec (the extension's cache). */
-  seed?: () => Promise<ReadonlyMap<string, SpecCacheEntry>>;
+  seed?: SeedSource;
+}
+
+export interface SeedSnapshot {
+  entries: ReadonlyMap<string, SpecCacheEntry>;
+  /** Epoch ms the extension last reset its cache, or 0. */
+  clearedAt: number;
+}
+
+export interface SeedSource {
+  read(): Promise<SeedSnapshot>;
+  /** Changes whenever the seed does (its file's mtime), or `undefined` when there's no seed. */
+  stamp(): Promise<number | undefined>;
 }
 
 interface StoredSpecCache {
@@ -115,35 +127,86 @@ function newest(entries: Map<string, SpecCacheEntry>): Array<[string, SpecCacheE
 }
 
 export function createSpecCache({ storage, cacheTimeMs, now = Date.now, seed }: SpecCacheOptions): SpecCache {
-  let loaded: Promise<{ own: Map<string, SpecCacheEntry>; seeded: ReadonlyMap<string, SpecCacheEntry> }> | undefined;
-  const load = () => {
-    loaded ??= Promise.all([loadStored(storage), seed ? seed().catch(() => new Map()) : new Map()]).then(([own, seeded]) => ({ own, seeded }));
-    return loaded;
-  };
+  let own: Promise<Map<string, SpecCacheEntry>> | undefined;
+  const loadOwn = () => (own ??= loadStored(storage));
   // Writes go one at a time, so a slow write never lands after a newer one.
   let writing: Promise<void> = Promise.resolve();
+  const persist = (entries: Map<string, SpecCacheEntry>) => {
+    const kept = newest(entries);
+    entries.clear();
+    kept.forEach(([key, entry]) => entries.set(key, entry));
+    const snapshot: StoredSpecCache = { schema: SPEC_CACHE_SCHEMA, entries: kept };
+    // A failed write only costs a refetch next session.
+    writing = writing.then(() => storage.update(SPEC_CACHE_KEY, snapshot)).catch(() => undefined);
+  };
+
+  const seeded = createSeedView(seed, now, async (clearedAt) => {
+    // The extension's cache was reset: what this server fetched before then goes too.
+    const entries = await loadOwn();
+    const before = entries.size;
+    [...entries].filter(([, entry]) => entry.fetchedAt < clearedAt).forEach(([key]) => entries.delete(key));
+    if (entries.size !== before) persist(entries);
+  });
   const isFresh = (entry: SpecCacheEntry) => entry.pinned || now() - entry.fetchedAt < cacheTimeMs();
 
   return {
     get: async (identity) => {
-      const { own, seeded } = await load();
+      const seedEntries = await seeded();
       const key = specKey(identity);
-      const entry = [own.get(key), seeded.get(key)].find((candidate) => candidate && isFresh(candidate));
+      const entry = [(await loadOwn()).get(key), seedEntries.get(key)].find((candidate) => candidate && isFresh(candidate));
       return entry?.component;
     },
     set: (identity, component) => {
       // Only the spec fields: a fetched component also carries its raw template and other bulk.
       const spec = toSpecComponent(component);
       if (!spec) return;
-      void load().then(({ own }) => {
-        own.set(specKey(identity), { component: spec, fetchedAt: now(), pinned: isPinnedRef(identity.version) });
-        const kept = newest(own);
-        own.clear();
-        kept.forEach(([key, entry]) => own.set(key, entry));
-        const snapshot: StoredSpecCache = { schema: SPEC_CACHE_SCHEMA, entries: kept };
-        // A failed write only costs a refetch next session.
-        writing = writing.then(() => storage.update(SPEC_CACHE_KEY, snapshot)).catch(() => undefined);
+      void loadOwn().then((entries) => {
+        entries.set(specKey(identity), { component: spec, fetchedAt: now(), pinned: isPinnedRef(identity.version) });
+        persist(entries);
       });
     },
+  };
+}
+
+/** How often a running server looks for a newer seed: at most one `stat` per lookup burst. */
+export const SEED_CHECK_INTERVAL_MS = 1000;
+
+/**
+ * The seed's entries, re-read when its file changes, so a running server sees what the extension caches later. Calls
+ * `onCleared` when the seed reports a cache reset newer than the last one seen.
+ */
+function createSeedView(
+  seed: SeedSource | undefined,
+  now: () => number,
+  onCleared: (clearedAt: number) => Promise<void>
+): () => Promise<ReadonlyMap<string, SpecCacheEntry>> {
+  let entries: ReadonlyMap<string, SpecCacheEntry> = new Map();
+  let stamp: number | undefined;
+  let clearedAt = 0;
+  let checkedAt = Number.NEGATIVE_INFINITY;
+  let checking: Promise<void> | undefined;
+
+  const check = async () => {
+    if (!seed) return;
+    const current = await seed.stamp().catch(() => undefined);
+    if (current === undefined || current === stamp) return;
+    stamp = current;
+    const snapshot = await seed.read().catch(() => ({ entries: new Map<string, SpecCacheEntry>(), clearedAt: 0 }));
+    entries = snapshot.entries;
+    if (snapshot.clearedAt > clearedAt) {
+      clearedAt = snapshot.clearedAt;
+      await onCleared(clearedAt);
+    }
+  };
+
+  return async () => {
+    if (now() - checkedAt >= SEED_CHECK_INTERVAL_MS) {
+      checkedAt = now();
+      checking ??= check().finally(() => {
+        checking = undefined;
+      });
+    }
+    await checking;
+    return entries;
   };
 }

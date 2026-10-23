@@ -33,9 +33,14 @@ decisions:
         of its component cache to mcp-seed/components.json in its global
         storage (0600 in a 0700 folder, replaced atomically) and passes the
         path in GCH_CACHE_SEED (src/mcp/cacheSeed.ts). The server reads it
-        once, bounded to 16 MB and shape-checked, and uses an entry when its
-        own cache has nothing fresh. A branch entry without a fetch time
-        counts as stale. The server never writes the seed.
+        bounded to 16 MB and shape-checked, and uses an entry when its own
+        cache has nothing fresh. A branch entry without a fetch time counts
+        as stale. The server never writes the seed.
+      - While mcp.enabled is on, the extension rewrites the seed 2 seconds
+        after its cache changes. A running server checks the seed file's
+        mtime at most once a second and re-reads it when it changed. A cache
+        reset in the extension is written as clearedAt, and the server drops
+        what it fetched before that time.
     rationale:
       - Tag-pinned specs are the bulk of real includes, and the extension already treats them as fixed, so both give the same answer.
       - Branch refs can move, so a time limit keeps a moving spec from going stale for good.
@@ -52,14 +57,16 @@ decisions:
     consequences:
       positive:
         - A repeat spec lookup costs no network, within a session and across restarts.
-        - A server started from VS Code answers specs the editor already knows without fetching them.
+        - A server started from VS Code answers specs the editor already knows without fetching them, including ones the editor learns later.
+      - Resetting the extension's cache also clears what a running server fetched.
         - Fewer requests against GitLab's rate limit.
       negative:
         - A tag that is force-moved keeps its old spec until the entry is evicted or the cache is cleared, as in the extension.
-        - The seed is a full copy of the cached specs on disk, rewritten at each server start.
+        - The seed is a full copy of the cached specs on disk, rewritten at each server start and after cache changes.
+        - The reset time lives in memory, so a server that was not running during a reset keeps its older entries.
         - Version lists are still fetched once per server process; they are not seeded.
     implementation: |-
       src/mcp/specCache.ts, src/mcp/cacheSeed.ts, src/mcp/services.ts
       (fetchComponent), src/mcp/bootstrap.ts, src/adapters/vscode/mcpDefinitionProvider.ts
-      (resolveMcpServerDefinition), ComponentCacheManager.peekComponents.
+      (resolveMcpServerDefinition, watchCacheForSeed), ComponentCacheManager.peekCache.
       Tests: tests/unit/mcpSpecCache.test.ts, tests/unit/mcpCacheSeed.test.ts.

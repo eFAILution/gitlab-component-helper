@@ -33,7 +33,7 @@ suite('MCP cache seed', () => {
     const file = await writeCacheSeed(join(dir, 'mcp-seed'), buildCacheSeed([cached()]));
     const warnings: string[] = [];
 
-    const entries = await readCacheSeed(file, (message) => warnings.push(message));
+    const { entries, clearedAt } = await readCacheSeed(file, (message) => warnings.push(message));
 
     assert.deepStrictEqual([...entries.keys()], ['gitlab.example/g/p/deploy@1.0.0']);
     assert.deepStrictEqual(entries.get('gitlab.example/g/p/deploy@1.0.0'), {
@@ -42,6 +42,7 @@ suite('MCP cache seed', () => {
       pinned: true,
     });
     assert.deepStrictEqual(warnings, []);
+    assert.equal(clearedAt, 0);
     if (process.platform !== 'win32') {
       assert.equal(statSync(file).mode & 0o777, 0o600);
       assert.equal(statSync(join(dir, 'mcp-seed')).mode & 0o777, 0o700);
@@ -54,7 +55,7 @@ suite('MCP cache seed', () => {
       cached({ version: 'release-2026', refType: 'tag' }),
     ]));
 
-    const entries = await readCacheSeed(file, () => undefined);
+    const { entries } = await readCacheSeed(file, () => undefined);
 
     assert.deepStrictEqual(entries.get('gitlab.example/g/p/deploy@main')?.fetchedAt, 42);
     assert.equal(entries.get('gitlab.example/g/p/deploy@main')?.pinned, false);
@@ -72,11 +73,17 @@ suite('MCP cache seed', () => {
     writeFileSync(huge, Buffer.alloc(MAX_SEED_BYTES + 1, 0x20));
 
     for (const file of [join(dir, 'missing.json'), bad, foreign, huge]) {
-      assert.equal((await readCacheSeed(file, warn)).size, 0);
+      assert.equal((await readCacheSeed(file, warn)).entries.size, 0);
     }
 
     assert.equal(warnings.length, 2);
     assert.ok(warnings.every((message) => !message.includes('{nope')));
+  });
+
+  test('carries the time the extension last reset its cache', async () => {
+    const file = await writeCacheSeed(dir, buildCacheSeed([], 1234));
+
+    assert.equal((await readCacheSeed(file, () => undefined)).clearedAt, 1234);
   });
 
   test('skips entries that are not shaped like a component', async () => {
@@ -86,6 +93,6 @@ suite('MCP cache seed', () => {
       components: [{ gitlabInstance: 'gitlab.example', sourcePath: 'g/p', name: 'x', version: '1.0.0', parameters: 'no' }, buildCacheSeed([cached()]).components[0], null],
     }));
 
-    assert.deepStrictEqual([...(await readCacheSeed(file, () => undefined)).keys()], ['gitlab.example/g/p/deploy@1.0.0']);
+    assert.deepStrictEqual([...(await readCacheSeed(file, () => undefined)).entries.keys()], ['gitlab.example/g/p/deploy@1.0.0']);
   });
 });

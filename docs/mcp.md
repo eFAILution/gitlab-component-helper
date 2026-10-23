@@ -152,7 +152,9 @@ anything else (a branch, `~latest`, a partial version like `1.2`) can change, so
 
 When VS Code starts the server, the extension also writes the specs from its own cache to
 `mcp-seed/components.json` in its storage folder (readable only by you) and passes the path in `GCH_CACHE_SEED`. The
-server uses those specs when its own cache has nothing fresh. The file holds component specs only, no tokens. Other
+server uses those specs when its own cache has nothing fresh. The file holds component specs only, no tokens. While
+the server is on, the extension rewrites the file a couple of seconds after its cache changes, and a running server
+picks up the new copy within a second. Resetting the extension's cache also clears what the server fetched. Other
 clients can point `GCH_CACHE_SEED` at a file in the same format, or leave it unset.
 
 ### Limits

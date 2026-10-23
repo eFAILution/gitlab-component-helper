@@ -50,15 +50,32 @@ async function collectTokens(tokens: TokenSource): Promise<Map<string, string>> 
   return found;
 }
 
-/** Write the extension's component cache for the server to start from. A failure only means a cold start. */
-async function cacheSeedEnv(dir: string): Promise<Record<string, string>> {
+/** After a burst of cache changes, rewrite the seed once. */
+const SEED_REWRITE_DELAY_MS = 2000;
+
+/** Write the extension's component cache for the server to read. A failure only costs the server some fetches. */
+async function writeSeed(dir: string): Promise<string | undefined> {
   try {
-    const file = await writeCacheSeed(dir, buildCacheSeed(getComponentCacheManager().peekComponents()));
-    return { [CACHE_SEED_ENV]: file };
+    const { components, clearedAt } = getComponentCacheManager().peekCache();
+    return await writeCacheSeed(dir, buildCacheSeed(components, clearedAt));
   } catch (error) {
     Logger.getInstance().debug(`[MCP] Could not write the cache seed: ${error}`, 'MCP');
-    return {};
+    return undefined;
   }
+}
+
+/** Keep the seed in step with the cache while the server is on, so a running server sees later changes. */
+function watchCacheForSeed(dir: string): vscode.Disposable {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const subscription = getComponentCacheManager().onDidChangeComponents(() => {
+    if (!vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>('mcp.enabled', CONFIG_DEFAULTS['mcp.enabled'])) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => void writeSeed(dir), SEED_REWRITE_DELAY_MS);
+  });
+  return new vscode.Disposable(() => {
+    clearTimeout(timer);
+    subscription.dispose();
+  });
 }
 
 /**
@@ -125,7 +142,8 @@ export function registerMcpServerProvider(context: vscode.ExtensionContext, toke
           void removeTokenHandoff(handoffFile);
         }, HANDOFF_TTL_MS));
       }
-      server.env = { ...server.env, ...tokenEnv, ...(await cacheSeedEnv(seedDir)) };
+      const seedFile = await writeSeed(seedDir);
+      server.env = { ...server.env, ...tokenEnv, ...(seedFile ? { [CACHE_SEED_ENV]: seedFile } : {}) };
       return server;
     },
   };
@@ -143,6 +161,7 @@ export function registerMcpServerProvider(context: vscode.ExtensionContext, toke
       },
     },
     vscode.lm.registerMcpServerDefinitionProvider(MCP_PROVIDER_ID, provider),
+    watchCacheForSeed(seedDir),
     tokens.onDidChangeToken(onTokenChange),
     vscode.workspace.onDidChangeWorkspaceFolders(fire),
     vscode.workspace.onDidChangeConfiguration((event) => {

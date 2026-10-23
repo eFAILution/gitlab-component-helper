@@ -4,7 +4,16 @@
 
 import * as assert from 'node:assert/strict';
 import type { StoragePort } from '../../src/core/ports';
-import { createSpecCache, MAX_SPEC_ENTRIES, SPEC_CACHE_KEY, type SpecCacheEntry, type SpecIdentity } from '../../src/mcp/specCache';
+import {
+  createSpecCache,
+  MAX_SPEC_ENTRIES,
+  SEED_CHECK_INTERVAL_MS,
+  SPEC_CACHE_KEY,
+  type SeedSnapshot,
+  type SeedSource,
+  type SpecCacheEntry,
+  type SpecIdentity,
+} from '../../src/mcp/specCache';
 import { createComponentServices } from '../../src/mcp/services';
 import { parseComponentArgument } from '../../src/mcp/tools/componentRef';
 import { getComponentService } from '../../src/services/component/componentService';
@@ -31,6 +40,25 @@ const spec = (name = 'deploy'): SpecComponent => ({
   parameters: [{ name: 'stage', description: '', required: true, type: 'string' }],
 });
 const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+/** A seed whose contents a test can swap, bumping its stamp the way a rewritten file bumps its mtime. */
+function seedSource(initial: SeedSnapshot): SeedSource & { replace(next: SeedSnapshot): void; reads: number } {
+  let snapshot = initial;
+  let stamp = 1;
+  const source = {
+    reads: 0,
+    read: async () => {
+      source.reads++;
+      return snapshot;
+    },
+    stamp: async () => stamp,
+    replace: (next: SeedSnapshot) => {
+      snapshot = next;
+      stamp++;
+    },
+  };
+  return source;
+}
 
 suite('MCP spec cache', () => {
   test('reuses a tag-pinned spec past cacheTime, and a branch spec only within it', async () => {
@@ -89,13 +117,49 @@ suite('MCP spec cache', () => {
       ['gitlab.example/g/p/deploy@1.0.0', { component: spec('from-seed'), fetchedAt: 0, pinned: true }],
       ['gitlab.example/g/p/deploy@main', { component: spec('stale-seed'), fetchedAt: 0, pinned: false }],
     ]);
-    const cache = createSpecCache({ storage: memoryStorage(), cacheTimeMs: () => HOUR_MS, seed: async () => seeded });
+    const cache = createSpecCache({ storage: memoryStorage(), cacheTimeMs: () => HOUR_MS, seed: seedSource({ entries: seeded, clearedAt: 0 }) });
 
     assert.equal((await cache.get(ref('1.0.0')))?.name, 'from-seed');
     assert.equal(await cache.get(ref('main')), undefined);
     cache.set(ref('1.0.0'), spec('own'));
     await settle();
     assert.equal((await cache.get(ref('1.0.0')))?.name, 'own');
+  });
+
+  test('a running server picks up a rewritten seed, checking at most once per interval', async () => {
+    let clock = 10_000;
+    const seed = seedSource({ entries: new Map(), clearedAt: 0 });
+    const cache = createSpecCache({ storage: memoryStorage(), cacheTimeMs: () => HOUR_MS, now: () => clock, seed });
+    assert.equal(await cache.get(ref('1.0.0')), undefined);
+
+    seed.replace({ entries: new Map([['gitlab.example/g/p/deploy@1.0.0', { component: spec('later'), fetchedAt: 0, pinned: true }]]), clearedAt: 0 });
+    assert.equal(await cache.get(ref('1.0.0')), undefined, 'not re-checked within the interval');
+    clock += SEED_CHECK_INTERVAL_MS;
+
+    assert.equal((await cache.get(ref('1.0.0')))?.name, 'later');
+    clock += SEED_CHECK_INTERVAL_MS;
+    await cache.get(ref('1.0.0'));
+    assert.equal(seed.reads, 2, 'an unchanged seed is not read again');
+  });
+
+  test('a reset in the extension drops what the server fetched before it', async () => {
+    let clock = 10_000;
+    const storage = memoryStorage();
+    const seed = seedSource({ entries: new Map(), clearedAt: 0 });
+    const cache = createSpecCache({ storage, cacheTimeMs: () => HOUR_MS, now: () => clock, seed });
+    cache.set(ref('1.0.0'), spec());
+    await settle();
+    clock += SEED_CHECK_INTERVAL_MS;
+    cache.set(ref('2.0.0'), spec());
+    await settle();
+
+    seed.replace({ entries: new Map(), clearedAt: clock - 1 });
+    clock += SEED_CHECK_INTERVAL_MS;
+
+    assert.equal(await cache.get(ref('1.0.0')), undefined);
+    assert.ok(await cache.get(ref('2.0.0')));
+    await settle();
+    assert.equal((storage.data.get(SPEC_CACHE_KEY) as { entries: unknown[] }).entries.length, 1);
   });
 });
 

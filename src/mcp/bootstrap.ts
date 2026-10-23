@@ -16,7 +16,7 @@ import { createNetworkPolicy, DEFAULT_GITLAB_HOST, normalizeHost } from './adapt
 import { bindTokens, createEnvSecrets, takeEnvTokens } from './adapters/secrets';
 import { createFileStorage, resolveCacheDir } from './adapters/storage';
 import { createMcpWorkspace, type McpWorkspace } from './adapters/workspace';
-import { CACHE_SEED_ENV, readCacheSeed } from './cacheSeed';
+import { CACHE_SEED_ENV, fileSeedSource } from './cacheSeed';
 import { createSpecCache, type SpecCache } from './specCache';
 
 /** Hosts from the launcher's user-level settings (the extension passes the user's global componentSources). */
@@ -82,7 +82,7 @@ export async function bootstrap(argv: readonly string[], env: NodeJS.ProcessEnv,
   const specCache = createSpecCache({
     storage,
     cacheTimeMs: () => config.get('cacheTime', CONFIG_DEFAULTS.cacheTime) * MS_PER_SECOND,
-    seed: seedFile ? () => readCacheSeed(seedFile, (message) => logger.warn(`[MCP] ${message}`, 'MCP')) : undefined,
+    seed: seedFile ? fileSeedSource(seedFile, (message) => logger.warn(`[MCP] ${message}`, 'MCP')) : undefined,
   });
 
   const gitPath = resolveGitPath(env);
