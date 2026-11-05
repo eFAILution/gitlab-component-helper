@@ -1,4 +1,5 @@
 import { getComponentService } from '../component';
+import type { VersionFetchOptions } from '../component/versionManager';
 import { compileTagTemplate, scopeTagsToComponent } from '../component/tagScoping';
 import { Logger } from '../../utils/logger';
 import { VersionCacheSnapshot, VersionLookupComponent } from '../../types/cache';
@@ -30,7 +31,7 @@ export class VersionCache {
    * @param component Component to fetch versions for
    * @returns Array of sorted version strings (full prefixed tags for monorepo sources, plus `main`/`master`)
    */
-  async fetchComponentVersions(component: VersionLookupComponent): Promise<string[]> {
+  async fetchComponentVersions(component: VersionLookupComponent, options: VersionFetchOptions = {}): Promise<string[]> {
     try {
       const cacheKey = `${component.gitlabInstance}|${component.sourcePath}`;
       let projectTags: string[] | undefined = this.projectTagsCache.get(cacheKey);
@@ -43,7 +44,7 @@ export class VersionCache {
       } else {
         const componentService = getComponentService();
         const [tags, defaultBranch] = await Promise.all([
-          componentService.fetchProjectTags(component.gitlabInstance, component.sourcePath),
+          componentService.fetchProjectTags(component.gitlabInstance, component.sourcePath, options),
           componentService.fetchProjectDefaultBranch(component.gitlabInstance, component.sourcePath),
         ]);
         projectTags = tags.map(tag => tag.name).filter(Boolean);
@@ -82,6 +83,7 @@ export class VersionCache {
         `[VersionCache] Error fetching versions for ${component.name}: ${error}`,
         'VersionCache'
       );
+      if (options.throwOnError) throw error;
       return [component.version]; // Return current version as fallback
     }
   }

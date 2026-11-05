@@ -13,6 +13,34 @@ workflows:
     - action: start_debugging
       key: F5
       note: Opens Extension Development Host window
+  start_change_from_issue:
+    description: Start any change from its GitHub issue so branches, PRs and decision records never collide (ADR-366)
+    prerequisites:
+    - A GitHub issue for the change (open one first if there is none); one PR per issue, sub-issues for big work
+    steps:
+    - action: check_nobody_has_it
+      command: gh issue view <n> --json closedByPullRequestsReferences --jq '.closedByPullRequestsReferences[].url';
+        gh pr list --state open --search "<n>"; git ls-remote --heads origin "*/<n>-*"
+      note: If any of the three prints something, stop and ask on the issue
+    - action: create_branch
+      command: git switch -c <type>/<n>-<short-description>
+      note: Issue number right after a commitlint type (feat, fix, docs, style, refactor, perf, test, build, ci,
+        chore, revert). A sub-issue's PR uses the sub-issue's number, never the parent's or epic's
+    - action: open_draft_pr
+      command: git push -u origin <type>/<n>-<short-description> && gh pr create --draft --base beta
+      note: 'First line of the PR body is Closes #<n> (or Refs #<n> for partial work); the title is a conventional-commit line'
+    - action: record_decision
+      command: npm run decisions:new -- --title "Short decision title"
+      location: .ai/decisions/ADR-<n>.yaml
+      note: Never add a key to .ai/decisions.yaml; it is closed since #366. One record per PR
+    - action: check_before_push
+      command: npx tsx scripts/ci/decisionRecords.ts check --branch "$(git branch --show-current)" --base origin/beta
+      note: The Decision Records workflow runs the same check on every PR and push to beta and main
+    - action: move_to_a_numbered_branch
+      note: 'Never rename a PR head branch on GitHub (it closes the PR). Push a new correctly named branch, git mv any
+        record and fix its key, open a new draft PR saying "Closes #<n>. Replaces #<old>.", then close the old PR with a
+        comment pointing at the new one'
+    reference: AGENTS.md (Issues, branches, and records)
   add_new_provider:
     description: Add a new language feature provider
     steps:
@@ -180,8 +208,14 @@ common_commands:
   package: npm run package
   lint: npm run lint
   lint_ci: npm run lint:ci (eslint + stylelint with GitHub annotation formatters; run by CI)
+  decisions_check: npm run decisions:check
+  decisions_list: npm run decisions:list
+  decisions_new: npm run decisions:new -- --title "Short decision title"
 git_workflow:
-  branch_naming: feature/description or fix/description
+  branch_naming: '<type>/<issue>-<short-description> (for example chore/366-issue-keyed-workflow); type is a commitlint
+    type; dependabot/, copilot/ and claude/ branches only get a warning'
+  target_branch: beta (main only takes the beta -> main release PR)
+  decision_records: .ai/decisions/ADR-<issue>.yaml, one per PR; .ai/decisions.yaml is closed to new keys
   commit_format: 'type(scope): description'
   commit_types:
   - 'feat: New feature'

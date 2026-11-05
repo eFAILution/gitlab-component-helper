@@ -5,8 +5,7 @@
  * Imports the real pure helpers from src/services/component/discoveryConfig.ts and asserts the merge / clamp /
  * candidate-building / pattern-matching rules the extension relies on when discovering components in user repos.
  *
- * `readGlobalDiscoveryConfig` is the only function in that module that touches `vscode` and is exercised via the
- * extension-host suite — not here.
+ * `readGlobalDiscoveryConfig` reads the `discovery.*` settings through the runtime config port.
  */
 
 import * as assert from 'node:assert/strict';
@@ -16,7 +15,9 @@ import {
   buildTemplatePathCandidates,
   matchesFilePattern,
   DISCOVERY_LIMITS,
+  readGlobalDiscoveryConfig,
 } from '../../src/services/component/discoveryConfig';
+import { installFakeRuntime, restoreRuntime } from './support/fakeRuntime';
 
 suite('mergeDiscoveryConfig', () => {
   test('falls back to hard defaults when nothing provided', () => {
@@ -192,5 +193,24 @@ suite('matchesFilePattern', () => {
 
   test('returns false for empty pattern list', () => {
     assert.strictEqual(matchesFilePattern('foo.yml', []), false);
+  });
+});
+
+suite('readGlobalDiscoveryConfig', () => {
+  teardown(restoreRuntime);
+
+  test('returns the package.json discovery defaults under the default runtime', () => {
+    assert.deepStrictEqual(readGlobalDiscoveryConfig(), {
+      templateRoots: ['templates'],
+      maxDepth: 1,
+      filePatterns: ['*.yml', '*.yaml'],
+      templateFileNames: ['template.yml', 'template.yaml'],
+    });
+  });
+
+  test('keeps only well-typed settings from the runtime config', () => {
+    installFakeRuntime({ 'discovery.templateRoots': ['ci'], 'discovery.maxDepth': 'deep' });
+
+    assert.deepStrictEqual(readGlobalDiscoveryConfig(), { templateRoots: ['ci'] });
   });
 });

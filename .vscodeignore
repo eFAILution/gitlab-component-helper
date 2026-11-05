@@ -6,6 +6,7 @@
 src/**
 tests/**
 esbuild.js
+esbuild.mcp.js
 
 # TypeScript files (compiled to out/)
 **/*.map
@@ -72,3 +73,7 @@ out/services/**
 out/types/**
 out/utils/**
 out/test/**
+
+# Local test and agent state
+out-test/**
+.omc/**

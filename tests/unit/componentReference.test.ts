@@ -79,23 +79,29 @@ suite('matchComponentValue', () => {
 
 suite('parseVersionCompletionPrefix', () => {
   test('matches a scheme-less reference', () => {
-    assert.deepStrictEqual(parseVersionCompletionPrefix('  - component: gitlab.com/g/p/c@1.'), {
+    const prefix = '  - component: gitlab.com/g/p/c@1.';
+    assert.deepStrictEqual(parseVersionCompletionPrefix(prefix), {
       base: 'gitlab.com/g/p/c',
       partialVersion: '1.',
+      versionStart: prefix.indexOf('@') + 1,
     });
   });
 
   test('matches an empty partial version', () => {
-    assert.deepStrictEqual(parseVersionCompletionPrefix('  - component: gitlab.com/g/p/c@'), {
+    const prefix = '  - component: gitlab.com/g/p/c@';
+    assert.deepStrictEqual(parseVersionCompletionPrefix(prefix), {
       base: 'gitlab.com/g/p/c',
       partialVersion: '',
+      versionStart: prefix.length,
     });
   });
 
   test('tolerates an opening quote', () => {
-    assert.deepStrictEqual(parseVersionCompletionPrefix(`  - component: "gitlab.com/g/p/c@v2`), {
+    const prefix = `  - component: "gitlab.com/g/p/c@v2`;
+    assert.deepStrictEqual(parseVersionCompletionPrefix(prefix), {
       base: 'gitlab.com/g/p/c',
       partialVersion: 'v2',
+      versionStart: prefix.indexOf('@') + 1,
     });
   });
 
@@ -107,10 +113,21 @@ suite('parseVersionCompletionPrefix', () => {
     assert.deepStrictEqual(parseVersionCompletionPrefix('  - component: $CI_SERVER_FQDN/g/p/c@1'), {
       base: '$CI_SERVER_FQDN/g/p/c',
       partialVersion: '1',
+      versionStart: '  - component: $CI_SERVER_FQDN/g/p/c@'.length,
     });
     assert.deepStrictEqual(parseVersionCompletionPrefix('  - component: ${CI_SERVER_FQDN}/g/p/c@'), {
       base: '${CI_SERVER_FQDN}/g/p/c',
       partialVersion: '',
+      versionStart: '  - component: ${CI_SERVER_FQDN}/g/p/c@'.length,
+    });
+  });
+
+  test('places the version slot after the @ of a partial version that itself contains a slash', () => {
+    const prefix = '  - component: gitlab.com/g/p/c@feature/my-';
+    assert.deepStrictEqual(parseVersionCompletionPrefix(prefix), {
+      base: 'gitlab.com/g/p/c',
+      partialVersion: 'feature/my-',
+      versionStart: prefix.indexOf('@') + 1,
     });
   });
 });

@@ -1,5 +1,6 @@
-import * as vscode from 'vscode';
-import { Component } from '../../providers/componentDetector';
+import { CONFIG_DEFAULTS } from '../../core/config/defaults';
+import { getRuntime } from '../../core/runtime';
+import type { Component } from '../../providers/componentDetector';
 import type { ComponentParameter } from '../../types/git-component';
 import {
   GitLabCatalogComponent,
@@ -11,7 +12,7 @@ import type { GitLabProjectInfo, GitLabTreeItem } from '../../types/api';
 import { HttpClient } from '../../utils/httpClient';
 import { Logger } from '../../utils/logger';
 import { GitLabSpecParser, ComponentVariable } from '../../parsers/specParser';
-import { isAuthError } from '../../errors';
+import { classifyFetchFailure, isAuthError } from '../../errors';
 import { TokenManager } from './tokenManager';
 import { UrlParser } from './urlParser';
 import {
@@ -20,47 +21,6 @@ import {
   fetchAllTemplateFiles,
 } from './componentFetcherTemplates';
 import { fetchReadme, firstParagraph, readmeDirForTemplate } from './readmeDescription';
-
-/**
- * Prompt the user for a GitLab personal access token for `gitlabInstance`.
- *
- * The two reasons we reach a 401 need different wording: a stored token that GitLab rejected
- * (expired/invalid — *replace* it) versus no token at all (private source needs *first-time* auth).
- *
- * @param context        Extension context (currently unused; reserved for context-scoped secrets).
- * @param tokenManager   Stores the entered token, keyed by `gitlabInstance`.
- * @param gitlabInstance The GitLab host the token is for (e.g. `gitlab.com`).
- * @param hadToken       Whether a token was already stored for this instance — selects which of the
- *                       two messages above is shown.
- * @returns              The trimmed token if the user entered one (also persisted), or `undefined`
- *                       if they left it blank (public access) or dismissed the prompt.
- */
-async function promptForTokenIfNeeded(
-  context: vscode.ExtensionContext | undefined,
-  tokenManager: TokenManager,
-  gitlabInstance: string,
-  hadToken: boolean
-): Promise<string | undefined> {
-  const tokenPrompt = hadToken
-    ? `Your GitLab token for ${gitlabInstance} is invalid or has expired. Enter a new personal access token (needs the read_api scope) to continue.`
-    : `This project/group requires a GitLab personal access token for ${gitlabInstance} (needs the read_api scope). Enter one to continue, or leave blank for public access.`;
-  const token = await vscode.window.showInputBox({
-    title: 'GitLab Component Helper',
-    prompt: tokenPrompt,
-    placeHolder: hadToken ? 'New personal access token' : 'Personal access token (blank for public access)',
-    password: true,
-    ignoreFocusOut: true
-  });
-  if (token && token.trim()) {
-    await tokenManager.setTokenForProject(gitlabInstance, token.trim());
-    vscode.window.showInformationMessage(`GitLab Component Helper: token saved for ${gitlabInstance}`);
-    return token.trim();
-  } else if (token === '') {
-    vscode.window.showInformationMessage('GitLab Component Helper: no token entered. Public access will be used.');
-    return undefined;
-  }
-  return undefined;
-}
 
 /**
  * Handles fetching component metadata and catalog data from GitLab
@@ -82,45 +42,19 @@ export class ComponentFetcher {
    * Fetch component metadata from a GitLab URL
    * Tries catalog API first, then falls back to repository API
    */
-  public async fetchComponentMetadata(
-    url: string,
-    context?: vscode.ExtensionContext
-  ): Promise<Component> {
+  public async fetchComponentMetadata(url: string): Promise<Component> {
     const startTime = Date.now();
+    const parsed = this.urlParser.parseCustomComponentUrl(url);
 
     try {
-      // Parse the GitLab component URL
-      const urlObj = new URL(url);
-      const gitlabInstance = urlObj.hostname;
-
-      // Extract project path, component name, and version.
-      // Supports:
-      // 1) /group/project/component@version
-      // 2) /group/project/component
-      // 3) /group/project (project-only shorthand -> default component selection)
-      const pathParts = urlObj.pathname.split('/').filter(Boolean);
-      let componentName: string;
-      let version: string;
-      let projectPath: string;
-      let projectOnlyUrl = false;
-
-      const lastPart = pathParts[pathParts.length - 1];
-
-      if (lastPart.includes('@')) {
-        [componentName, version] = lastPart.split('@');
-        projectPath = pathParts.slice(0, pathParts.length - 1).join('/');
-      } else if (pathParts.length >= 3) {
-        componentName = lastPart;
-        version = 'main';
-        projectPath = pathParts.slice(0, pathParts.length - 1).join('/');
-      } else {
-        // Project-only URL (e.g. /components/dependency-scanning).
-        // Default to "main" and let catalog selection refine it if available.
-        componentName = 'main';
-        version = 'main';
-        projectPath = pathParts.join('/');
-        projectOnlyUrl = true;
+      if (!parsed) {
+        throw new Error(`Not a component URL: ${url}`);
       }
+
+      const { gitlabInstance, path: projectPath, projectOnly: projectOnlyUrl } = parsed;
+      // An unpinned reference fetches from `main`; a project-only URL lets catalog selection refine the name below.
+      const version = parsed.version ?? 'main';
+      let componentName = parsed.name;
 
       this.logger.debug(
         `Parsed URL: Project=${projectPath}, Component=${componentName}, Version=${version}`
@@ -260,7 +194,7 @@ export class ComponentFetcher {
       // (or it still fails), rethrow the original auth error so callers can surface a clear prompt
       // instead of degrading into an empty-parameter component.
       if (projectInfo.status === 'rejected' && isAuthError(projectInfo.reason)) {
-        token = await promptForTokenIfNeeded(context, this.tokenManager, gitlabInstance, !!token);
+        token = await getRuntime().authPrompt.promptForToken(gitlabInstance, !!token);
         if (!token) {
           throw projectInfo.reason;
         }
@@ -323,14 +257,11 @@ export class ComponentFetcher {
       }
 
       // For other failures, still provide a minimal component rather than failing outright.
-      const urlParts = url.split('/');
-      const lastPart = urlParts[urlParts.length - 1];
-      const componentName = lastPart.includes('@') ? lastPart.split('@')[0] : lastPart;
-
       return {
-        name: componentName,
+        name: parsed?.name ?? url,
         description: `Component from ${url}\n\nCould not fetch detailed information: ${error}`,
-        parameters: []
+        parameters: [],
+        fetchFailure: classifyFetchFailure(error)
       };
     }
   }
@@ -410,8 +341,7 @@ export class ComponentFetcher {
     gitlabInstance: string,
     projectPath: string,
     forceRefresh: boolean = false,
-    version?: string,
-    context?: vscode.ExtensionContext
+    version?: string
   ): Promise<ParsedCatalogData> {
     const startTime = Date.now();
     const versionSuffix = version ? `@${version}` : '';
@@ -460,7 +390,7 @@ export class ComponentFetcher {
         const err = projectInfoResult.reason;
         if (isAuthError(err)) {
           // Prompt for token and retry
-          token = await promptForTokenIfNeeded(context, this.tokenManager, cleanGitlabInstance, !!token);
+          token = await getRuntime().authPrompt.promptForToken(cleanGitlabInstance, !!token);
           if (token) {
             fetchOptions = { headers: { 'PRIVATE-TOKEN': token } };
             const [retryProjectInfo] = await Promise.allSettled([
@@ -509,8 +439,7 @@ export class ComponentFetcher {
       }
 
       // Process components in batches
-      const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-      const batchSize = config.get<number>('batchSize', 5);
+      const batchSize = getRuntime().config.get<number>('batchSize', CONFIG_DEFAULTS.batchSize);
       const components = await buildCatalogComponents(
         this.httpClient,
         apiBaseUrl,

@@ -1,5 +1,6 @@
 const esbuild = require('esbuild');
 const fs = require('fs');
+const { mcpConfig } = require('./esbuild.mcp');
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
@@ -137,11 +138,18 @@ async function main() {
 
   const ctx = await esbuild.context(extensionConfig);
   const webviewCtx = await esbuild.context(webviewConfig);
+  const mcpCtx = await esbuild.context({
+    ...mcpConfig({ production }),
+    plugins: [...mcpConfig().plugins, errorReporterPlugin('mcp')],
+  });
+  const contexts = [ctx, webviewCtx, mcpCtx];
   if (watch) {
-    await Promise.all([ctx.watch(), webviewCtx.watch()]);
+    await Promise.all(contexts.map((context) => context.watch()));
   } else {
-    await Promise.all([ctx.rebuild(), webviewCtx.rebuild()]);
-    await Promise.all([ctx.dispose(), webviewCtx.dispose()]);
+    const results = await Promise.allSettled(contexts.map((context) => context.rebuild()));
+    await Promise.all(contexts.map((context) => context.dispose()));
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed) throw failed.reason;
   }
 }
 

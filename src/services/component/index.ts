@@ -21,6 +21,3 @@ export {
   readGlobalDiscoveryConfig,
   getDiscoveryConfigForSource,
 } from './discoveryConfig';
-
-// Command registration
-export { registerAddProjectTokenCommand } from './commands';

@@ -5,7 +5,7 @@ project:
   type: plugin
   language: typescript
   node_version: '>=22.0.0'
-  vscode_version: '>=1.109.0'
+  vscode_version: '>=1.120.0'
   description: VS Code extension providing intellisense for GitLab CI components
   purpose: Smart autocomplete, hover docs, and component browsing for GitLab CI/CD
 repository:
@@ -14,6 +14,8 @@ repository:
 entrypoints:
   extension: src/extension.ts
   main_output: out/extension.js
+  mcp_server: src/mcp/main.ts
+  mcp_output: out/mcp/server.js
 structure:
   source: src/
   compiled: out/
@@ -29,11 +31,15 @@ structure:
   types: src/types/
   utils: src/utils/
   scripts: scripts/
+  decision_records: .ai/decisions/ (ADR-<issue>.yaml, one record per issue; .ai/decisions.yaml is closed to new keys
+    since #366; npm run decisions:list shows both)
+  decision_records_checker: scripts/ci/decisionRecords.ts
   demo_gifs: scripts/demo-gifs/
 context_modules:
   architecture: architecture.yaml
   workflows: workflows.yaml
   decisions: decisions.yaml
+  decision_records: decisions/
   errors: errors.yaml
 dependencies:
   runtime:
@@ -52,6 +58,8 @@ common_tasks:
   test: npm test
   test_extension_host: npm run test:extension-host
   package: npm run package
+  decisions_check: npm run decisions:check
+  decisions_list: npm run decisions:list
 build_system:
   bundler: esbuild
   config: esbuild.js
@@ -81,7 +89,7 @@ release:
     dry_run_main: npm run release:main:dry
     dry_run_beta: npm run release:beta:dry
 constraints:
-- Must work on VS Code 1.102.0+
+- Must work on VS Code 1.120.0+
 - Compatible with Node.js 22+
 - Support both gitlab.com and self-hosted GitLab instances
 - Component data cached for performance

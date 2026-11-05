@@ -1,3 +1,4 @@
+import { parseComponentIdentity } from '../../utils/cachedComponentLookup';
 import { Logger } from '../../utils/logger';
 
 export interface ParsedComponentUrl {
@@ -5,6 +6,8 @@ export interface ParsedComponentUrl {
   path: string;
   name: string;
   version?: string;
+  /** `true` for the project-only shorthand (`https://host/group/project`), which defaults `name` and `version` to `main`. */
+  projectOnly: boolean;
 }
 
 /**
@@ -14,51 +17,48 @@ export class UrlParser {
   private logger = Logger.getInstance();
 
   /**
-   * Parse a custom GitLab component URL
-   * Handles URLs like: https://gitlab.com/components/proj/proj-template@1.0.0
+   * Parse an expanded component URL. Everything after the first `@` is the version, so branch refs containing `/`
+   * (`…/knip-check@chore/DEVOPS-6655-knip-check`) keep their full name.
+   *
+   * Supports:
+   * 1) `https://host/group/project/component@version`
+   * 2) `https://host/group/project/component` (no version)
+   * 3) `https://host/group/project` (project-only shorthand, resolved to the `main` component at `main`)
+   *
    * @param url The GitLab component URL to parse
    * @returns Parsed URL components or null if invalid
    */
   public parseCustomComponentUrl(url: string): ParsedComponentUrl | null {
-    try {
-      const urlObj = new URL(url);
-      const gitlabInstance = urlObj.hostname;
-
-      const pathParts = urlObj.pathname.split('/').filter(Boolean);
-      if (pathParts.length < 2) {
-        return null;
-      }
-
-      // The last part contains the component name and optional version in explicit URLs.
-      const lastPart = pathParts[pathParts.length - 1];
-      let name: string;
-      let version: string | undefined;
-      let path: string;
-
-      if (lastPart.includes('@')) {
-        // Split component name and version
-        [name, version] = lastPart.split('@');
-        path = pathParts.slice(0, pathParts.length - 1).join('/');
-      } else if (pathParts.length >= 3) {
-        name = lastPart;
-        path = pathParts.slice(0, pathParts.length - 1).join('/');
-      } else {
-        // Project-only shorthand URL: default to main component on that project.
-        name = 'main';
-        version = 'main';
-        path = pathParts.join('/');
-      }
-
-      this.logger.debug(
-        `Parsed component URL: ${gitlabInstance}/${path}/${name}${version ? `@${version}` : ''}`,
-        'UrlParser'
-      );
-
-      return { gitlabInstance, path, name, version };
-    } catch (e) {
-      this.logger.error(`Error parsing component URL: ${e}`, 'UrlParser');
+    const identity = parseComponentIdentity(url);
+    if (!identity) {
+      this.logger.error(`Error parsing component URL: ${url}`, 'UrlParser');
       return null;
     }
+
+    // Two path segments and no `@` is the project-only shorthand.
+    const projectOnly = identity.version === undefined && !identity.sourcePath.includes('/');
+    const parsed: ParsedComponentUrl = projectOnly
+      ? {
+          gitlabInstance: identity.gitlabInstance,
+          path: `${identity.sourcePath}/${identity.name}`,
+          name: 'main',
+          version: 'main',
+          projectOnly
+        }
+      : {
+          gitlabInstance: identity.gitlabInstance,
+          path: identity.sourcePath,
+          name: identity.name,
+          version: identity.version,
+          projectOnly
+        };
+
+    this.logger.debug(
+      `Parsed component URL: ${parsed.gitlabInstance}/${parsed.path}/${parsed.name}${parsed.version ? `@${parsed.version}` : ''}`,
+      'UrlParser'
+    );
+
+    return parsed;
   }
 
   /**

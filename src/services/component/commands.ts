@@ -106,9 +106,6 @@ export function registerAddProjectTokenCommand(
       // Store the token if provided
       if (token && token.trim()) {
         try {
-          if (!service['tokenManager']) {
-            service.setSecretStorage(context.secrets);
-          }
           await service.setTokenForProject(gitlabInstance, token.trim());
           vscode.window.showInformationMessage(
             `Component source "${displayName}" added successfully with token for ${gitlabInstance}!`
