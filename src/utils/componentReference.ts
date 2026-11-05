@@ -47,10 +47,13 @@ export function referenceToUrl(reference: string): string {
 /**
  * Detect a version being typed after `@` in a `component:` value.
  *
- * @returns The reference before `@` exactly as written — GitLab variables included, for the caller to expand — and the
- *          partial version after it, or `null` when the line isn't a component version slot.
+ * @returns The reference before `@` exactly as written — GitLab variables included, for the caller to expand — the
+ *          partial version after it, and the column that partial version starts at (right after the `@`), or `null`
+ *          when the line isn't a component version slot.
  */
-export function parseVersionCompletionPrefix(linePrefix: string): { base: string; partialVersion: string } | null {
+export function parseVersionCompletionPrefix(
+  linePrefix: string,
+): { base: string; partialVersion: string; versionStart: number } | null {
   const match = VERSION_PREFIX_REGEX.exec(linePrefix);
-  return match ? { base: match[1], partialVersion: match[2] } : null;
+  return match ? { base: match[1], partialVersion: match[2], versionStart: linePrefix.length - match[2].length } : null;
 }

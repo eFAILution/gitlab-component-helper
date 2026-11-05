@@ -48,7 +48,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
     this.logger.debug(`[CompletionProvider] Version regex match result: ${versionMatch ? 'MATCHED' : 'NO MATCH'}`, 'CompletionProvider');
     if (versionMatch) {
       this.logger.debug(`[CompletionProvider] Detected version completion request after @`, 'CompletionProvider');
-      return this.provideVersionCompletions(linePrefix, document.uri);
+      return this.provideVersionCompletions(linePrefix, position, document.uri);
     }
 
     // Suggest components after "component: "
@@ -74,7 +74,11 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
   /**
    * Provide version/tag completions for a component URL after @
    */
-  private async provideVersionCompletions(linePrefix: string, forUri: vscode.Uri): Promise<vscode.CompletionItem[]> {
+  private async provideVersionCompletions(
+    linePrefix: string,
+    position: vscode.Position,
+    forUri: vscode.Uri,
+  ): Promise<vscode.CompletionItem[]> {
     this.logger.debug(`[CompletionProvider] Starting version completions for: "${linePrefix}"`, 'CompletionProvider');
 
     // Extract the component URL before the @
@@ -86,6 +90,10 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
 
     const componentUrlBase = urlMatch.base;
     const currentVersionInput = urlMatch.partialVersion;
+    // Each item replaces only the text after `@`. Without an explicit range VS Code filters the items against the
+    // word at the cursor, and a YAML word pattern that allows `/` and `@` (the Red Hat YAML extension's does) makes
+    // that word the whole reference, which no version matches.
+    const versionRange = new vscode.Range(position.line, urlMatch.versionStart, position.line, position.character);
 
     this.logger.debug(`[CompletionProvider] Component URL base: ${componentUrlBase}`, 'CompletionProvider');
     this.logger.debug(`[CompletionProvider] Current version input: "${currentVersionInput}"`, 'CompletionProvider');
@@ -160,6 +168,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
         item.documentation = `Use version ${version} of component ${componentName}`;
         // Set the insertion text to just the version (since we're after the @)
         item.insertText = version;
+        item.range = versionRange;
         // Add sort priority based on version type
         if (version === chosenVersion) {
           item.sortText = '0' + version;
