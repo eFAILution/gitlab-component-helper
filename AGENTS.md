@@ -96,7 +96,7 @@ gitlab-component-helper/
 **Branch naming:** `<type>/<issue>-<short-description>`, with the issue number right after the type, for example `fix/412-hover-crash`. The type is one of the commitlint types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore` or `revert`. Branches that tools name for themselves (`dependabot/`, `copilot/`, `claude/`) only get a warning from the Decision Records check, but when you pick the name, use a type prefix. See [Issues, branches, and records](#issues-branches-and-records).
 **Target branch:** PRs go to `beta`. `main` only takes the `beta` -> `main` release PR, whose head is `beta` itself. The check skips the branch rule for that PR, since each record on `beta` already passed it on its own PR, and still validates the stores.
 **Commit format:** `type(scope): description`
-**Release:** release-it bumps the version + CHANGELOG on every push to `beta`, and on `main` only when someone dispatches **CI** on `main` (ci.yml `release` job, ADR-388). Publishing to the Marketplace is a manual `workflow_dispatch` (Publish / Publish Beta). See [`docs/RELEASING.md`](docs/RELEASING.md)
+**Release:** release-it bumps the version + CHANGELOG on every push to `beta` (ci.yml `release` job), and Publish Beta is a manual `workflow_dispatch`. On `main`, the manual **Release** workflow (release.yml) cuts the version, tag and GitHub Release and publishes to the Marketplace in one run, without re-running tests (ADR-391). See [`docs/RELEASING.md`](docs/RELEASING.md)
 
 ### Commit Types
 - `feat:` New feature (triggers minor version bump)

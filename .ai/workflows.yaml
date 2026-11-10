@@ -115,13 +115,16 @@ workflows:
       command: Merge PRs to beta (pre-release) or main (stable) via the normal PR flow
       note: Use conventional commits so release-it can compute the next version
     - action: versioning
-      note: 'ci.yml release job runs release-it. beta: on every push (--config .release-it.beta.json --ci). main: only on a manual dispatch, Actions -> CI -> Run workflow on main (--config .release-it.json --ci); a push to main only runs tests (ADR-388)'
+      note: 'beta: ci.yml release job runs release-it --config .release-it.beta.json --ci on every push (version commit only, no tag). main: never on push (ADR-391)'
       creates:
       - Version bump in package.json
       - Updated CHANGELOG.md
-      - 'chore(release): <version> [skip ci] commit and git tag'
-    - action: manual_publish
-      note: 'Manual workflow_dispatch: Actions -> Publish (main) or Publish Beta (beta), enter version matching package.json; guardrails enforce branch, version match, release-commit HEAD, tests, npm audit, gitleaks, and even(stable)/odd(pre-release) minor before vsce publish'
+      - 'chore(release): <version> [skip ci] commit (plus git tag and GitHub Release on main)'
+    - action: stable_release
+      command: gh workflow run release.yml --ref main
+      note: 'Actions -> Release on main, after CI and Security Hardening pass on the push. release.yml verifies both succeeded on the commit (no test re-run), runs release-it --config .release-it.json --ci (version, CHANGELOG, tag, GitHub Release with .vsix), then publishes that .vsix to the Marketplace in the publish-main environment. If only publish fails, re-run that job'
+    - action: beta_publish
+      note: 'Manual workflow_dispatch: Actions -> Publish Beta on beta, enter version matching package.json; guardrails enforce branch, version match, release-commit HEAD, tests, npm audit, gitleaks, and odd minor before vsce publish --pre-release'
     reference: RELEASING.md
   add_configuration_option:
     description: Add new user configuration setting

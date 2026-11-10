@@ -318,7 +318,10 @@ errors:
     causes:
     - cause: Nobody dispatched the main release
       solution:
-        note: 'A push to main never cuts a release (ADR-388). Actions -> CI -> Run workflow on main'
+        note: 'A push to main never cuts a release (ADR-391). Actions -> Release -> Run workflow on main'
+    - cause: Release workflow verify job failed
+      solution:
+        note: CI or Security Hardening hasn't succeeded on the main commit yet. Wait for both, or fix the failure, then dispatch Release again
     - cause: 'Workflows skipped: the commit message contains [skip ci]'
       solution:
         note: GitHub skips every workflow when [skip ci] appears anywhere in the message, including the body. Push another commit, or keep merge bodies free of the release commit list

@@ -1,0 +1,144 @@
+# Cuts and publishes a stable release from main, by hand: Actions -> Release -> Run workflow on main.
+#
+# It doesn't re-run the test suites. The commit being released already passed CI and Security Hardening
+# on its push to main, and the verify job refuses to go on unless both succeeded on that exact commit.
+# The only change after that is release-it's version bump. Why: ADR-391 (supersedes ADR-388).
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+env:
+  VSCE_VERSION: '4.1.0'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check branch
+        if: github.ref != 'refs/heads/main'
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::Release runs on main only (got $REF)."
+          exit 1
+
+      - name: Check that CI and Security Hardening passed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          for workflow in ci.yml security-hardening.yml; do
+            passed=$(gh api "repos/$REPO/actions/workflows/$workflow/runs?head_sha=$SHA&event=push&status=success" \
+              --jq '.total_count')
+            if [ "$passed" -eq 0 ]; then
+              echo "::error::$workflow has no successful push run on $SHA. Wait for it to pass, or fix it first."
+              exit 1
+            fi
+            echo "$workflow passed on $SHA"
+          done
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      # Keeps the token in .git/config because release-it pushes the release commit and tag. The only
+      # artifact this job uploads is the .vsix file, never the checkout.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: true  # zizmor: ignore[artipacked]
+
+      - name: Check there is something to release
+        run: |
+          subject=$(git log -1 --pretty=%s)
+          if [[ "$subject" =~ ^chore\(release\): ]]; then
+            echo "::error::HEAD is already a release commit ($subject). Merge something to main first."
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Catches an advisory published since the commit's CI run. Seconds, not a test re-run.
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Install vsce
+        run: npm install -g "@vscode/vsce@$VSCE_VERSION"
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      # Bumps the version (requireEvenMinor), writes CHANGELOG.md, packages the .vsix, pushes the
+      # chore(release) commit and tag, and creates the GitHub Release with the .vsix attached.
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HUSKY: 0
+        run: npx release-it --config .release-it.json --ci
+
+      - name: Read version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload .vsix
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: vsix-${{ steps.version.outputs.version }}
+          path: gitlab-component-helper-${{ steps.version.outputs.version }}.vsix
+          if-no-files-found: error
+          retention-days: 90
+
+  # Publishes the exact .vsix attached to the GitHub Release. If this job fails, re-run just this job:
+  # the version, tag and release already exist.
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    environment:
+      name: publish-main
+    permissions:
+      contents: read
+    steps:
+      - name: Download .vsix
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: vsix-${{ needs.release.outputs.version }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: Install vsce
+        run: npm install -g "@vscode/vsce@$VSCE_VERSION"
+
+      - name: Publish to the VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          VSIX: gitlab-component-helper-${{ needs.release.outputs.version }}.vsix
+        run: vsce publish --packagePath "$VSIX" --pat "$VSCE_PAT"

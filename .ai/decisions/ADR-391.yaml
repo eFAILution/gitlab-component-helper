@@ -1,0 +1,63 @@
+# Decision record for issue #391. How to fill it in: AGENTS.md, "Issues, branches, and records".
+version: '2.0'
+decisions:
+  ADR-391:
+    title: "One Release workflow cuts and publishes stable releases without re-running tests"
+    date: '2026-11-10'
+    status: accepted
+    supersedes: [ADR-388]
+    context: |-
+      Issue #391. ADR-388 moved the stable release from every push to main
+      onto a manual dispatch of CI on main. That fixed the skipped and racing
+      releases, but cutting and publishing a stable version then ran the full
+      test suites four times: on the PR, on the push to main, in the CI
+      dispatch (the release job needs the test jobs), and again in Publish
+      (publish-main.yml), which also re-ran npm audit and gitleaks. The only
+      change after the push to main is release-it's version bump. It was also
+      two buttons, and the release button was a workflow named CI.
+    decision: |-
+      - New .github/workflows/release.yml, named Release, workflow_dispatch
+        on main only, with one concurrency group (no cancel).
+      - verify job: fails unless ci.yml and security-hardening.yml both have
+        a successful push run on the exact commit (github.sha). No tests run.
+      - release job: fails if HEAD is already a chore(release) commit, runs
+        npm audit --omit=dev --audit-level=high, then release-it with
+        .release-it.json (version, CHANGELOG, .vsix, commit, tag, GitHub
+        Release), and uploads the .vsix.
+      - publish job: in the publish-main environment (required reviewers),
+        publishes that same .vsix with vsce publish --packagePath. A failed
+        publish is re-run on its own.
+      - ci.yml's release job goes back to beta pushes only. publish-main.yml
+        is removed. beta's flow (release on push, Publish Beta by hand) is
+        unchanged.
+      - vsce is pinned (VSCE_VERSION) and every action is SHA-pinned.
+    rationale:
+      - Tests gate the commit once, on its push to main. Re-running them on a
+        version bump catches nothing new.
+      - Requiring a green CI and Security Hardening run on the same SHA keeps
+        the guarantee the duplicate runs gave, without the wait.
+      - The Marketplace gets the exact .vsix attached to the GitHub Release,
+        not a second build.
+      - One button, named for what it does, with the approval gate kept.
+    alternatives_considered:
+      - name: Keep the CI dispatch and drop the tests from Publish
+        rejected_because: Still two buttons, the release button is a workflow
+          named CI, and the dispatch still re-runs both test suites.
+      - name: Also fold Publish Beta into the beta flow
+        rejected_because: Out of scope for getting 0.22.0 out. beta's flow can
+          follow the same shape later.
+    consequences:
+      positive:
+        - One Release run cuts and publishes a stable version.
+        - No test re-runs after the push to main.
+        - The published .vsix is byte-for-byte the release asset.
+      negative:
+        - A release can't start until CI and Security Hardening finish on the
+          push. The verify job says which one is missing.
+        - gitleaks no longer runs at publish time. Security Hardening's
+          gitleaks scan on the push covers the same commit.
+    references:
+      - .github/workflows/release.yml
+      - .github/workflows/ci.yml
+      - docs/RELEASING.md
+      - .release-it.json

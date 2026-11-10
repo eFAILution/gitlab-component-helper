@@ -8,8 +8,8 @@
 # current and how a transitive fix (e.g. serialize-javascript >= 7.0.5) actually lands.
 #
 # Every ecosystem below sets `target-branch: "beta"`. Without it Dependabot opens against the default
-# branch (`main`), which is the STABLE release line: stable releases are cut from there (by manual dispatch
-# since ADR-388), so a routine dependency bump would land in the next one without going through `beta`. `main` also trails `beta` by whatever has not been
+# branch (`main`), which is the STABLE release line: stable releases are cut from there (Release workflow,
+# ADR-391), so a routine dependency bump would land in the next one without going through `beta`. `main` also trails `beta` by whatever has not been
 # released yet, so bumps opened against it duplicate what already landed on `beta` and conflict on the
 # lockfile when retargeted. Everything reaches `main` through the beta -> main release PR instead.
 version: 2
