@@ -312,10 +312,16 @@ errors:
     - correct_context: Must be in 'include:' block with 'component:' key
   release_failure:
     symptoms:
-    - Release not created on push to main
+    - Release not created on main
     - Version not bumped
     - CHANGELOG not updated
     causes:
+    - cause: Nobody dispatched the main release
+      solution:
+        note: 'A push to main never cuts a release (ADR-388). Actions -> CI -> Run workflow on main'
+    - cause: 'Workflows skipped: the commit message contains [skip ci]'
+      solution:
+        note: GitHub skips every workflow when [skip ci] appears anywhere in the message, including the body. Push another commit, or keep merge bodies free of the release commit list
     - cause: Commit message format wrong
       solution:
         format: 'type(scope): description'

@@ -1,6 +1,6 @@
 # Releasing
 
-Releases are **two-stage**: versioning is automated when changes land, and publishing to the VS Code Marketplace is a **manually-dispatched** GitHub Actions workflow.
+Releases are **two-stage**: versioning cuts the version, changelog and tag, and publishing puts that version on the VS Code Marketplace. On `beta` versioning runs on every push. On `main` both stages are **manually dispatched** GitHub Actions workflows.
 
 > There is **no `semantic-release`** in this project (it isn't a dependency). Version/changelog automation is [release-it](https://github.com/release-it/release-it); the Marketplace publish is a gated `workflow_dispatch` workflow.
 
@@ -15,12 +15,21 @@ The minor-version parity encodes the channel, and the publish workflows enforce 
 
 A beta line (`0.15.x`) promotes to the next even stable minor (`0.16.0`) when `beta` is merged to `main`.
 
-## Stage 1 — Versioning (automatic, on merge)
+## Stage 1 — Versioning
 
-When commits land on `beta` or `main`, the `release` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) — after the unit and extension-host suites pass — runs release-it in CI:
+The `release` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs release-it after the unit and extension-host suites pass:
 
-- `beta` → `release-it --config .release-it.beta.json --ci`
-- `main` → `release-it --config .release-it.json --ci`
+- `beta` → `release-it --config .release-it.beta.json --ci`, on **every push** to `beta`.
+- `main` → `release-it --config .release-it.json --ci`, **only when you dispatch it**: GitHub → **Actions** → **CI** → **Run workflow**, branch `main`. A push to `main` runs the tests and nothing else.
+
+Why `main` is manual ([ADR-388](../.ai/decisions/ADR-388.yaml)): GitHub skips every workflow on a push whose commit message contains `[skip ci]` anywhere, and the `beta` → `main` merge commit can list `beta`'s `chore(release): ... [skip ci]` commits in its body. That silently skipped the 0.22.0 release. Back-to-back pushes to `main` also raced for the same version, and the losing run's rollback deleted the winner's tag. A dispatch runs on purpose, once, and the job's `concurrency` group queues a second click instead of racing it.
+
+To cut a stable release:
+
+1. Merge the `beta` → `main` release PR.
+2. Wait for CI on `main` to pass.
+3. Dispatch **CI** on `main`. The release job cuts the version (`requireEvenMinor` rolls an odd `beta` minor to the next even one), pushes the commit and tag, and creates the GitHub Release with the `.vsix`.
+4. Go on to Stage 2.
 
 release-it (with `@release-it/conventional-changelog`) computes the next version from the conventional-commit history, updates `package.json` and `CHANGELOG.md`, and pushes a `chore(release): <version> [skip ci]` commit and matching git tag. No manual version bump is required.
 
@@ -44,4 +53,4 @@ Publishing to the Marketplace is **never automatic**. Dispatch it deliberately:
 
 ## Local tooling
 
-The `npm run release:*` scripts and `scripts/` helpers (release-it wrappers plus `scripts/manual-release.js`) exist for local dry-runs and recovery — e.g. `npm run release:main:dry` previews the next version and changelog without pushing. Day to day, Stage 1 handles versioning automatically; reach for these only to verify or to bump manually.
+The `npm run release:*` scripts and `scripts/` helpers (release-it wrappers plus `scripts/manual-release.js`) exist for local dry-runs and recovery — e.g. `npm run release:main:dry` previews the next version and changelog without pushing. Day to day, the CI `release` job handles versioning; reach for these only to verify or to bump manually.

@@ -1,0 +1,64 @@
+# Decision record for issue #388. How to fill it in: AGENTS.md, "Issues, branches, and records".
+version: '2.0'
+decisions:
+  ADR-388:
+    title: "Cut stable releases from a manual dispatch on main"
+    date: '2026-11-10'
+    status: accepted
+    context: |-
+      Issue #388. The ci.yml release job ran release-it on every push to
+      main, so merging the beta -> main release PR was what cut a stable
+      GitHub Release.
+
+      Merging #357 didn't cut 0.22.0. The merge commit body listed every
+      beta commit, including beta's `chore(release): ... [skip ci]`
+      commits. GitHub skips every workflow on a push whose commit message
+      contains [skip ci] anywhere, so nothing ran on main at all, and
+      there is no way to re-run a workflow that never started.
+
+      The auto release also raced. Two merges to main seconds apart both
+      computed the same version, and the losing run's rollback deleted the
+      winner's tag, leaving a draft release (0.16.3, 0.18.1).
+    decision: |-
+      - ci.yml gets a workflow_dispatch trigger. The release job runs on a
+        push to beta (unchanged) or on a dispatch on main. A push to main
+        runs the test and extension-host jobs and nothing else.
+      - To cut a stable release, a maintainer dispatches CI on main after
+        the release PR merges and CI passes. The job still needs the test
+        and extension-host jobs from the same run.
+      - The release job has a concurrency group per branch with
+        cancel-in-progress off, so a second dispatch or push queues behind
+        the first one.
+      - Publishing (publish-main.yml) is unchanged and stays a separate
+        dispatch after the release.
+    rationale:
+      - The maintainer wants explicit control of when a stable version is cut,
+        the same as for publishing.
+      - A dispatch doesn't depend on commit message contents, so a [skip ci]
+        in a merge body can't block the release.
+      - One deliberate run per release removes the back-to-back merge race.
+    alternatives_considered:
+      - name: Keep auto release on main and add a dispatch as a backup
+        rejected_because: Still races on quick merges, and a skipped release goes
+          unnoticed until someone looks for the tag.
+      - name: Drop [skip ci] from release commits and skip loops with a job condition
+        rejected_because: Every bot release commit would start full CI runs only to
+          skip them, and a merge to main would still cut a release with no say in
+          when.
+      - name: A separate release workflow file
+        rejected_because: It would duplicate the test and extension-host jobs, or
+          need a workflow_call refactor of ci.yml, for the same result.
+    consequences:
+      positive:
+        - Merging the release PR is safe whatever its commit message says.
+        - No more lost tags or draft releases from racing runs.
+        - Cutting and publishing are both explicit steps on main.
+      negative:
+        - Someone has to remember to dispatch the release after merging. The
+          Publish guard (HEAD must be a chore(release) commit) catches a skipped
+          step.
+        - The button is "CI -> Run workflow", not a workflow named Release.
+    references:
+      - .github/workflows/ci.yml
+      - docs/RELEASING.md
+      - .release-it.json

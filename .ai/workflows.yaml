@@ -114,8 +114,8 @@ workflows:
     - action: land_changes
       command: Merge PRs to beta (pre-release) or main (stable) via the normal PR flow
       note: Use conventional commits so release-it can compute the next version
-    - action: automatic_versioning
-      note: 'On push to beta/main, ci.yml release job runs release-it (--config .release-it.beta.json or .release-it.json --ci)'
+    - action: versioning
+      note: 'ci.yml release job runs release-it. beta: on every push (--config .release-it.beta.json --ci). main: only on a manual dispatch, Actions -> CI -> Run workflow on main (--config .release-it.json --ci); a push to main only runs tests (ADR-388)'
       creates:
       - Version bump in package.json
       - Updated CHANGELOG.md
