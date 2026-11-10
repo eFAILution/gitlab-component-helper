@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+# [0.22.0](https://github.com/eFAILution/gitlab-component-helper/compare/0.20.1...0.22.0) (2026-11-10)
+
+### Bug Fixes
+
+* **ci:** skip the decision record branch rule on the release PR ([#369](https://github.com/eFAILution/gitlab-component-helper/issues/369)) ([325a947](https://github.com/eFAILution/gitlab-component-helper/commit/325a94756002679741ed17e8beea750fd13117ad)), closes [#368](https://github.com/eFAILution/gitlab-component-helper/issues/368)
+* **completion:** replace only the version slot after @ so VS Code filters on it ([#379](https://github.com/eFAILution/gitlab-component-helper/issues/379)) ([826cdae](https://github.com/eFAILution/gitlab-component-helper/commit/826cdae948d979e398f3fa98d1728ffdbcb0203d))
+* **completion:** use the referenced version's inputs ([#355](https://github.com/eFAILution/gitlab-component-helper/issues/355)) ([d2b984d](https://github.com/eFAILution/gitlab-component-helper/commit/d2b984da7f059c538a5c695126ff4b627c5af408))
+* **component:** resolve component versions that contain a slash ([#375](https://github.com/eFAILution/gitlab-component-helper/issues/375)) ([d3a5890](https://github.com/eFAILution/gitlab-component-helper/commit/d3a589078785609406077eede55d34ef926c69f8))
+* **core:** harden local includes, git spawning, and YAML handling ([a163429](https://github.com/eFAILution/gitlab-component-helper/commit/a16342999888e0495c83ece4b63b2b20efa14c92))
+* **hover:** only trust the detach command in hover markdown ([#362](https://github.com/eFAILution/gitlab-component-helper/issues/362)) ([8f556ac](https://github.com/eFAILution/gitlab-component-helper/commit/8f556ac1dfd0cc5d5d0a738ca8a97562169f11fd))
+* **http:** cap responses, add a request deadline, and bound tool calls ([5eaa33a](https://github.com/eFAILution/gitlab-component-helper/commit/5eaa33ae7a999a4d50d055031f9d9564f1698aed))
+* **http:** clear the deadline when a request fails to start ([dafc79b](https://github.com/eFAILution/gitlab-component-helper/commit/dafc79b32e510d485d6a46a5b137e17cb5b1da23))
+* **mcp:** allow self-managed GitLab on private networks ([f626327](https://github.com/eFAILution/gitlab-component-helper/commit/f6263274684198baf28323d3e35e6962b2f48bbe))
+* **mcp:** clean tokens, keep network settings user-scoped, and vet symlinks ([5d1a35e](https://github.com/eFAILution/gitlab-component-helper/commit/5d1a35e170a97258318f7b0312aec111e6aaa740))
+* **mcp:** hand tokens over exactly and keep host trust with the launcher ([1cafe4b](https://github.com/eFAILution/gitlab-component-helper/commit/1cafe4b979c49898751318d1c059c1014507171f))
+* **mcp:** harden paths, reads, output text, addresses, and the runtime lock ([0f7fac7](https://github.com/eFAILution/gitlab-component-helper/commit/0f7fac7927df4ad0f961f6b37da62d2f886232b2))
+* **mcp:** let GCH_TOKEN_GITLAB_COM bind to gitlab.com by default ([473e004](https://github.com/eFAILution/gitlab-component-helper/commit/473e004c3f71960b513a98b23a284489d51ffde7))
+* **mcp:** only read hand-off files from the private hand-off folder ([90f766f](https://github.com/eFAILution/gitlab-component-helper/commit/90f766f9dd53a1ecc13039d19d57aeaa489705a6))
+* **mcp:** report failed lookups, bound walks, and harden the protocol loop ([9dc2fb1](https://github.com/eFAILution/gitlab-component-helper/commit/9dc2fb1186e1aa9839fe26f1269ad15c511d5988))
+
+### Features
+
+* **mcp:** add a stdio MCP server with get_component_spec ([6e2d336](https://github.com/eFAILution/gitlab-component-helper/commit/6e2d336ef5e5e92fd19802305f8b2ec6d1d8e93b))
+* **mcp:** add Node adapters for config, tokens, storage, files, and network ([a26dede](https://github.com/eFAILution/gitlab-component-helper/commit/a26dede752fcd29d29e837679e1f686fee8cdf4a))
+* **mcp:** add validation, version, and usage tools ([3a96317](https://github.com/eFAILution/gitlab-component-helper/commit/3a96317d23c999b503cb2adbaf33f85ea1285795))
+* **mcp:** cache component specs and start from the extension's cache ([#373](https://github.com/eFAILution/gitlab-component-helper/issues/373)) ([2d965bf](https://github.com/eFAILution/gitlab-component-helper/commit/2d965bf710da839f5a1dbdbfba2ddc45e5474f8c)), closes [#372](https://github.com/eFAILution/gitlab-component-helper/issues/372)
+* **mcp:** hand tokens to the server through a one-time file ([03386f4](https://github.com/eFAILution/gitlab-component-helper/commit/03386f4dcdfed89ce6e827de6748c98823b28665))
+* **mcp:** register the bundled MCP server with VS Code ([8605244](https://github.com/eFAILution/gitlab-component-helper/commit/86052446ea4d5cf9653e0ae33cbfb4e848455c98))
+* **mcp:** report why a component fetch failed ([#371](https://github.com/eFAILution/gitlab-component-helper/issues/371)) ([0cedce2](https://github.com/eFAILution/gitlab-component-helper/commit/0cedce2575abad9bce4fc573c06e83384a469cae)), closes [#370](https://github.com/eFAILution/gitlab-component-helper/issues/370)
+* **mcp:** turn the MCP server off by default ([e8941e9](https://github.com/eFAILution/gitlab-component-helper/commit/e8941e93ae32c8b2bd7b5ddf240f8a3c7eab98e9))
+
 ## [0.20.1](https://github.com/eFAILution/gitlab-component-helper/compare/0.20.0...0.20.1) (2026-11-08)
 
 # [0.20.0](https://github.com/eFAILution/gitlab-component-helper/compare/0.18.1...0.20.0) (2026-10-21)
