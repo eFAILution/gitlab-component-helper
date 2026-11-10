@@ -5,8 +5,6 @@ on:
     branches: [main, beta]
   pull_request:
     branches: [main, beta]
-  # Cuts a stable release: Actions -> CI -> Run workflow on main. See docs/RELEASING.md.
-  workflow_dispatch:
 
 jobs:
   test:
@@ -100,13 +98,10 @@ jobs:
   release:
     needs: [test, extension-host]
     runs-on: ubuntu-latest
-    # beta releases on every push. main releases only from a manual dispatch (ADR-388): a push to main
-    # whose message mentions [skip ci] anywhere skips the job, and back-to-back pushes race for a version.
-    if: >-
-      (github.event_name == 'push' && github.ref_name == 'beta') ||
-      (github.event_name == 'workflow_dispatch' && github.ref_name == 'main')
+    # Pre-releases only. Stable releases on main come from release.yml, a manual dispatch (ADR-391).
+    if: github.event_name == 'push' && github.ref_name == 'beta'
     concurrency:
-      group: release-${{ github.ref_name }}
+      group: release-beta
       cancel-in-progress: false
     permissions:
       contents: write
@@ -138,18 +133,10 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Release (Beta)
-        if: github.ref_name == 'beta'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HUSKY: 0
         run: npx release-it --config .release-it.beta.json --ci
-
-      - name: Release (Main)
-        if: github.ref_name == 'main'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HUSKY: 0
-        run: npx release-it --config .release-it.json --ci
 
       - name: Upload .vsix artifact
         if: success()

@@ -4,7 +4,7 @@ decisions:
   ADR-388:
     title: "Cut stable releases from a manual dispatch on main"
     date: '2026-11-10'
-    status: accepted
+    status: superseded
     context: |-
       Issue #388. The ci.yml release job ran release-it on every push to
       main, so merging the beta -> main release PR was what cut a stable
