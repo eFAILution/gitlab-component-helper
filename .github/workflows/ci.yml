@@ -5,6 +5,8 @@ on:
     branches: [main, beta]
   pull_request:
     branches: [main, beta]
+  # Cuts a stable release: Actions -> CI -> Run workflow on main. See docs/RELEASING.md.
+  workflow_dispatch:
 
 jobs:
   test:
@@ -98,7 +100,14 @@ jobs:
   release:
     needs: [test, extension-host]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    # beta releases on every push. main releases only from a manual dispatch (ADR-388): a push to main
+    # whose message mentions [skip ci] anywhere skips the job, and back-to-back pushes race for a version.
+    if: >-
+      (github.event_name == 'push' && github.ref_name == 'beta') ||
+      (github.event_name == 'workflow_dispatch' && github.ref_name == 'main')
+    concurrency:
+      group: release-${{ github.ref_name }}
+      cancel-in-progress: false
     permissions:
       contents: write
       issues: write
