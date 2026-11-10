@@ -7,6 +7,11 @@ import { NetworkError } from '../../errors';
 /**
  * Manages fetching and sorting versions (tags and branches) for GitLab projects
  */
+/** `throwOnError`: reject on a failed lookup instead of answering with an empty list (the extension's default). */
+export interface VersionFetchOptions {
+  throwOnError?: boolean;
+}
+
 export class VersionManager {
   private logger = Logger.getInstance();
   private httpClient: HttpClient;
@@ -128,7 +133,8 @@ export class VersionManager {
    */
   public async fetchProjectTags(
     gitlabInstance: string,
-    projectPath: string
+    projectPath: string,
+    { throwOnError = false }: VersionFetchOptions = {}
   ): Promise<GitLabTag[]> {
     const startTime = Date.now();
     this.logger.info(`Fetching tags for ${gitlabInstance}/${projectPath}`);
@@ -151,6 +157,7 @@ export class VersionManager {
       return tags;
     } catch (error) {
       this.logger.warn(`Error fetching tags: ${error}`);
+      if (throwOnError) throw error;
       return [];
     }
   }

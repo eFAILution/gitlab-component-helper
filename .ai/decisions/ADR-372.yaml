@@ -1,0 +1,72 @@
+# Decision record for issue #372. How to fill it in: AGENTS.md, "Issues, branches, and records".
+version: '2.0'
+decisions:
+  ADR-372:
+    title: "MCP server caches specs and starts from the extension's cache"
+    date: '2026-10-23'
+    status: accepted
+    context: |-
+      Issue #372. The MCP server fetched a component's spec from GitLab on
+      every tool call. Its services went straight to the fetcher, so even a
+      spec it had fetched a minute earlier was fetched again. Only version
+      lists used a cache.
+
+      The extension already holds most of these specs, but in VS Code's
+      global state, which only the extension can read. The server is a
+      separate Node process that also runs from a terminal without VS Code,
+      so it can't read global state at all.
+
+      Every extra fetch is slower and counts against GitLab's rate limit,
+      which matters most on a self-managed instance.
+    decision: |-
+      Two parts.
+
+      - The server keeps its own spec cache (src/mcp/specCache.ts) in its
+        file cache directory, keyed by host, project path, component name
+        and ref. fetchComponent checks it after the host allowlist and
+        before GitLab. A spec pinned to a tag (a clean X.Y.Z, or an entry
+        the extension classified as a tag) is reused while cached, as the
+        extension does. Any other ref (a branch, ~latest, a partial version)
+        is reused only for cacheTime. Failed fetches are never stored. Only
+        spec fields are kept, and at most 500 entries, newest first.
+      - When VS Code starts the server, the extension writes the spec fields
+        of its component cache to mcp-seed/components.json in its global
+        storage (0600 in a 0700 folder, replaced atomically) and passes the
+        path in GCH_CACHE_SEED (src/mcp/cacheSeed.ts). The server reads it
+        bounded to 16 MB and shape-checked, and uses an entry when its own
+        cache has nothing fresh. A branch entry without a fetch time counts
+        as stale. The server never writes the seed.
+      - While mcp.enabled is on, the extension rewrites the seed 2 seconds
+        after its cache changes. A running server checks the seed file's
+        mtime at most once a second and re-reads it when it changed. A cache
+        reset in the extension is written as clearedAt, and the server drops
+        what it fetched before that time.
+    rationale:
+      - Tag-pinned specs are the bulk of real includes, and the extension already treats them as fixed, so both give the same answer.
+      - Branch refs can move, so a time limit keeps a moving spec from going stale for good.
+      - A file is the only thing both processes can read. It needs no IPC and keeps the server usable without VS Code.
+      - Component specs aren't secret, so the file can stay. Nothing about it needs the one-time handling the tokens get.
+      - A separate spec cache keeps the server off ComponentCacheManager's persistence, which would also persist a version cache that has no expiry.
+    alternatives_considered:
+      - name: Persist through ComponentCacheManager.addDynamicComponent
+        rejected_because: Its save also writes the version cache, which has no expiry, so latest-version answers would go stale across restarts.
+      - name: Ask the extension for specs over IPC
+        rejected_because: It needs a channel VS Code's MCP API doesn't offer, and a terminal-started server has no extension to ask.
+      - name: Point the server at the extension's global state
+        rejected_because: It's VS Code's internal database, not a format or location the extension owns.
+    consequences:
+      positive:
+        - A repeat spec lookup costs no network, within a session and across restarts.
+        - A server started from VS Code answers specs the editor already knows without fetching them, including ones the editor learns later.
+        - Resetting the extension's cache also clears what a running server fetched.
+        - Fewer requests against GitLab's rate limit.
+      negative:
+        - A tag that is force-moved keeps its old spec until the entry is evicted or the cache is cleared, as in the extension.
+        - The seed is a full copy of the cached specs on disk, rewritten at each server start and after cache changes.
+        - The reset time lives in memory, so a server that was not running during a reset keeps its older entries.
+        - Version lists are still fetched once per server process; they are not seeded.
+    implementation: |-
+      src/mcp/specCache.ts, src/mcp/cacheSeed.ts, src/mcp/services.ts
+      (fetchComponent), src/mcp/bootstrap.ts, src/adapters/vscode/mcpDefinitionProvider.ts
+      (resolveMcpServerDefinition, watchCacheForSeed), ComponentCacheManager.peekCache.
+      Tests: tests/unit/mcpSpecCache.test.ts, tests/unit/mcpCacheSeed.test.ts.

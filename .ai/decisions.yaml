@@ -1,3 +1,6 @@
+# Closed to new keys since #366. Existing entries here can still be edited.
+# Record a new decision as .ai/decisions/ADR-<issue>.yaml instead (see AGENTS.md,
+# "Issues, branches, and records"). `npm run decisions:list` shows both stores.
 decisions:
   USE_ESBUILD:
     date: '2024'
@@ -459,6 +462,104 @@ decisions:
     - scripts/demo-gifs/record.mjs
     - .ai/workflows.yaml (record_demo_gifs)
     title: Demo GIFs Recorded By Script
+  MCP_STDIO_HANDROLLED:
+    date: '2026-10'
+    status: accepted
+    context: Agents need the extension's component validation; the official MCP SDK pulls in zod, ajv, express, hono,
+      jose and more
+    decision: Hand-roll MCP over stdio (newline-delimited JSON-RPC 2.0) in src/mcp, about 300 lines
+    rationale:
+    - Only initialize, ping, tools/list, and tools/call are needed
+    - Keeps the bundle small and the supply chain short, like the hand-rolled httpClient
+    - Full control over output shaping and stdout hygiene
+    implementation:
+      versions: 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05 (SUPPORTED_PROTOCOL_VERSIONS in src/mcp/protocol/types.ts)
+      structured_content: only for 2025-06-18 and later; a text block is always sent
+      stateless_2026_07_28: not implemented; server/discover returns method-not-found so dual-era clients fall back
+    alternatives_considered:
+    - name: '@modelcontextprotocol/sdk'
+      rejected_because: Large dependency tree for a small protocol surface
+    consequences:
+      positive:
+      - Small bundle, few dependencies
+      negative:
+      - New spec revisions need manual work
+    references:
+    - src/mcp/server.ts
+    - src/mcp/protocol/
+    title: MCP Over Hand-Rolled Stdio
+  MCP_SERVER_NEVER_WRITES_FILES:
+    date: '2026-10'
+    status: accepted
+    context: Agents act on repositories with their own edit and approval flow
+    decision: The MCP server is read-only; findings carry suggestedEdits (file, range, newText, title) for the agent to apply
+    rationale:
+    - Edits go through the agent's existing review UI
+    - A compromised or confused server can't change files
+    consequences:
+      positive:
+      - Every tool is readOnlyHint
+      negative:
+      - Fixes that need judgment (missing inputs) come as data plus the spec, not as edits
+    references:
+    - src/mcp/tools/findingOutput.ts
+    - src/core/validation/versionFindings.ts
+    title: MCP Server Never Writes Files
+  MCP_DISTRIBUTED_AS_RELEASE_ASSET:
+    date: '2026-10'
+    status: accepted
+    context: Users outside VS Code need a way to run the server
+    decision: Ship out/mcp/server.js inside the VSIX now, and as a GitHub release asset next; publish to npm later, only
+      if users ask
+    rationale:
+    - VS Code users get it with the extension and no setup
+    - Avoids running an npm account and trusted publishing before there is demand
+    consequences:
+      positive:
+      - One version for the extension and the server
+      negative:
+      - Other clients need the extension's install path (or the release asset) instead of npx
+    references:
+    - esbuild.mcp.js
+    - docs/mcp.md
+    title: MCP Distributed As A Release Asset
+  MCP_TOKENS_VIA_HANDOFF_FILE:
+    date: '2026-10'
+    status: accepted
+    context: The server runs as a child process that VS Code starts from an McpStdioServerDefinition, which only takes
+      command, args, and env. A process's starting environment stays readable to the same OS user (ps eww,
+      /proc/<pid>/environ) even after the process deletes a variable, so an AI agent running terminal commands could
+      read tokens passed in env
+    decision: In resolveMcpServerDefinition, the extension writes one exact host-to-token map to a one-time file in
+      its globalStorage (0600 in a 0700 dir, random name) and passes only its path as GCH_TOKENS_HANDOFF. The server
+      reads it once at startup and deletes it
+    rationale:
+    - Nothing secret sits in the server's environment or command line
+    - The definition API has no stdin or pipe for secrets (stdin is the MCP channel)
+    - An exact host key avoids the lossy GCH_TOKEN_<HOST> naming, where gitlab-example.com and gitlab.example.com
+      share a variable (a review found a repo could claim a token that way)
+    mitigations:
+    - The server refuses a hand-off that is a symlink, over 64 KB, readable by group/other, or owned by another user
+    - The extension deletes its own unread hand-off files after 30s and on dispose, and purges stale ones (older
+      than 30s, since windows share the directory) at activation
+    - Child processes (git) get an env stripped of GCH_* and GITLAB_TOKEN
+    - The extension picks token hosts from the token index and the user's global componentSources only, never
+      workspace or folder settings
+    - GCH_TOKEN_<HOST> (terminal use) binds only to hosts in GCH_TOKEN_HOSTS or --config, and not at all when two
+      such hosts share a name
+    - Only launcher-trusted hosts (--config, GCH_TRUSTED_HOSTS from user settings, token hosts, gitlab.com) are
+      contacted; repo files can't widen the allowlist or set network settings
+    - gitlabToken is refused as a setting; tokens are never accepted as tool arguments or logged
+    - gitlabComponentHelper.mcp.enabled (application scope, default off) gates the server
+    consequences:
+      negative:
+      - The token file exists on disk for the milliseconds between writing and the server reading it
+      - Terminal users passing GCH_TOKEN_* or GCH_TOKENS_JSON still have the usual env exposure
+    references:
+    - src/mcp/tokenHandoff.ts
+    - src/adapters/vscode/mcpDefinitionProvider.ts
+    - src/mcp/adapters/secrets.ts
+    title: MCP Tokens Via A One-Time Hand-Off File
 future_decisions:
 - question: Should we support other CI/CD platforms (GitHub Actions, CircleCI)?
   status: under_consideration

@@ -1,5 +1,5 @@
-import * as vscode from 'vscode';
 import { getComponentService } from '../component';
+import type { VersionFetchOptions } from '../component/versionManager';
 import { Logger } from '../../utils/logger';
 import { getPerformanceMonitor } from '../../utils/performanceMonitor';
 import { CachedComponent, PersistentCacheData, VersionLookupComponent } from '../../types/cache';
@@ -10,14 +10,28 @@ import { VersionCache } from './versionCache';
 import { GroupCache } from './groupCache';
 import { sameCachedComponent } from '../../utils/cachedComponentEquality';
 import {
+  CACHE_KEY_CACHE_TIMESTAMP,
+  CACHE_KEY_CACHED_COMPONENTS,
+  CACHE_KEY_COMPONENTS,
   CACHE_LOCATION_GLOBAL_STATE,
   CACHE_LOCATION_MEMORY_ONLY,
   DEFAULT_COMPONENT_TYPE_PROJECT,
 } from '../../constants/cache';
+import { CONFIG_DEFAULTS } from '../../core/config/defaults';
+import { getRuntime } from '../../core/runtime';
+import { Emitter, type Disposable } from '../../core/emitter';
 
 // Bump when the on-disk CachedComponent shape changes. Mismatched caches are discarded on load so the new fields can be
 // populated by re-fetching.
-const CURRENT_CACHE_VERSION = '1.4.0';
+export const CURRENT_CACHE_VERSION = '1.4.0';
+
+export interface ComponentCacheManagerOptions {
+  /**
+   * Refetch every configured source at startup when the stored cache is empty or expired. Defaults to `true` (the
+   * extension); a host that wants no network traffic until something asks for components passes `false`.
+   */
+  eagerRefresh?: boolean;
+}
 
 /**
  * ComponentCacheManager - Main orchestrator for component caching
@@ -25,24 +39,24 @@ const CURRENT_CACHE_VERSION = '1.4.0';
  * Responsibilities:
  * - Coordinate between ProjectCache, VersionCache, and GroupCache
  * - Manage component refresh lifecycle
- * - Handle persistence to VS Code global state
+ * - Handle persistence through the runtime storage port (VS Code global state in the extension)
  * - Track source errors
  * - Provide singleton access pattern
  */
-export class ComponentCacheManager implements vscode.Disposable {
+export class ComponentCacheManager implements Disposable {
   private logger = Logger.getInstance();
   private performanceMonitor = getPerformanceMonitor();
   private components: CachedComponent[] = [];
   private lastRefreshTime = 0;
+  private clearedAt = 0;
   private refreshInProgress = false;
   private sourceErrors: Map<string, string> = new Map();
-  private context: vscode.ExtensionContext | null = null;
-  private readonly disposables: vscode.Disposable[] = [];
+  private readonly eagerRefresh: boolean;
 
   // Fires whenever the in-memory component list is populated or changes. Consumers that render from the cache (e.g. the
   // document link provider) subscribe so they can re-request once the cache is ready — VS Code caches a provider's
   // result and won't re-ask on its own until the document changes.
-  private readonly _onDidChangeComponents = new vscode.EventEmitter<void>();
+  private readonly _onDidChangeComponents = new Emitter<void>();
   public readonly onDidChangeComponents = this._onDidChangeComponents.event;
   private changeNotificationScheduled = false;
 
@@ -51,7 +65,7 @@ export class ComponentCacheManager implements vscode.Disposable {
   private versionCache: VersionCache;
   private groupCache: GroupCache;
 
-  constructor(context?: vscode.ExtensionContext) {
+  constructor(options: ComponentCacheManagerOptions = {}) {
     this.logger.debug('[ComponentCache] Constructor called', 'ComponentCache');
 
     // Initialize specialized cache modules
@@ -59,8 +73,7 @@ export class ComponentCacheManager implements vscode.Disposable {
     this.versionCache = new VersionCache();
     this.groupCache = new GroupCache(this.projectCache);
 
-    // Store the extension context for storage access
-    this.context = context || null;
+    this.eagerRefresh = options.eagerRefresh ?? true;
 
     // Log cache location info
     const cacheInfo = this.getCacheInfo();
@@ -73,37 +86,17 @@ export class ComponentCacheManager implements vscode.Disposable {
         'ComponentCache'
       );
     });
-
-    // Listen for configuration changes to refresh cache
-    this.disposables.push(
-      vscode.workspace.onDidChangeConfiguration(e => {
-        if (e.affectsConfiguration('gitlabComponentHelper.componentSources')) {
-          this.logger.debug(
-            '[ComponentCache] Configuration changed, forcing refresh...',
-            'ComponentCache'
-          );
-          this.forceRefresh().catch(error => {
-            this.logger.debug(
-              `[ComponentCache] Error during config refresh: ${error}`,
-              'ComponentCache'
-            );
-          });
-        }
-      })
-    );
   }
 
   public dispose(): void {
     this._onDidChangeComponents.dispose();
-    this.disposables.forEach(d => d.dispose());
   }
 
   /**
    * Get cached components, refreshing if expired
    */
   public async getComponents(): Promise<CachedComponent[]> {
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-    const cacheTime = config.get<number>('cacheTime', 3600) * 1000; // Default 1 hour
+    const cacheTime = getRuntime().config.get<number>('cacheTime', CONFIG_DEFAULTS.cacheTime) * 1000;
 
     // Check if cache needs refresh
     if (Date.now() - this.lastRefreshTime > cacheTime && !this.refreshInProgress) {
@@ -127,6 +120,11 @@ export class ComponentCacheManager implements vscode.Disposable {
     return this.components;
   }
 
+  /** The cache as it is now, without the refresh {@link getComponents} may start, and when it was last reset. */
+  public peekCache(): { components: readonly CachedComponent[]; clearedAt: number } {
+    return { components: this.components, clearedAt: this.clearedAt };
+  }
+
   /**
    * Add a dynamically fetched component to the cache
    */
@@ -134,9 +132,7 @@ export class ComponentCacheManager implements vscode.Disposable {
     try {
       // Dynamic fetches synthesize `source` as `instance/path`; adopt the configured source's display name (and tag
       // template) so the entry merges into its source group instead of spawning a phantom top-level instance node.
-      const sources = vscode.workspace
-        .getConfiguration('gitlabComponentHelper')
-        .get<ComponentSource[]>('componentSources', []);
+      const sources = getRuntime().config.get<ComponentSource[]>('componentSources', []);
       component = reconcileComponentSource(component, sources);
 
       // Check if component already exists (avoid duplicates)
@@ -186,7 +182,7 @@ export class ComponentCacheManager implements vscode.Disposable {
   /**
    * Persist the current in-memory component list to disk. Use after mutating a cached entry on a read path (e.g. the
    * hover provider recording a branch's `refType`/`cachedAt`/`resolvedSha`) so the update survives the session. No-op
-   * when no extension context is set. Fire-and-forget — failure only costs a re-fetch, never correctness.
+   * Fire-and-forget — failure only costs a re-fetch, never correctness.
    */
   public persistComponentState(): void {
     this.saveCacheToDisk().catch(error => {
@@ -243,8 +239,7 @@ export class ComponentCacheManager implements vscode.Disposable {
     this.versionCache.clearCache();
 
     try{
-      const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-      const sources = config.get<
+      const sources = getRuntime().config.get<
         Array<{
           name: string;
           path: string;
@@ -426,9 +421,9 @@ export class ComponentCacheManager implements vscode.Disposable {
    * Takes the narrow {@link VersionLookupComponent} rather than a full cache entry: the lookup is driven entirely by
    * the project coordinates, so callers holding a partial component (the details panel) can use it too.
    */
-  public async fetchComponentVersions(component: VersionLookupComponent): Promise<string[]> {
+  public async fetchComponentVersions(component: VersionLookupComponent, options: VersionFetchOptions = {}): Promise<string[]> {
     try {
-      const sortedVersions = await this.versionCache.fetchComponentVersions(component);
+      const sortedVersions = await this.versionCache.fetchComponentVersions(component, options);
 
       // Update the component in cache with available versions
       const cachedComponent = this.components.find(
@@ -450,6 +445,7 @@ export class ComponentCacheManager implements vscode.Disposable {
         `[ComponentCache] Error fetching versions for ${component.name}: ${error}`,
         'ComponentCache'
       );
+      if (options.throwOnError) throw error;
       return [component.version]; // Return current version as fallback
     }
   }
@@ -499,8 +495,7 @@ export class ComponentCacheManager implements vscode.Disposable {
     // First, try to load cache from disk
     await this.loadCacheFromDisk();
 
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
-    const cacheTime = config.get<number>('cacheTime', 3600) * 1000; // Default 1 hour
+    const cacheTime = getRuntime().config.get<number>('cacheTime', CONFIG_DEFAULTS.cacheTime) * 1000;
 
     // If we have components and cache is still valid, don't refresh
     if (this.components.length > 0 && Date.now() - this.lastRefreshTime < cacheTime) {
@@ -516,6 +511,11 @@ export class ComponentCacheManager implements vscode.Disposable {
       return;
     }
 
+    if (!this.eagerRefresh) {
+      this.logger.debug('[ComponentCache] Cache is empty or expired; eager refresh is off', 'ComponentCache');
+      return;
+    }
+
     // If cache is empty or expired, do initial refresh
     this.logger.info(
       '[ComponentCache] Cache is empty or expired, performing initial refresh...',
@@ -528,9 +528,9 @@ export class ComponentCacheManager implements vscode.Disposable {
    * Check if version cache needs refreshing (less frequent than component cache)
    */
   private shouldRefreshVersions(): boolean {
-    const config = vscode.workspace.getConfiguration('gitlabComponentHelper');
     // Use 4x the component cache time for version refreshes
-    const versionRefreshInterval = config.get<number>('cacheTime', 3600) * 4 * 1000;
+    const cacheTimeSeconds = getRuntime().config.get<number>('cacheTime', CONFIG_DEFAULTS.cacheTime);
+    const versionRefreshInterval = cacheTimeSeconds * 4 * 1000;
     return Date.now() - this.lastRefreshTime > versionRefreshInterval;
   }
 
@@ -569,16 +569,14 @@ export class ComponentCacheManager implements vscode.Disposable {
    * Load cache from extension global state
    */
   private async loadCacheFromDisk(): Promise<void> {
+    if (!this.getCacheInfo().isPersistent) {
+      this.logger.warn(
+        '[ComponentCache] Cache storage is not persistent; the cache will not survive a restart',
+        'ComponentCache'
+      );
+    }
     try {
-      if (!this.context) {
-        this.logger.warn(
-          '[ComponentCache] No extension context available, starting with empty cache',
-          'ComponentCache'
-        );
-        return;
-      }
-
-      const cacheData = this.context.globalState.get<PersistentCacheData>('componentCache');
+      const cacheData = await getRuntime().storage.get<PersistentCacheData>(CACHE_KEY_COMPONENTS);
 
       if (cacheData && cacheData.version !== CURRENT_CACHE_VERSION) {
         const fromVersion = cacheData.version || 'unversioned';
@@ -611,7 +609,7 @@ export class ComponentCacheManager implements vscode.Disposable {
           'ComponentCache'
         );
         this.logger.debug(
-          `[ComponentCache] Cache storage: VS Code Global State (persists across sessions)`,
+          `[ComponentCache] Cache storage: ${this.getCacheInfo().location}`,
           'ComponentCache'
         );
       } else {
@@ -620,7 +618,7 @@ export class ComponentCacheManager implements vscode.Disposable {
           'ComponentCache'
         );
         this.logger.debug(
-          '[ComponentCache] Cache storage: VS Code Global State (persists across sessions)',
+          `[ComponentCache] Cache storage: ${this.getCacheInfo().location}`,
           'ComponentCache'
         );
       }
@@ -641,14 +639,6 @@ export class ComponentCacheManager implements vscode.Disposable {
    */
   private async saveCacheToDisk(): Promise<void> {
     try {
-      if (!this.context) {
-        this.logger.warn(
-          '[ComponentCache] No extension context available, cannot save cache',
-          'ComponentCache'
-        );
-        return;
-      }
-
       const cacheData: PersistentCacheData = {
         components: this.components,
         lastRefreshTime: this.lastRefreshTime,
@@ -656,36 +646,19 @@ export class ComponentCacheManager implements vscode.Disposable {
         version: CURRENT_CACHE_VERSION,
       };
 
-      await this.context.globalState.update('componentCache', cacheData);
+      await getRuntime().storage.update(CACHE_KEY_COMPONENTS, cacheData);
 
       this.logger.info(
         `[ComponentCache] Saved cache to global state (${this.components.length} components)`,
         'ComponentCache'
       );
       this.logger.debug(
-        `[ComponentCache] Cache storage: VS Code Global State (persists across sessions)`,
+        `[ComponentCache] Cache storage: ${this.getCacheInfo().location}`,
         'ComponentCache'
       );
     } catch (error) {
       this.logger.error(
         `[ComponentCache] Error saving cache to global state: ${error}`,
-        'ComponentCache'
-      );
-    }
-  }
-
-  /**
-   * Set the extension context (for cases where cache manager is created before context is available)
-   */
-  public setContext(context: vscode.ExtensionContext): void {
-    if (!this.context) {
-      this.context = context;
-      this.logger.info(
-        '[ComponentCache] Extension context set, cache persistence now enabled',
-        'ComponentCache'
-      );
-      this.logger.debug(
-        '[ComponentCache] Cache storage: VS Code Global State (persists across sessions)',
         'ComponentCache'
       );
     }
@@ -698,16 +671,18 @@ export class ComponentCacheManager implements vscode.Disposable {
     location: string;
     size: number;
     lastUpdate: string;
-    hasContext: boolean;
+    isPersistent: boolean;
   } {
     const lastUpdateDate =
       this.lastRefreshTime > 0 ? new Date(this.lastRefreshTime).toISOString() : 'Never';
 
+    const isPersistent = getRuntime().storage.persistent === true;
+
     return {
-      location: this.context ? CACHE_LOCATION_GLOBAL_STATE : CACHE_LOCATION_MEMORY_ONLY,
+      location: isPersistent ? CACHE_LOCATION_GLOBAL_STATE : CACHE_LOCATION_MEMORY_ONLY,
       size: this.components.length,
       lastUpdate: lastUpdateDate,
-      hasContext: !!this.context,
+      isPersistent,
     };
   }
 
@@ -738,19 +713,20 @@ export class ComponentCacheManager implements vscode.Disposable {
     this.versionCache.clearCache();
     this.sourceErrors.clear();
     this.lastRefreshTime = 0;
+    this.clearedAt = Date.now();
+    this.notifyComponentsChanged();
 
-    // Clear persistent storage if available
-    if (this.context) {
-      try {
-        await this.context.globalState.update('gitlabComponentHelper.cachedComponents', undefined);
-        await this.context.globalState.update('gitlabComponentHelper.cacheTimestamp', undefined);
-        this.logger.debug('[ComponentCache] Cleared persistent cache storage', 'ComponentCache');
-      } catch (error) {
-        this.logger.warn(
-          `[ComponentCache] Failed to clear persistent storage: ${error}`,
-          'ComponentCache'
-        );
-      }
+    // Clear persistent storage
+    try {
+      const { storage } = getRuntime();
+      await storage.update(CACHE_KEY_CACHED_COMPONENTS, undefined);
+      await storage.update(CACHE_KEY_CACHE_TIMESTAMP, undefined);
+      this.logger.debug('[ComponentCache] Cleared persistent cache storage', 'ComponentCache');
+    } catch (error) {
+      this.logger.warn(
+        `[ComponentCache] Failed to clear persistent storage: ${error}`,
+        'ComponentCache'
+      );
     }
 
     // Also trigger reset on the ComponentService singleton
@@ -806,14 +782,12 @@ export class ComponentCacheManager implements vscode.Disposable {
 // Singleton instance
 let cacheManager: ComponentCacheManager | null = null;
 
-export function getComponentCacheManager(
-  context?: vscode.ExtensionContext
-): ComponentCacheManager {
+/**
+ * @param options Applied only when this call creates the singleton.
+ */
+export function getComponentCacheManager(options?: ComponentCacheManagerOptions): ComponentCacheManager {
   if (!cacheManager) {
-    cacheManager = new ComponentCacheManager(context);
-  } else if (context && !cacheManager['context']) {
-    // Set context if it wasn't available during initial creation
-    cacheManager.setContext(context);
+    cacheManager = new ComponentCacheManager(options);
   }
   return cacheManager;
 }

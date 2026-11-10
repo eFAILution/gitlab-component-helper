@@ -42,6 +42,8 @@
 
 Want your own components in the list? Run **GitLab CI: Add Component Project/Group** and point it at a project or group. A token is only needed for private ones.
 
+Using Copilot Chat? Turn on `gitlabComponentHelper.mcp.enabled` and let the agent [fix your components](#let-copilot-fix-your-components-beta).
+
 ## Features
 
 ### Browse and insert
@@ -127,6 +129,35 @@ Add a private project or group with **GitLab CI: Add Component Project/Group**. 
 
 Component data is cached (one hour by default) and API calls are batched, so large groups stay responsive.
 
+### Let Copilot fix your components (beta)
+
+The extension includes an MCP server, so AI agents can check your components the same way the editor does. In Copilot Chat agent mode, the agent can find unknown or missing inputs and outdated versions, look up the exact inputs a component version takes, and apply the fixes. Your editor's normal approval flow still applies.
+
+It's off by default. To try it:
+
+1. In your **user** settings, turn on `gitlabComponentHelper.mcp.enabled`.
+2. Open Copilot Chat, switch to **Agent**, and check that **GitLab Component Helper** is enabled in the tools picker. VS Code may ask you to trust the server the first time.
+3. Ask something like:
+   - "Find and fix the GitLab CI component problems in this repo."
+   - "What inputs does `gitlab.com/components/opentofu/full-pipeline@4.9.0` take, and which am I missing?"
+   - "Are any of my components out of date?"
+
+| Tool | What the agent gets |
+|------|---------------------|
+| `validate_ci_file` | Unknown and missing inputs, outdated versions, and broken local includes, with suggested edits |
+| `check_component_versions` | Outdated components and the version to move to |
+| `get_component_spec` | A component's inputs at a version: type, required, default, allowed values, description |
+| `list_component_versions` | Available versions and the latest stable one |
+| `list_component_usages` | Every component and local include in a file or the workspace |
+
+The server only reads. It never edits files itself: it suggests edits and the agent applies them. It also keeps your tokens safe:
+
+- Your tokens go to the server through a one-time private file that's deleted right away. They're never in tool results or logs.
+- Tokens are only sent to GitLab instances from your user settings or saved tokens. A cloned repo can't add hosts.
+- Files are only read inside your open workspace folders.
+
+It also works with other MCP clients, like Claude Code, by running the bundled server with Node. See the [MCP server guide](https://github.com/eFAILution/gitlab-component-helper/blob/main/docs/mcp.md).
+
 ## Configuration
 
 Most people only need component sources. Add them with the command above, or in `settings.json`:
@@ -204,6 +235,7 @@ Every setting is also editable from the Settings UI under **GitLab Component Hel
 | `gitlabComponentHelper.additionalFileGlobs` | array | `[]` | Extra GitLab CI file globs, merged with the built-in defaults. Patterns match at any depth (e.g. `ci/*.yml` → `**/ci/*.yml`). |
 | `gitlabComponentHelper.versionCheck.enabled` | boolean | `true` | Warn when a component pinned to a semantic version has a newer stable release. Checked on open/save. |
 | `gitlabComponentHelper.versionCheck.severity` | string | `warning` | Severity of the "newer version available" diagnostic. One of `warning`, `information`. |
+| `gitlabComponentHelper.mcp.enabled` | boolean | `false` | Offer the bundled [MCP server](https://github.com/eFAILution/gitlab-component-helper/blob/main/docs/mcp.md) to Copilot Chat and other in-editor AI clients. When one starts it, it gets your workspace folders and the tokens for your user-level instances. Application scope only. |
 | `gitlabComponentHelper.versionPreferences` | object | `{}` | Version offered per component, keyed by `<instance>/<project path>/<component>`: a version, or `~latest` for the highest stable version. Set via **Set as Default Version** or **Always Use Latest** in the Component Browser. |
 | `gitlabComponentHelper.cacheTime` | number | `3600` | Component cache lifetime, in seconds. |
 | `gitlabComponentHelper.logLevel` | string | `ERROR` | Logging level. One of `DEBUG`, `INFO`, `WARN`, `ERROR`. |
@@ -246,6 +278,19 @@ Check that you can reach the GitLab instance, verify the token and its permissio
 </details>
 
 <details>
+<summary><strong>Copilot doesn't see GitLab Component Helper</strong></summary>
+<br>
+
+- Turn on `gitlabComponentHelper.mcp.enabled` in your **user** settings. Workspace settings can't turn it on.
+- Open a folder. The server isn't offered when no folder is open.
+- Use **Agent** mode, and enable the server in the tools picker.
+- Run **MCP: List Servers** to start, restart, or see the server's output.
+- After you add or change a token, restart the server from **MCP: List Servers** if it doesn't pick the change up.
+- "Host isn't allowed": add that instance to `gitlabComponentHelper.componentSources` in your **user** settings.
+
+</details>
+
+<details>
 <summary><strong>Still stuck?</strong></summary>
 <br>
 
@@ -266,7 +311,8 @@ npm run compile
 
 Press `F5` to launch an Extension Development Host with the extension loaded. You'll need VS Code 1.120.0+ and Node.js 22+.
 
-- Branch from `beta` and use [conventional commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`, …).
+- Start from an issue, one PR per issue. Branch from `beta` as `<type>/<issue>-<short-description>` (for example `fix/412-hover-crash`), open the PR against `beta`, and put `Closes #<issue>` on its first line. The full rules are in [AGENTS.md](https://github.com/eFAILution/gitlab-component-helper/blob/main/AGENTS.md#issues-branches-and-records).
+- Use [conventional commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`, …).
 - `npm test` runs the unit suite. `npm run test:extension-host` runs the tests inside real VS Code.
 - Releases are cut by [release-it](https://github.com/release-it/release-it) when changes land on `beta` or `main`. Publishing to the Marketplace is a manual workflow. See [docs/RELEASING.md](https://github.com/eFAILution/gitlab-component-helper/blob/main/docs/RELEASING.md).
 

@@ -12,6 +12,17 @@ import { isOutdated } from '../utils/semver';
  * The position context the "Open in Detailed View" command needs to round-trip the cursor location back to the
  * detached-hover panel.
  */
+export const DETACH_HOVER_COMMAND = 'gitlab-component-helper.detachHover';
+
+/**
+ * Trust for hover markdown. The body embeds component and input descriptions from remote specs, so a blanket
+ * `isTrusted = true` would let a `[x](command:...)` link in a description run any command. Only our own detach
+ * command is enabled.
+ */
+export const HOVER_TRUSTED_COMMANDS: { readonly enabledCommands: readonly string[] } = Object.freeze({
+  enabledCommands: Object.freeze([DETACH_HOVER_COMMAND]),
+});
+
 export interface HoverContext {
   documentUri: string;
   position: { line: number; character: number };
@@ -53,7 +64,7 @@ export function buildComponentHoverMarkdown(
   // markdown link syntax terminates at the first literal `)`, so an unbalanced `)` anywhere in the JSON payload
   // (e.g. a description containing "(see note 1)" or ":)") would otherwise cut the link short and break "Open in
   // Detailed View".
-  const detachCommandUrl = `command:gitlab-component-helper.detachHover?${encodeURIComponent(
+  const detachCommandUrl = `command:${DETACH_HOVER_COMMAND}?${encodeURIComponent(
     JSON.stringify(componentWithContext),
   ).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())}`;
   md += `[🔗 Open in Detailed View](${detachCommandUrl})\n\n`;

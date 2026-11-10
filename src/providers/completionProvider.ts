@@ -9,8 +9,10 @@ import { resolveLocalComponent } from './localComponentResolver';
 import { chooseComponentVersion } from './componentBrowserTransform';
 import { readVersionPreferences } from './versionPreferenceSettings';
 import { findCompletionInputContextAtLine, buildInputInsertValue, renderOptionValue, allowedValuesFor } from './completionInputContext';
-import type { ComponentParameter } from '../types/git-component';
-import type { CachedComponent } from '../types/cache';
+import { getComponentService } from '../services/component';
+import { parseComponentIdentity, findCachedComponentVersion, findAnyCachedComponentVersion } from '../utils/cachedComponentLookup';
+import type { ComponentIdentity } from '../utils/cachedComponentLookup';
+import type { Component, ComponentParameter } from '../types/git-component';
 
 export class CompletionProvider implements vscode.CompletionItemProvider {
   private logger = Logger.getInstance();
@@ -46,7 +48,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
     this.logger.debug(`[CompletionProvider] Version regex match result: ${versionMatch ? 'MATCHED' : 'NO MATCH'}`, 'CompletionProvider');
     if (versionMatch) {
       this.logger.debug(`[CompletionProvider] Detected version completion request after @`, 'CompletionProvider');
-      return this.provideVersionCompletions(linePrefix, document.uri);
+      return this.provideVersionCompletions(linePrefix, position, document.uri);
     }
 
     // Suggest components after "component: "
@@ -72,7 +74,11 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
   /**
    * Provide version/tag completions for a component URL after @
    */
-  private async provideVersionCompletions(linePrefix: string, forUri: vscode.Uri): Promise<vscode.CompletionItem[]> {
+  private async provideVersionCompletions(
+    linePrefix: string,
+    position: vscode.Position,
+    forUri: vscode.Uri,
+  ): Promise<vscode.CompletionItem[]> {
     this.logger.debug(`[CompletionProvider] Starting version completions for: "${linePrefix}"`, 'CompletionProvider');
 
     // Extract the component URL before the @
@@ -84,6 +90,10 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
 
     const componentUrlBase = urlMatch.base;
     const currentVersionInput = urlMatch.partialVersion;
+    // Each item replaces only the text after `@`. Without an explicit range VS Code filters the items against the
+    // word at the cursor, and a YAML word pattern that allows `/` and `@` (the Red Hat YAML extension's does) makes
+    // that word the whole reference, which no version matches.
+    const versionRange = new vscode.Range(position.line, urlMatch.versionStart, position.line, position.character);
 
     this.logger.debug(`[CompletionProvider] Component URL base: ${componentUrlBase}`, 'CompletionProvider');
     this.logger.debug(`[CompletionProvider] Current version input: "${currentVersionInput}"`, 'CompletionProvider');
@@ -158,6 +168,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
         item.documentation = `Use version ${version} of component ${componentName}`;
         // Set the insertion text to just the version (since we're after the @)
         item.insertText = version;
+        item.range = versionRange;
         // Add sort priority based on version type
         if (version === chosenVersion) {
           item.sortText = '0' + version;
@@ -390,10 +401,10 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
     }
   }
 
-  // Helper method to find component in cache (similar to validation provider).
+  // Resolves the spec for the exact version the include references, since inputs can differ between versions.
   // `forUri` is the active document's URI — used so variable expansion picks
   // the GitLab host matching the file's containing repo, not workspace[0].
-  private async findComponentInCache(componentUrl: string, forUri: vscode.Uri): Promise<CachedComponent | null> {
+  private async findComponentInCache(componentUrl: string, forUri: vscode.Uri): Promise<Component | null> {
     try {
       const cacheManager = getComponentCacheManager();
       const components = await cacheManager.getComponents();
@@ -404,46 +415,66 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
         return null;
       }
 
-      // Parse the component URL to get instance, project path, and component name
-      const url = new URL(resolved.url.split('@')[0]); // Remove version if present
-      const gitlabInstance = url.host;
-      const pathSegments = url.pathname.split('/').filter(Boolean);
-
-      if (pathSegments.length < 2) {
+      const identity = parseComponentIdentity(resolved.url);
+      if (!identity) {
         this.logger.warn(`[CompletionProvider] Invalid component URL format: ${componentUrl}`, 'CompletionProvider');
         return null;
       }
 
-      // For OpenTofu-style projects with multiple components, the last segment is the component name
-      // For single-component projects, we still need the last segment as component name
-      const componentName = pathSegments[pathSegments.length - 1];
-      const projectPath = pathSegments.slice(0, -1).join('/');
+      this.logger.debug(`[CompletionProvider] Looking for component: ${identity.name}@${identity.version ?? 'unspecified'} in project: ${identity.sourcePath} on ${identity.gitlabInstance}`, 'CompletionProvider');
 
-      this.logger.debug(`[CompletionProvider] Looking for component: ${componentName} in project: ${projectPath} on ${gitlabInstance}`, 'CompletionProvider');
-
-      // Find exact match for this specific component template
-      const matchingComponent = components.find(comp =>
-        comp.gitlabInstance === gitlabInstance &&
-        comp.sourcePath === projectPath &&
-        comp.name === componentName
-      );
-
-      if (matchingComponent) {
-        this.logger.debug(`[CompletionProvider] Found exact component match: ${matchingComponent.name}`, 'CompletionProvider');
-        return matchingComponent;
+      const exactVersion = findCachedComponentVersion(components, identity);
+      if (exactVersion) {
+        this.logger.debug(`[CompletionProvider] Found cached ${exactVersion.name}@${exactVersion.version}`, 'CompletionProvider');
+        return exactVersion;
       }
 
-      // If no exact match, log what we have available for debugging
-      const projectComponents = components.filter(comp =>
-        comp.gitlabInstance === gitlabInstance &&
-        comp.sourcePath === projectPath
-      );
+      const fetched = await this.fetchReferencedVersion(resolved.url, identity);
+      if (fetched) {
+        return fetched;
+      }
 
-      this.logger.debug(`[CompletionProvider] No exact match found. Available components in project: ${projectComponents.map(c => c.name).join(', ')}`, 'CompletionProvider');
+      // Offline or fetch failed: another version's inputs beat offering none.
+      const anyVersion = findAnyCachedComponentVersion(components, identity);
+      if (anyVersion) {
+        this.logger.debug(`[CompletionProvider] Falling back to cached ${anyVersion.name}@${anyVersion.version} for requested ${identity.version ?? 'unspecified'}`, 'CompletionProvider');
+        return anyVersion;
+      }
 
+      this.logger.debug(`[CompletionProvider] No cached version of ${identity.name} in ${identity.sourcePath}`, 'CompletionProvider');
       return null;
     } catch (error) {
       this.logger.error(`[CompletionProvider] Error finding component in cache: ${error}`, 'CompletionProvider');
+      return null;
+    }
+  }
+
+  // Fetches the referenced version's spec and caches it under that version, as validation does.
+  private async fetchReferencedVersion(expandedUrl: string, identity: ComponentIdentity): Promise<Component | null> {
+    const version = identity.version;
+    if (!version) {
+      return null;
+    }
+    try {
+      const fetched = await getComponentService().getComponentFromUrl(expandedUrl);
+      if (!fetched) {
+        return null;
+      }
+      getComponentCacheManager().addDynamicComponent({
+        name: fetched.name,
+        description: fetched.description,
+        parameters: fetched.parameters,
+        source: fetched.source || '',
+        sourcePath: identity.sourcePath,
+        gitlabInstance: identity.gitlabInstance,
+        version,
+        url: expandedUrl,
+        templatePath: fetched.templatePath
+      });
+      this.logger.debug(`[CompletionProvider] Fetched and cached ${fetched.name}@${version}`, 'CompletionProvider');
+      return fetched;
+    } catch (error) {
+      this.logger.debug(`[CompletionProvider] Error fetching ${identity.name}@${version}: ${error}`, 'CompletionProvider');
       return null;
     }
   }

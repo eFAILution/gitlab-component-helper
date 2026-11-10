@@ -63,6 +63,8 @@ export class GitLabComponentError extends Error {
   public readonly details?: ErrorDetails;
   public readonly recoverable: boolean;
   public readonly userMessage: string;
+  /** The underlying error, when this one wraps another. */
+  public readonly cause?: Error;
 
   constructor(
     code: ErrorCode,
@@ -80,6 +82,7 @@ export class GitLabComponentError extends Error {
     this.details = options.details;
     this.recoverable = options.recoverable ?? false;
     this.userMessage = options.userMessage || this.getDefaultUserMessage(code);
+    this.cause = options.cause;
 
     if (options.cause) {
       this.stack = `${this.stack}\nCaused by: ${options.cause.stack}`;
