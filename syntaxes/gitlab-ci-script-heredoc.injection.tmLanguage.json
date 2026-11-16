@@ -1,0 +1,91 @@
+{
+  "name": "GitLab CI script heredocs",
+  "scopeName": "source.yaml.gitlab-ci-script-heredoc.injection",
+  "comment": "Inside a script region every line keeps its YAML indentation, but source.shell only ends a heredoc on a terminator at column 0, so a heredoc would run to the end of the block. These rules mirror source.shell#heredoc and allow the terminator to be indented. The selector reaches nested shell rules (case, loops, subshells) because it matches on the region's scope, not on a parent rule.",
+  "injectionSelector": "L:meta.embedded.gitlab-ci-script -string -comment",
+  "patterns": [
+    {
+      "include": "#quoted"
+    },
+    {
+      "include": "#unquoted"
+    }
+  ],
+  "repository": {
+    "quoted": {
+      "comment": "<<'EOF' or <<\"EOF\": no expansion inside.",
+      "begin": "((?<!<)<<-?)(?!<)[ \\t]*+([\"'])[ \\t]*+([^\"']+?)(?=\\s|;|&|<|\"|')(\\2)(.*)",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.operator.heredoc.shell"
+        },
+        "2": {
+          "name": "punctuation.definition.string.heredoc.quote.shell"
+        },
+        "3": {
+          "name": "punctuation.definition.string.heredoc.delimiter.shell"
+        },
+        "4": {
+          "name": "punctuation.definition.string.heredoc.quote.shell"
+        },
+        "5": {
+          "patterns": [
+            {
+              "include": "source.shell#redirect_fix"
+            },
+            {
+              "include": "source.shell#typical_statements"
+            }
+          ]
+        }
+      },
+      "end": "(?:^|\\G)[ \\t]*(\\3)(?=\\s|;|&|$)",
+      "endCaptures": {
+        "1": {
+          "name": "punctuation.definition.string.heredoc.delimiter.shell"
+        }
+      },
+      "contentName": "string.quoted.heredoc.indent.$3"
+    },
+    "unquoted": {
+      "comment": "<<EOF: variables and command substitutions expand.",
+      "begin": "((?<!<)<<-?)(?!<)[ \\t]*+([^\"' \\t]+)(?=\\s|;|&|<|\"|')(.*)",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.operator.heredoc.shell"
+        },
+        "2": {
+          "name": "punctuation.definition.string.heredoc.delimiter.shell"
+        },
+        "3": {
+          "patterns": [
+            {
+              "include": "source.shell#redirect_fix"
+            },
+            {
+              "include": "source.shell#typical_statements"
+            }
+          ]
+        }
+      },
+      "end": "(?:^|\\G)[ \\t]*(\\2)(?=\\s|;|&|$)",
+      "endCaptures": {
+        "1": {
+          "name": "punctuation.definition.string.heredoc.delimiter.shell"
+        }
+      },
+      "contentName": "string.unquoted.heredoc.indent.$2",
+      "patterns": [
+        {
+          "include": "source.shell#double_quote_escape_char"
+        },
+        {
+          "include": "source.shell#variable"
+        },
+        {
+          "include": "source.shell#interpolation"
+        }
+      ]
+    }
+  }
+}

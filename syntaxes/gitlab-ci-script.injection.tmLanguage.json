@@ -1,0 +1,257 @@
+{
+  "name": "GitLab CI script blocks",
+  "scopeName": "source.yaml.gitlab-ci-script.injection",
+  "comment": "Colours job before_script/script/after_script values as shell. Structure comes from indentation, not from the YAML grammar's scopes, because Red Hat's YAML grammar (installed by this extension's extensionPack) replaces VS Code's and has no nesting scopes. Top-level keys are split into non-job keywords and jobs; inside a job only a script key at the job's first indent level is shell. Everything else is handed back to source.yaml.",
+  "injectionSelector": "L:source.yaml -meta.gitlab-ci.job -meta.gitlab-ci.non-job -meta.embedded.gitlab-ci-script",
+  "patterns": [
+    {
+      "include": "#non-job-key"
+    },
+    {
+      "include": "#global-script-key"
+    },
+    {
+      "include": "#job"
+    }
+  ],
+  "repository": {
+    "non-job-key": {
+      "comment": "GitLab's global keywords that aren't jobs. default and the legacy before_script/after_script are handled as jobs and script keys.",
+      "name": "meta.gitlab-ci.non-job",
+      "begin": "^(spec|include|stages|variables|workflow|image|services|cache)[ \\t]*(:)(?=[ \\t]|$)",
+      "beginCaptures": {
+        "1": {
+          "name": "string.unquoted.plain.yaml entity.name.tag.yaml"
+        },
+        "2": {
+          "name": "punctuation.separator.map.value.yaml"
+        }
+      },
+      "while": "^(?=[ \\t]|$|#)",
+      "patterns": [
+        {
+          "include": "source.yaml"
+        }
+      ]
+    },
+    "global-script-key": {
+      "comment": "Legacy top-level before_script/after_script. The empty group stands in for the job-level key's indent.",
+      "name": "meta.embedded.gitlab-ci-script",
+      "begin": "^()(before_script|after_script)[ \\t]*(:)(?=[ \\t]|$)",
+      "beginCaptures": {
+        "2": {
+          "name": "string.unquoted.plain.yaml entity.name.tag.yaml"
+        },
+        "3": {
+          "name": "punctuation.separator.map.value.yaml"
+        }
+      },
+      "while": "^(?=[ \\t]+\\S|[ \\t]*$|-(?:[ \\t]|$)|#)",
+      "patterns": [
+        {
+          "include": "#script-content"
+        }
+      ]
+    },
+    "job": {
+      "comment": "Any other top-level key, including default:, hidden .templates, interpolated $[[ ]] names and names containing colons. Runs until the next top-level key or document marker.",
+      "name": "meta.gitlab-ci.job",
+      "begin": "^((?:[^\\s#:\\-?|>!&*\\[\\]{},%@`]|[-?:](?=\\S))(?:[^:\\n#]|:(?=\\S)| #)*?)[ \\t]*(:)(?=[ \\t]|$)",
+      "beginCaptures": {
+        "1": {
+          "name": "string.unquoted.plain.yaml entity.name.tag.yaml"
+        },
+        "2": {
+          "name": "punctuation.separator.map.value.yaml"
+        }
+      },
+      "while": "^(?=[ \\t]|$|#)",
+      "patterns": [
+        {
+          "include": "#job-script-key"
+        },
+        {
+          "include": "#job-entry"
+        },
+        {
+          "include": "source.yaml"
+        }
+      ]
+    },
+    "job-script-key": {
+      "comment": "Runs while lines are deeper than the key, blank, or a compact '- ' item or comment at the key's indent.",
+      "name": "meta.embedded.gitlab-ci-script",
+      "begin": "^([ \\t]+)(before_script|script|after_script)[ \\t]*(:)(?=[ \\t]|$)",
+      "beginCaptures": {
+        "2": {
+          "name": "string.unquoted.plain.yaml entity.name.tag.yaml"
+        },
+        "3": {
+          "name": "punctuation.separator.map.value.yaml"
+        }
+      },
+      "while": "^(?=\\1[ \\t]+\\S|[ \\t]*$|\\1-(?:[ \\t]|$)|\\1#)",
+      "patterns": [
+        {
+          "include": "#script-content"
+        }
+      ]
+    },
+    "job-entry": {
+      "comment": "Any other key in a job. It claims its deeper lines so a script key nested under it (such as in rules:) never starts a script region.",
+      "name": "meta.gitlab-ci.job-entry",
+      "begin": "^(?=([ \\t]+)[^ \\t\\n#])",
+      "while": "^(?=\\1[ \\t]+\\S|[ \\t]*$|\\1-(?:[ \\t]|$)|\\1#)",
+      "patterns": [
+        {
+          "include": "source.yaml"
+        }
+      ]
+    },
+    "script-content": {
+      "patterns": [
+        {
+          "include": "#item"
+        },
+        {
+          "include": "#item-content"
+        }
+      ]
+    },
+    "item": {
+      "comment": "Each '- ' item is a separate script, so close shell constructs it leaves open (an unterminated quote, a trailing backslash) at the next item.",
+      "begin": "^([ \\t]*)(-)(?=[ \\t]|$)",
+      "beginCaptures": {
+        "2": {
+          "name": "punctuation.definition.block.sequence.item.yaml"
+        }
+      },
+      "while": "^(?=\\1[ \\t]+\\S|[ \\t]*$)",
+      "patterns": [
+        {
+          "include": "#item-content"
+        }
+      ]
+    },
+    "item-content": {
+      "patterns": [
+        {
+          "include": "#empty-flow"
+        },
+        {
+          "include": "#alias"
+        },
+        {
+          "include": "#reference"
+        },
+        {
+          "include": "#block-header"
+        },
+        {
+          "include": "#statement"
+        },
+        {
+          "include": "#sequence-item"
+        },
+        {
+          "include": "source.shell"
+        }
+      ]
+    },
+    "statement": {
+      "comment": "The shell grammar only starts a statement after ^ ; | & and the like, so a command after YAML indentation or a '- ' marker would go uncoloured. Start one at each line's first word, ending where the shell grammar's normal_statement ends.",
+      "begin": "\\G[ \\t]*(?:(-)[ \\t]+)?(?=[^ \\t#\\n])",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.block.sequence.item.yaml"
+        }
+      },
+      "end": "(?=;|\\||&|\\n|\\)|`|\\{|\\}|[ \\t]*#|\\])(?<!\\\\)",
+      "name": "meta.statement.shell",
+      "patterns": [
+        {
+          "include": "source.shell#typical_statements"
+        }
+      ]
+    },
+    "reference": {
+      "comment": "!reference [job, key] pulls in YAML from elsewhere; keep it coloured as YAML rather than shell.",
+      "match": "\\G[ \\t]*(?:(-)[ \\t]+)?(!reference)(?=[ \\t]|\\[)(.*)$",
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.block.sequence.item.yaml"
+        },
+        "2": {
+          "name": "storage.type.tag.shorthand.yaml"
+        },
+        "3": {
+          "name": "meta.flow.sequence.yaml"
+        }
+      }
+    },
+    "alias": {
+      "comment": "A *alias item pulls in an anchored script from elsewhere.",
+      "match": "\\G[ \\t]*(?:(-)[ \\t]+)?(\\*)([^\\s\\[\\]{},]+)[ \\t]*((#).*)?$",
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.block.sequence.item.yaml"
+        },
+        "2": {
+          "name": "punctuation.definition.alias.yaml"
+        },
+        "3": {
+          "name": "variable.other.alias.yaml"
+        },
+        "4": {
+          "name": "comment.line.number-sign.yaml"
+        },
+        "5": {
+          "name": "punctuation.definition.comment.yaml"
+        }
+      }
+    },
+    "empty-flow": {
+      "comment": "before_script: [] clears an inherited script.",
+      "match": "\\G[ \\t]*(\\[)[ \\t]*(\\])[ \\t]*((#).*)?$",
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.sequence.begin.yaml"
+        },
+        "2": {
+          "name": "punctuation.definition.sequence.end.yaml"
+        },
+        "3": {
+          "name": "comment.line.number-sign.yaml"
+        },
+        "4": {
+          "name": "punctuation.definition.comment.yaml"
+        }
+      }
+    },
+    "sequence-item": {
+      "match": "\\G[ \\t]*(-)(?=[ \\t]*$)",
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.block.sequence.item.yaml"
+        }
+      }
+    },
+    "block-header": {
+      "match": "\\G[ \\t]*(?:(-)[ \\t]+)?([|>][-+0-9]*)[ \\t]*((#).*)?$",
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.block.sequence.item.yaml"
+        },
+        "2": {
+          "name": "keyword.control.flow.block-scalar.yaml"
+        },
+        "3": {
+          "name": "comment.line.number-sign.yaml"
+        },
+        "4": {
+          "name": "punctuation.definition.comment.yaml"
+        }
+      }
+    }
+  }
+}
