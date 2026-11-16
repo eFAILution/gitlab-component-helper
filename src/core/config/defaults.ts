@@ -26,6 +26,12 @@ export interface ConfigValues {
   'versionCheck.severity': 'warning' | 'information';
   versionPreferences: Record<string, string>;
   'mcp.enabled': boolean;
+  'shellcheck.enabled': boolean;
+  'shellcheck.path': string;
+  'shellcheck.shell': 'sh' | 'bash' | 'dash' | 'ksh' | 'busybox';
+  'shellcheck.severity': 'error' | 'warning' | 'info' | 'style';
+  'shellcheck.exclude': string[];
+  'shellcheck.knownVariables': string[];
 }
 
 /** A setting name without the `gitlabComponentHelper.` prefix. */
@@ -69,4 +75,10 @@ export const CONFIG_DEFAULTS: Readonly<ConfigValues> = Object.freeze({
   'versionCheck.severity': 'warning',
   versionPreferences: {},
   'mcp.enabled': false,
+  'shellcheck.enabled': true,
+  'shellcheck.path': '',
+  'shellcheck.shell': 'bash',
+  'shellcheck.severity': 'warning',
+  'shellcheck.exclude': [],
+  'shellcheck.knownVariables': [],
 });
