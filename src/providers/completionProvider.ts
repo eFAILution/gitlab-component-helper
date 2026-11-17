@@ -457,7 +457,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
     }
     try {
       const fetched = await getComponentService().getComponentFromUrl(expandedUrl);
-      if (!fetched) {
+      if (!fetched || fetched.fetchFailure) {
         return null;
       }
       getComponentCacheManager().addDynamicComponent({

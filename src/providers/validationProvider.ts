@@ -142,6 +142,7 @@ export class ValidationProvider implements vscode.CodeActionProvider {
         }
 
         this.logger.debug(`[ValidationProvider] Validating ${document.fileName}`, 'ValidationProvider');
+        const validatedVersion = document.version;
         const findings = await validateIncludes({
             text: document.getText(),
             file: document.uri.fsPath,
@@ -149,6 +150,12 @@ export class ValidationProvider implements vscode.CodeActionProvider {
             components: this.componentLookup,
             resolveLocalInclude: localPath => resolveLocalIncludeOutcome(localPath, document),
         });
+
+        // A slow pass on a half-typed ref would overwrite the newer pass; the edit already scheduled one for this text.
+        if (document.version !== validatedVersion) {
+            this.logger.debug(`[ValidationProvider] Discarding stale findings for ${document.fileName} (v${validatedVersion}, now v${document.version})`, 'ValidationProvider');
+            return;
+        }
 
         this.logger.debug(`[ValidationProvider] Created ${findings.length} total diagnostics for ${document.fileName}`, 'ValidationProvider');
         this.diagnosticCollection.set(document.uri, findings.map(findingToDiagnostic));
@@ -167,6 +174,9 @@ export class ValidationProvider implements vscode.CodeActionProvider {
      */
     private async fetchComponent(expandedUrl: string): Promise<Component | null> {
         const fetchedComponent = await getComponentService().getComponentFromUrl(expandedUrl);
+        if (fetchedComponent?.fetchFailure) {
+            return null;
+        }
         if (fetchedComponent) {
             this.addComponentToCache(expandedUrl, fetchedComponent);
             return fetchedComponent;

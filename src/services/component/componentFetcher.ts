@@ -12,7 +12,7 @@ import type { GitLabProjectInfo, GitLabTreeItem } from '../../types/api';
 import { HttpClient } from '../../utils/httpClient';
 import { Logger } from '../../utils/logger';
 import { GitLabSpecParser, ComponentVariable } from '../../parsers/specParser';
-import { classifyFetchFailure, isAuthError } from '../../errors';
+import { classifyFetchFailure, isAuthError, NetworkError } from '../../errors';
 import { TokenManager } from './tokenManager';
 import { UrlParser } from './urlParser';
 import {
@@ -212,15 +212,14 @@ export class ComponentFetcher {
 
       const project = projectInfo.value;
 
-      // Process template result
-      let resolvedTemplatePath: string | undefined;
-      if (templateResult.status === 'fulfilled' && templateResult.value) {
-        const { content, parameters: extractedParams, templatePath } = templateResult.value;
-        templateContent = content;
-        parameters = extractedParams;
-        resolvedTemplatePath = templatePath;
-        this.logger.debug(`Found component template with ${parameters.length} parameters at ${templatePath}`);
+      // A component with no inputs would flag every provided input as unknown.
+      if (templateResult.status !== 'fulfilled' || !templateResult.value) {
+        throw new NetworkError(`No template for component '${componentName}' at ref '${version}'`, { statusCode: 404 });
       }
+      const { content, parameters: extractedParams, templatePath: resolvedTemplatePath } = templateResult.value;
+      templateContent = content;
+      parameters = extractedParams;
+      this.logger.debug(`Found component template with ${parameters.length} parameters at ${resolvedTemplatePath}`);
 
       // A component's README sits next to its template; fall back to the repo root for flat layouts.
       const readmeDirs = [readmeDirForTemplate(resolvedTemplatePath), ''];
