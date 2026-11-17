@@ -255,7 +255,7 @@ export async function detectIncludeComponent(document: vscode.TextDocument, posi
         const componentService = getComponentService();
         const specificVersionComponent = await componentService.getComponentFromUrl(componentUrl);
 
-        if (specificVersionComponent) {
+        if (specificVersionComponent && !specificVersionComponent.fetchFailure) {
           logger.debug(`[ComponentDetector] Successfully fetched specific version ${requestedVersion} for ${cachedComponent.name}`, 'ComponentDetector');
 
           const cacheVersion = requestedVersion || 'main';

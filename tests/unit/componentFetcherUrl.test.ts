@@ -1,8 +1,8 @@
 // @mocha
 /**
  * `fetchComponentMetadata` must address the right project and ref for a component URL whose version contains `/`
- * (a branch such as `feature/my-branch`). The HTTP client is a fake that records every URL it is asked for, so
- * nothing leaves the process.
+ * (a branch such as `feature/my-branch`), and report a ref with no template as not found. The HTTP client is a fake
+ * that records every URL it is asked for, so nothing leaves the process.
  */
 
 import * as assert from 'node:assert/strict';
@@ -61,6 +61,16 @@ suite('ComponentFetcher.fetchComponentMetadata with a slashed version', () => {
     assert.equal(component.source, `gitlab.com/${PROJECT_PATH}`);
     assert.equal(component.templatePath, 'templates/my-component.yml');
     assert.deepEqual(component.parameters.map((p) => p.name), ['stage']);
+  });
+
+  test('fails as not-found, not as a component with no inputs, when the ref has no template', async () => {
+    const fetcher = new ComponentFetcher(createFakeHttp([], true), new TokenManager(), new UrlParser());
+
+    const component = await fetcher.fetchComponentMetadata(`https://gitlab.com/${PROJECT_PATH}/other-component@${BRANCH}`);
+
+    assert.deepEqual(component.fetchFailure, { kind: 'not-found', statusCode: NOT_FOUND });
+    assert.equal(component.name, 'other-component');
+    assert.deepEqual(component.parameters, []);
   });
 
   test('names the fallback component after the component, not the branch', async () => {
