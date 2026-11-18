@@ -115,6 +115,20 @@ Choosing one replaces the other. The choice is saved in `gitlabComponentHelper.v
 
 </details>
 
+### Scripts checked with ShellCheck
+
+Install [ShellCheck](https://www.shellcheck.net/) (`brew install shellcheck`, `apt install shellcheck` or `winget install koalaman.shellcheck`) and job scripts are checked as you edit. Findings appear in the Problems panel, each linked to its wiki page. Without ShellCheck you get one message, and linting is skipped.
+
+The checks follow how GitLab runs jobs, so you don't get noise:
+
+- Only job-level script keys are checked, not a component input named `script`.
+- A job's `before_script` and `script` run in one shell, so variables set in `before_script` count. That's its own `before_script`, or one inherited through `extends`, from `default:` or the global one.
+- Variables from `variables:`, `rules: variables:` and `parallel: matrix:` aren't reported as unassigned. List project or group CI/CD variables in `gitlabComponentHelper.shellcheck.knownVariables`.
+- Comparing or testing an input, as in `if [ "$[[ inputs.mode ]]" == "fast" ]`, isn't reported, since GitLab fills the value in per pipeline.
+- `!reference` tags and aliases are checked where they're defined.
+
+To silence a finding, use the Quick Fix (`Ctrl+.` / `Cmd+.`). **Disable SC#### for this command** adds a `# shellcheck disable=` line above it, inside `|` blocks. **Ignore SC#### in workspace settings** adds the code to `gitlabComponentHelper.shellcheck.exclude`. Set `gitlabComponentHelper.shellcheck.shell` to match your job images (default `bash`).
+
 ### Private components
 
 Add a private project or group with **GitLab CI: Add Component Project/Group**. You enter a token once per GitLab instance, and it's reused for everything on that instance.
@@ -237,6 +251,12 @@ Every setting is also editable from the Settings UI under **GitLab Component Hel
 | `gitlabComponentHelper.versionCheck.severity` | string | `warning` | Severity of the "newer version available" diagnostic. One of `warning`, `information`. |
 | `gitlabComponentHelper.mcp.enabled` | boolean | `false` | Offer the bundled [MCP server](https://github.com/eFAILution/gitlab-component-helper/blob/main/docs/mcp.md) to Copilot Chat and other in-editor AI clients. When one starts it, it gets your workspace folders and the tokens for your user-level instances. Application scope only. |
 | `gitlabComponentHelper.versionPreferences` | object | `{}` | Version offered per component, keyed by `<instance>/<project path>/<component>`: a version, or `~latest` for the highest stable version. Set via **Set as Default Version** or **Always Use Latest** in the Component Browser. |
+| `gitlabComponentHelper.shellcheck.enabled` | boolean | `true` | Lint CI script blocks with ShellCheck. Skipped when ShellCheck isn't installed. |
+| `gitlabComponentHelper.shellcheck.path` | string | `""` | Path to the `shellcheck` binary; empty uses `PATH`. User or machine settings only. |
+| `gitlabComponentHelper.shellcheck.shell` | string | `bash` | Dialect to check against. One of `sh`, `bash`, `dash`, `ksh`, `busybox`. |
+| `gitlabComponentHelper.shellcheck.severity` | string | `warning` | Minimum severity reported. One of `error`, `warning`, `info`, `style`. |
+| `gitlabComponentHelper.shellcheck.exclude` | array | `[]` | ShellCheck codes to ignore, e.g. `["SC2086"]`. |
+| `gitlabComponentHelper.shellcheck.knownVariables` | array | `[]` | Variables set outside the file (project/group settings), as names or globs, e.g. `["deploy_*"]`. |
 | `gitlabComponentHelper.cacheTime` | number | `3600` | Component cache lifetime, in seconds. |
 | `gitlabComponentHelper.logLevel` | string | `ERROR` | Logging level. One of `DEBUG`, `INFO`, `WARN`, `ERROR`. |
 | `gitlabComponentHelper.autoShowOutput` | boolean | `false` | Show the output channel automatically when the log level changes. |
@@ -321,3 +341,5 @@ A programmatic API for other extensions is planned but not exposed yet. [docs/ap
 ## License
 
 [MIT](https://github.com/eFAILution/gitlab-component-helper/blob/main/LICENSE)
+
+Script linting is inspired by [YAML with Script](https://gitlab.com/matthiesen-technology/yaml-with-script) by Matthiesen Technology (MIT).

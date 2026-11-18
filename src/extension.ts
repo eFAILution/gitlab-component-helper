@@ -10,6 +10,7 @@ import { getComponentCacheManager, ComponentCacheManager } from './services/cach
 import { assetRoots } from './webview/webviewHtml';
 import { Logger } from './utils/logger';
 import { ValidationProvider } from './providers/validationProvider';
+import { ShellCheckProvider } from './providers/shellCheckProvider';
 import type { CachedComponent } from './types/cache';
 import type { GitLabYamlFragment } from './types/gitlab-catalog';
 import { DETACH_HOVER_COMMAND, type HoverContext } from './providers/hoverContentBuilder';
@@ -502,6 +503,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Initialize the validation provider
     const validationProvider = new ValidationProvider(context);
+    new ShellCheckProvider(context);
 
     // Register command to update every outdated component in the active file to its latest stable version.
     logger.debug('[Extension] Registering updateAllComponentVersions command...', 'Extension');

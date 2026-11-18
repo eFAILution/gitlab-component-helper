@@ -1,0 +1,8 @@
+build:
+  script:
+    - |
+      if [ "$[[ inputs.mode ]]" == "fast" ]; then
+        echo fast
+      fi
+      echo $block_value
+    - echo $plain_value

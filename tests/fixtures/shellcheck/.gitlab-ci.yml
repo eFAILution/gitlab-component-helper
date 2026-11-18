@@ -1,0 +1,7 @@
+variables:
+  known_var: from-yaml
+
+build:
+  script:
+    - echo $unquoted_value
+    - echo "$known_var"
