@@ -1,0 +1,51 @@
+{
+  "name": "GitLab CI script line continuations",
+  "scopeName": "source.yaml.gitlab-ci-script-continuation.injection",
+  "comment": "source.shell starts a command name with a \\G rule, which in a .sh file never matches at the start of a line. Inside a script region the YAML grammar's and our own while rules leave \\G at the start of every line, so a backslash-continued line would be read as a new command name. Still being inside a command at the start of a line means the line is a continuation, so these rules, which win over \\G, read it as more options and arguments instead. They mirror source.shell#option and #argument, anchored to the start of the line so they never compete with an argument's own end.",
+  "injectionSelector": "L:meta.embedded.gitlab-ci-script meta.statement.command.shell -string -comment, L:meta.embedded.gitlab-ci-script meta.statement.command.env.shell -string -comment",
+  "patterns": [
+    {
+      "include": "#option"
+    },
+    {
+      "include": "#argument"
+    },
+    {
+      "comment": "A continuation starting with an operator such as || or &&: consume the indent so the command ends at the operator.",
+      "match": "^[ \\t]+"
+    }
+  ],
+  "repository": {
+    "option": {
+      "begin": "^[ \\t]++(-)((?!(?:!|&|\\||\\(|\\)|\\{|\\[|<|>|#|\\n|$|;|[ \\t])))",
+      "beginCaptures": {
+        "1": {
+          "name": "string.unquoted.argument.shell constant.other.option.dash.shell"
+        },
+        "2": {
+          "name": "string.unquoted.argument.shell constant.other.option.shell"
+        }
+      },
+      "end": "(?:(?=[ \\t])|(?:(?=;|\\||&|\\n|\\)|\\`|\\{|\\}|[ \\t]*#|\\])(?<!\\\\)))",
+      "contentName": "string.unquoted.argument constant.other.option",
+      "patterns": [
+        {
+          "include": "source.shell#option_context"
+        }
+      ]
+    },
+    "argument": {
+      "begin": "^[ \\t]++(?!(?:&|\\||\\(|\\[|#|\\n|$|;))",
+      "end": "(?= |\\t|;|\\||&|$|\\n|\\)|\\`)",
+      "name": "meta.argument.shell",
+      "patterns": [
+        {
+          "include": "source.shell#argument_context"
+        },
+        {
+          "include": "source.shell#line_continuation"
+        }
+      ]
+    }
+  }
+}

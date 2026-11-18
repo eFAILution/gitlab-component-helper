@@ -115,6 +115,15 @@ Choosing one replaces the other. The choice is saved in `gitlabComponentHelper.v
 
 </details>
 
+### Scripts read as shell
+
+Job `before_script`, `script` and `after_script` blocks are coloured as shell, the way they would be in a `.sh` file, while the rest of the file keeps its YAML colours.
+
+- Only job-level keys count, so a component input or a global variable named `script` stays YAML. So do `!reference` tags, aliases, and the `- ` and `|` markers.
+- It works with VS Code's YAML grammar and with Red Hat's.
+- Grammars can't see file names, so `script:` keys in other YAML files are coloured too.
+- If [YAML with Script](https://marketplace.visualstudio.com/items?itemName=matthiesen-technology.yaml-with-script) is installed, its colouring wins. Disable it to use this one.
+
 ### Private components
 
 Add a private project or group with **GitLab CI: Add Component Project/Group**. You enter a token once per GitLab instance, and it's reused for everything on that instance.
@@ -321,3 +330,5 @@ A programmatic API for other extensions is planned but not exposed yet. [docs/ap
 ## License
 
 [MIT](https://github.com/eFAILution/gitlab-component-helper/blob/main/LICENSE)
+
+Script highlighting is inspired by [YAML with Script](https://gitlab.com/matthiesen-technology/yaml-with-script) by Matthiesen Technology (MIT).

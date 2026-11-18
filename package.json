@@ -26,6 +26,29 @@
     "redhat.vscode-yaml"
   ],
   "contributes": {
+    "grammars": [
+      {
+        "scopeName": "source.yaml.gitlab-ci-script.injection",
+        "path": "./syntaxes/gitlab-ci-script.injection.tmLanguage.json",
+        "injectTo": [
+          "source.yaml"
+        ]
+      },
+      {
+        "scopeName": "source.yaml.gitlab-ci-script-heredoc.injection",
+        "path": "./syntaxes/gitlab-ci-script-heredoc.injection.tmLanguage.json",
+        "injectTo": [
+          "source.yaml"
+        ]
+      },
+      {
+        "scopeName": "source.yaml.gitlab-ci-script-continuation.injection",
+        "path": "./syntaxes/gitlab-ci-script-continuation.injection.tmLanguage.json",
+        "injectTo": [
+          "source.yaml"
+        ]
+      }
+    ],
     "configuration": {
       "title": "GitLab Component Helper",
       "properties": {
@@ -372,6 +395,8 @@
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2",
     "yaml": "^2.9.1"
   },
   "keywords": [],
