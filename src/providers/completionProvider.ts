@@ -257,11 +257,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
       const item = new vscode.CompletionItem(param.name, vscode.CompletionItemKind.Property);
       item.documentation = new vscode.MarkdownString(param.description);
 
-      if (param.default !== undefined) {
-        item.insertText = new vscode.SnippetString(`${param.name}: \${1:${param.default}}`);
-      } else {
-        item.insertText = new vscode.SnippetString(`${param.name}: \${1}`);
-      }
+      item.insertText = new vscode.SnippetString(`${param.name}: ${buildInputInsertValue(param)}`);
 
       return item;
     });

@@ -2,9 +2,6 @@
  * Regular expression patterns used throughout the extension.
  */
 
-// Component Spec Parsing
-export const SPEC_INPUTS_SECTION_REGEX = /spec:\s*\n\s*inputs:([\s\S]*?)(?=\n---|\ndescription:|\nvariables:|\n[a-zA-Z][a-zA-Z0-9_-]*:|$)/;
-
 // URL Pattern Matching
 export const URL_PROTOCOL_REGEX = /^https?:\/\//i;
 export const LEADING_TRAILING_SLASH_REGEX = /^\/+|\/+$/g;

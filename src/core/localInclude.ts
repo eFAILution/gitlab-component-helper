@@ -4,10 +4,9 @@
  */
 
 import * as path from 'path';
-import * as yaml from 'js-yaml';
 import { Logger } from '../utils/logger';
-import { countYamlAliases, GITLAB_CI_SCHEMA, isYamlNode, MAX_YAML_ALIASES } from '../utils/yamlParser';
-import { isParameterDefault } from '../parsers/parameterDefaultShape';
+import { countYamlAliases, MAX_YAML_ALIASES } from '../utils/yamlParser';
+import { readSpecInputs } from '../parsers/specInputs';
 import { buildLocalComponentUrl, isUnsupportedLocalPath } from '../providers/localIncludeParser';
 import type { ComponentParameter } from '../types/git-component';
 
@@ -72,51 +71,6 @@ export type LocalIncludeOutcome<C extends Pick<LocalIncludeComponent, 'name' | '
   | { kind: 'no-spec' };
 
 /**
- * Convert a parsed `spec.inputs` block into the `ComponentParameter[]` shape the rest of the providers consume.
- *
- * Mirrors GitLab's own input contract: a parameter is treated as required when no `default` is supplied. Missing or
- * non-string `description` / `type` fields collapse to safe defaults rather than throwing — the resolver never wants
- * to fail on a malformed-but-readable template since that just produces user-visible spurious diagnostics.
- *
- * @param specInputs  The raw `spec.inputs` object from a parsed YAML document; may be `undefined`, `null`, or any value.
- * @returns           A normalised array of input definitions, or `[]` when `specInputs` isn't an object.
- */
-function parseInputs(specInputs: unknown): ComponentParameter[] {
-  if (!isYamlNode(specInputs)) {
-    return [];
-  }
-  return Object.entries(specInputs).map(([name, raw]) => {
-    const definition: Record<string, unknown> = isYamlNode(raw) ? raw : {};
-    const rawDefault = definition.default;
-    const rawOptions = definition.options;
-    return {
-      name,
-      description: typeof definition.description === 'string' ? definition.description : '',
-      required: rawDefault === undefined,
-      type: typeof definition.type === 'string' ? definition.type : 'string',
-      default: isParameterDefault(rawDefault) ? rawDefault : undefined,
-      options: isOptionsList(rawOptions) ? rawOptions : undefined,
-    };
-  });
-}
-
-/**
- * Narrow an unknown value to the primitive array accepted by `inputs.*.options`.
- *
- * @param value - The raw `options` value from a parsed input definition; may be any value.
- * @returns `true` when `value` is an array of only string/number/boolean entries, narrowing it for the caller.
- */
-function isOptionsList(value: unknown): value is Array<string | number | boolean> {
-  return (
-    Array.isArray(value) &&
-    value.every(v => {
-      const t = typeof v;
-      return t === 'string' || t === 'number' || t === 'boolean';
-    })
-  );
-}
-
-/**
  * Parse a local include target that was read successfully: pick the first YAML document declaring `spec` and map its
  * `spec.inputs` onto `ComponentParameter[]`.
  *
@@ -135,25 +89,19 @@ export function parseLocalIncludeText(
     logger.debug(`[LocalComponentResolver] ${displayPath} has ${aliasCount} YAML aliases, over the limit of ${MAX_YAML_ALIASES}; not parsing it`, 'LocalComponentResolver');
     return { kind: 'no-spec' };
   }
-  let docs: unknown[];
-  try {
-    docs = yaml.loadAll(text, { schema: GITLAB_CI_SCHEMA });
-  } catch (err) {
-    logger.debug(`[LocalComponentResolver] Failed to parse ${displayPath}: ${err}`, 'LocalComponentResolver');
+  const spec = readSpecInputs(text);
+  if (spec.kind === 'invalid') {
+    logger.debug(`[LocalComponentResolver] Failed to parse ${displayPath}: ${spec.reason}`, 'LocalComponentResolver');
     // The file exists and was read; it just isn't valid YAML. That's a plain include we can't extract inputs from,
     // not a missing file — treat it like a no-spec include rather than a false "not found".
     return { kind: 'no-spec' };
   }
-  const specDoc = docs.find(
-    (d): d is { spec?: { inputs?: unknown } } => !!d && typeof d === 'object' && 'spec' in d
-  );
-  if (!specDoc) {
+  if (spec.kind === 'no-spec') {
     logger.debug(`[LocalComponentResolver] ${displayPath} has no spec document`, 'LocalComponentResolver');
     return { kind: 'no-spec' };
   }
 
-  const specInputs = specDoc.spec && specDoc.spec.inputs;
-  const parameters = parseInputs(specInputs);
+  const parameters = spec.inputs ?? [];
   const displayName = path.basename(localPath);
   const url = buildLocalComponentUrl(localPath);
 
