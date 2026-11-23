@@ -13,9 +13,6 @@ import * as assert from 'node:assert/strict';
 import { GitLabSpecParser } from '../../src/parsers/specParser';
 
 suite('GitLabSpecParser.parse — spec.inputs extraction', () => {
-  // NOTE: The parser's quote-strip regex (`/^["']|["']$/g`) runs BEFORE `.trim()` on the value after the property
-  // key, so a leading space prevents the opening quote from being stripped. Quoted values therefore retain their
-  // opening `"`/`'` in the parsed result. The unquoted test uses unquoted values to avoid that.
   test('extracts inputs (unquoted values) from spec section, ignores post-separator job variables', () => {
     const template = `spec:
   inputs:
@@ -238,9 +235,8 @@ suite('GitLabSpecParser.parse — options (enum) extraction', () => {
 });
 
 suite('GitLabSpecParser.parse — default value types', () => {
-  // The parser reads the spec line-by-line, so a `default:` arrives as raw text. Keeping it as text turned
-  // `default: false` into the string "false", which completion then inserted as a quoted `"false"` — a string
-  // where GitLab expects a boolean.
+  // A stringified `default: false` is inserted by completion as a quoted `"false"`, a string where GitLab expects a
+  // boolean.
   test('parses scalar defaults as their YAML types, not as strings', () => {
     const template = `spec:
   inputs:
@@ -353,9 +349,7 @@ suite('GitLabSpecParser.parse — default value types', () => {
     assert.strictEqual(byName['region'].default, 'us-east-1');
   });
 
-  test('a valueless `default:` deeper than the input names is not read as an input', () => {
-    // The mirror of the shallow case below: with `inputs:` indented, an input's keys sit at six spaces and never
-    // match the name pattern. Both layouts must land on the same result.
+  test('a valueless `default:` is an empty default, not an input', () => {
     const template = `spec:
   inputs:
     flag:
@@ -366,12 +360,12 @@ suite('GitLabSpecParser.parse — default value types', () => {
 
     assert.deepStrictEqual(parsed.variables.map((v) => v.name), ['flag']);
     assert.strictEqual(parsed.variables[0].default, '');
+    assert.strictEqual(parsed.variables[0].required, false);
     assert.strictEqual(parsed.variables[0].type, 'boolean');
   });
 
-  test('a valueless `default:` at input-name indentation is not read as an input', () => {
-    // On a spec indented `inputs:` at 0, an input's keys sit at 4 and match the input-name pattern — a bare
-    // `default:` would otherwise open a phantom input named `default` and swallow the real input's value.
+  test('`inputs:` not nested under `spec:` declares no inputs', () => {
+    // At column 0, `inputs:` is a sibling of an empty `spec:`, so GitLab sees no spec inputs either.
     const template = `spec:
 inputs:
   flag:
@@ -380,9 +374,83 @@ inputs:
 
     const parsed = GitLabSpecParser.parse(template);
 
-    assert.deepStrictEqual(parsed.variables.map((v) => v.name), ['flag']);
-    assert.strictEqual(parsed.variables[0].default, '');
-    assert.strictEqual(parsed.variables[0].required, false);
+    assert.deepStrictEqual(parsed.variables, []);
+  });
+
+  test('reads a block-list array default as an array', () => {
+    const template = `spec:
+  inputs:
+    targets:
+      type: array
+      default:
+        - lint
+        - test
+    flags:
+      default:
+        - --verbose
+      type: array
+---
+job:
+  script: echo`;
+
+    const parsed = GitLabSpecParser.parse(template);
+    const byName = Object.fromEntries(parsed.variables.map((v) => [v.name, v]));
+
+    assert.deepStrictEqual(byName['targets'].default, ['lint', 'test']);
+    assert.strictEqual(byName['targets'].required, false);
+    // `type:` after the default still types it.
+    assert.deepStrictEqual(byName['flags'].default, ['--verbose']);
+  });
+
+  test('applies `<<` merge keys to inputs and to an input definition', () => {
+    const template = `.shared: &shared
+  stage:
+    description: The stage
+    default: build
+.typed: &typed
+  type: number
+  default: 3
+spec:
+  inputs:
+    <<: *shared
+    retries:
+      <<: *typed
+      description: Retry count`;
+
+    const parsed = GitLabSpecParser.parse(template);
+    const byName = Object.fromEntries(parsed.variables.map((v) => [v.name, v]));
+
+    assert.deepStrictEqual(Object.keys(byName).sort(), ['retries', 'stage']);
+    assert.strictEqual(byName['stage'].default, 'build');
+    assert.strictEqual(byName['retries'].type, 'number');
+    assert.strictEqual(byName['retries'].default, 3);
+    assert.strictEqual(byName['retries'].description, 'Retry count');
+  });
+
+  test('a spec section that is not valid YAML yields no inputs', () => {
+    const template = `spec:
+  inputs:
+    stage:
+      default: [build
+---
+job:
+  script: echo`;
+
+    const parsed = GitLabSpecParser.parse(template);
+
+    assert.deepStrictEqual(parsed.variables, []);
+    assert.strictEqual(parsed.isValidComponent, true);
+  });
+
+  test('an input with no description gets a placeholder', () => {
+    const template = `spec:
+  inputs:
+    stage:
+      default: build`;
+
+    const parsed = GitLabSpecParser.parse(template);
+
+    assert.strictEqual(parsed.variables[0].description, 'Parameter: stage');
   });
 
   test('an explicit `type: string` keeps a numeric-looking default as text', () => {
